@@ -91,6 +91,8 @@ export default function AuditoriasPage() {
 
   const [serie, setSerie] = useState('')
   const [soloFaltantes, setSoloFaltantes] = useState(false)
+  const [comentarioGeneral, setComentarioGeneral] = useState('')
+  const [guardando, setGuardando] = useState(false)
 
   useEffect(() => {
     iniciar()
@@ -155,6 +157,7 @@ export default function AuditoriasPage() {
     setEquipos([])
     setSerie('')
     setSoloFaltantes(false)
+    setComentarioGeneral('')
   }
 
   function conservarMateriales(nuevos) {
@@ -523,6 +526,79 @@ export default function AuditoriasPage() {
       const siguiente = campos[posicion + 1]
       siguiente.focus()
       siguiente.select?.()
+    }
+  }
+
+  async function guardarAuditoria() {
+    limpiarMensajes()
+
+    if (!tecnico) {
+      setError('Primero carga una auditoría.')
+      return
+    }
+
+    if (guardando) return
+
+    setGuardando(true)
+
+    try {
+      const payloadMateriales =
+        tipo === TIPOS.TODO || tipo === TIPOS.MATERIALES
+          ? materiales.map((x) => ({
+              sku: texto(x.sku),
+              material: texto(x.material),
+              lote: texto(x.lote),
+              sistema: numero(x.sistema),
+              fisico: numero(x.fisico),
+            }))
+          : []
+
+      const payloadHerramientas =
+        tipo === TIPOS.TODO || tipo === TIPOS.HERRAMIENTAS
+          ? herramientas.map((x) => ({
+              producto: texto(x.producto),
+              ubicacion: texto(x.ubicacion),
+              sistema: numero(x.sistema),
+              fisico: numero(x.fisico),
+            }))
+          : []
+
+      const payloadEquipos =
+        tipo === TIPOS.TODO || tipo === TIPOS.EQUIPOS
+          ? equipos.map((x) => ({
+              serie: normalizarSerie(x.serie),
+              material: texto(x.material),
+              descripcion: texto(x.descripcion),
+              lote: texto(x.lote),
+              estado: texto(x.estado) || 'FALTANTE',
+            }))
+          : []
+
+      const { data, error: guardarError } = await supabase.rpc(
+        'guardar_auditoria',
+        {
+          p_almacen: normalizarAlmacen(almacen),
+          p_tipo_auditoria: tipo,
+          p_comentario_general: texto(comentarioGeneral),
+          p_materiales: payloadMateriales,
+          p_herramientas: payloadHerramientas,
+          p_equipos: payloadEquipos,
+        }
+      )
+
+      if (guardarError) throw guardarError
+      if (!data?.ok) throw new Error('Supabase no confirmó el guardado de la auditoría.')
+
+      setMensaje(
+        `Auditoría guardada correctamente. Folio: ${data.folio}. ` +
+        `Materiales: ${data.materiales || 0}, ` +
+        `Herramientas: ${data.herramientas || 0}, ` +
+        `Equipos: ${data.equipos || 0}.`
+      )
+    } catch (e) {
+      setError(e?.message || 'No fue posible guardar la auditoría.')
+    } finally {
+      setGuardando(false)
     }
   }
 
@@ -1111,15 +1187,27 @@ export default function AuditoriasPage() {
 
         {tecnico && (
           <section style={styles.tarjeta}>
+            <h2 style={styles.subtitulo}>Observaciones generales</h2>
+            <textarea
+              value={comentarioGeneral}
+              onChange={(e) => setComentarioGeneral(e.target.value)}
+              placeholder="Observaciones generales de la auditoría..."
+              rows={4}
+              disabled={guardando}
+              style={styles.textarea}
+            />
+
             <button
-              style={styles.botonGuardar}
-              onClick={() =>
-                setMensaje(
-                  'La captura está lista. El guardado definitivo se habilitará después de crear el folio transaccional de Auditorías.'
-                )
-              }
+              type="button"
+              style={{
+                ...styles.botonGuardar,
+                opacity: guardando ? 0.65 : 1,
+                cursor: guardando ? 'not-allowed' : 'pointer',
+              }}
+              onClick={guardarAuditoria}
+              disabled={guardando}
             >
-              Guardar auditoría
+              {guardando ? 'Guardando auditoría...' : 'Guardar auditoría'}
             </button>
           </section>
         )}
@@ -1248,6 +1336,19 @@ const styles = {
     background: '#a36a00',
     color: '#fff',
     fontWeight: 700,
+  },
+
+  textarea: {
+    width: '100%',
+    boxSizing: 'border-box',
+    minHeight: '100px',
+    padding: '12px',
+    border: '1px solid #b8c6c0',
+    borderRadius: '8px',
+    resize: 'vertical',
+    fontFamily: 'inherit',
+    fontSize: '14px',
+    marginBottom: '14px',
   },
 
   botonGuardar: {
