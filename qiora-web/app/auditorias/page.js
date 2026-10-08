@@ -325,19 +325,53 @@ export default function AuditoriasPage() {
 
         if (eqError) throw eqError
 
-        nuevosEquipos = (data || []).map((x) => ({
-          serie: texto(x.serie).toUpperCase(),
-          material: texto(x.material),
-          descripcion: texto(x.descripcion),
-          lote: texto(x.lote),
-          estatusSAP:
-            texto(x.estatus_sap) ||
-            texto(x.denom_status),
-          tipoStock: texto(x.tipo_stock),
-          escaneado: false,
-          estado: 'FALTANTE',
-          existeSistema: true,
-        }))
+        nuevosEquipos = (data || [])
+          .filter((x) => texto(x.serie))
+          .map((x) => {
+            const estatus = (
+              texto(x.estatus_sap) ||
+              texto(x.denom_status) ||
+              texto(x.tipo_stock)
+            ).toUpperCase()
+
+            let estado = 'FALTANTE'
+
+            if (
+              estatus === 'VALIDACION BRM' ||
+              estatus === 'VALIDACION_BRM'
+            ) {
+              estado = 'VALIDACION BRM'
+            } else if (
+              estatus === 'ENTRADA PENDIENTE' ||
+              estatus === 'ENTRADA_PENDIENTE' ||
+              estatus === 'PENDIENTE DE RECIBIR' ||
+              estatus === 'PENDIENTE_DE_RECIBIR' ||
+              estatus === 'SIN ENTRADA' ||
+              estatus === '04' ||
+              estatus === '4'
+            ) {
+              estado = 'ENTRADA PENDIENTE'
+            } else if (
+              estatus === 'ENTREGADO' ||
+              estatus === 'ENTREGADA'
+            ) {
+              estado = 'ENTREGADO'
+            }
+
+            return {
+              serie: texto(x.serie).toUpperCase(),
+              material: texto(x.material),
+              descripcion: texto(x.descripcion),
+              lote: texto(x.lote),
+              estatusSAP:
+                texto(x.estatus_sap) ||
+                texto(x.denom_status),
+              tipoStock: texto(x.tipo_stock),
+              escaneado: false,
+              estado,
+              existeSistema: true,
+            }
+          })
 
         nuevosEquipos =
           conservarEquipos(nuevosEquipos)
@@ -443,7 +477,13 @@ export default function AuditoriasPage() {
             ? {
                 ...x,
                 escaneado: true,
-                estado: 'COINCIDE',
+                estado: [
+                  'VALIDACION BRM',
+                  'ENTRADA PENDIENTE',
+                  'ENTREGADO',
+                ].includes(x.estado)
+                  ? x.estado
+                  : 'COINCIDE',
               }
             : x
         )
