@@ -20,6 +20,32 @@ function numero(v) {
   return Number.isFinite(n) ? n : 0
 }
 
+function normalizarSerie(v) {
+  return texto(v)
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
+async function consultarSeriesPorBloques(tabla, series, columnas = 'serie') {
+  const unicas = [...new Set(series.map(normalizarSerie).filter(Boolean))]
+  const salida = []
+  const tamano = 100
+
+  for (let i = 0; i < unicas.length; i += tamano) {
+    const bloque = unicas.slice(i, i + tamano)
+    const { data, error } = await supabase
+      .from(tabla)
+      .select(columnas)
+      .in('serie', bloque)
+
+    if (error) throw error
+    salida.push(...(data || []))
+  }
+
+  return salida
+}
+
 function normalizarAlmacen(v) {
   const x = texto(v).toUpperCase()
 
@@ -331,54 +357,74 @@ export default function AuditoriasPage() {
 
         if (eqError) throw eqError
 
-        nuevosEquipos = (data || [])
-          .filter((x) => texto(x.serie))
-          .map((x) => {
-            const estatus = (
+        const equiposSistema = (data || []).filter((x) => texto(x.serie))
+        const seriesSistema = equiposSistema.map((x) => normalizarSerie(x.serie))
+
+        // La lógica original de QIORA clasifica por SERIE con esta prioridad:
+        // VALIDACION BRM -> ENTREGADO -> ENTRADA PENDIENTE -> FALTANTE.
+        const filasBRM = await consultarSeriesPorBloques(
+          'validacion_brm',
+          seriesSistema,
+          'serie'
+        )
+
+        const filasRecolecciones = await consultarSeriesPorBloques(
+          'recolecciones_equipos',
+          seriesSistema,
+          'serie,estado'
+        )
+
+        const seriesBRM = new Set(
+          filasBRM.map((x) => normalizarSerie(x.serie))
+        )
+
+        const seriesEntregadas = new Set(
+          filasRecolecciones
+            .filter((x) => {
+              const e = normalizarSerie(x.estado)
+              return (
+                e.includes('ENTREG') ||
+                [
+                  'RECIBIDO',
+                  'RECIBIDA',
+                  'FINALIZADO',
+                  'FINALIZADA',
+                  'CERRADO',
+                  'CERRADA',
+                ].includes(e)
+              )
+            })
+            .map((x) => normalizarSerie(x.serie))
+        )
+
+        nuevosEquipos = equiposSistema.map((x) => {
+          const serieNormal = normalizarSerie(x.serie)
+          const tipoStock = normalizarSerie(x.tipo_stock)
+          let estado = 'FALTANTE'
+
+          if (seriesBRM.has(serieNormal)) {
+            estado = 'VALIDACION BRM'
+          } else if (seriesEntregadas.has(serieNormal)) {
+            estado = 'ENTREGADO'
+          } else if (tipoStock === '04' || tipoStock === '4') {
+            estado = 'ENTRADA PENDIENTE'
+          }
+
+          return {
+            serie: serieNormal,
+            material: texto(x.material),
+            descripcion: texto(x.descripcion),
+            lote: texto(x.lote),
+            estatusSAP:
               texto(x.estatus_sap) ||
-              texto(x.denom_status) ||
-              texto(x.tipo_stock)
-            ).toUpperCase()
-
-            let estado = 'FALTANTE'
-
-            if (
-              estatus === 'VALIDACION BRM' ||
-              estatus === 'VALIDACION_BRM'
-            ) {
-              estado = 'VALIDACION BRM'
-            } else if (
-              estatus === 'ENTRADA PENDIENTE' ||
-              estatus === 'ENTRADA_PENDIENTE' ||
-              estatus === 'PENDIENTE DE RECIBIR' ||
-              estatus === 'PENDIENTE_DE_RECIBIR' ||
-              estatus === 'SIN ENTRADA' ||
-              estatus === '04' ||
-              estatus === '4'
-            ) {
-              estado = 'ENTRADA PENDIENTE'
-            } else if (
-              estatus === 'ENTREGADO' ||
-              estatus === 'ENTREGADA'
-            ) {
-              estado = 'ENTREGADO'
-            }
-
-            return {
-              serie: texto(x.serie).toUpperCase(),
-              material: texto(x.material),
-              descripcion: texto(x.descripcion),
-              lote: texto(x.lote),
-              estatusSAP:
-                texto(x.estatus_sap) ||
-                texto(x.denom_status),
-              tipoStock: texto(x.tipo_stock),
-              escaneado: false,
-              estado,
-              estadoOriginal: estado,
-              existeSistema: true,
-            }
-          })
+              texto(x.denom_status),
+            tipoStock: texto(x.tipo_stock),
+            escaneado: false,
+            estado,
+            estadoOriginal: estado,
+            existeSistema: true,
+          }
+        })
 
         nuevosEquipos =
           conservarEquipos(nuevosEquipos)
@@ -514,7 +560,18 @@ export default function AuditoriasPage() {
         )
       )
 
-      setMensaje(`Serie ${s}: COINCIDE.`)
+      const equipo = equipos.find(
+        (x) => normalizarSerie(x.serie) === normalizarSerie(s)
+      )
+      const estadoResultado = [
+        'VALIDACION BRM',
+        'ENTRADA PENDIENTE',
+        'ENTREGADO',
+      ].includes(equipo?.estado)
+        ? equipo.estado
+        : 'COINCIDE'
+
+      setMensaje(`Serie ${s}: ${estadoResultado}.`)
     } else {
       setEquipos((actual) => [
         ...actual,
