@@ -250,7 +250,13 @@ export default function AuditoriasPage() {
 
         if (matError) throw matError
 
-        nuevosMateriales = (data || []).map((x) => {
+        // En Materiales solo se auditan registros cuyo LOTE inicia con TPI.
+        // El filtro se normaliza para aceptar espacios y diferencias de mayusculas/minusculas.
+        const materialesTPI = (data || []).filter((x) =>
+          texto(x.lote).trim().toUpperCase().startsWith('TPI')
+        )
+
+        nuevosMateriales = materialesTPI.map((x) => {
           const sistema =
             x.cantidad !== null && x.cantidad !== undefined
               ? numero(x.cantidad)
