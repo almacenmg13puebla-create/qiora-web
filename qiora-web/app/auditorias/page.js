@@ -459,6 +459,24 @@ export default function AuditoriasPage() {
     )
   }
 
+  function brincarSiguienteFisico(e, selector) {
+    if (e.key !== 'Enter') return
+
+    e.preventDefault()
+
+    const campos = Array.from(
+      document.querySelectorAll(selector)
+    ).filter((campo) => !campo.disabled)
+
+    const posicion = campos.indexOf(e.currentTarget)
+
+    if (posicion >= 0 && posicion < campos.length - 1) {
+      const siguiente = campos[posicion + 1]
+      siguiente.focus()
+      siguiente.select?.()
+    }
+  }
+
   function registrarSerie(e) {
     e.preventDefault()
     limpiarMensajes()
@@ -779,10 +797,17 @@ export default function AuditoriasPage() {
                                 step="1"
                                 style={styles.inputTabla}
                                 value={x.fisico}
+                                data-fisico-material
                                 onChange={(e) =>
                                   cambiarFisicoMaterial(
                                     materiales.indexOf(x),
                                     e.target.value
+                                  )
+                                }
+                                onKeyDown={(e) =>
+                                  brincarSiguienteFisico(
+                                    e,
+                                    '[data-fisico-material]'
                                   )
                                 }
                               />
@@ -883,12 +908,19 @@ export default function AuditoriasPage() {
                                 step="1"
                                 style={styles.inputTabla}
                                 value={x.fisico}
+                                data-fisico-herramienta
                                 onChange={(e) =>
                                   cambiarFisicoHerramienta(
                                     herramientas.indexOf(
                                       x
                                     ),
                                     e.target.value
+                                  )
+                                }
+                                onKeyDown={(e) =>
+                                  brincarSiguienteFisico(
+                                    e,
+                                    '[data-fisico-herramienta]'
                                   )
                                 }
                               />
