@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic'
 
 // Máximo de usuarios que procesaremos por ejecución.
 // Si quedan más, simplemente se vuelve a ejecutar la ruta.
-const TAMANO_LOTE = 10
+const TAMANO_LOTE = 100
 
 function passwordQiora(clave) {
   const c = String(clave ?? '')
