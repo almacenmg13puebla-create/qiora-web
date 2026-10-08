@@ -20,6 +20,13 @@ function numero(v) {
   return Number.isFinite(n) ? n : 0
 }
 
+function observacionDiferencia(fisico, sistema) {
+  const diferencia = numero(fisico) - numero(sistema)
+  if (diferencia < 0) return 'FALTANTE'
+  if (diferencia > 0) return 'SOBRANTE'
+  return ''
+}
+
 function normalizarSerie(v) {
   return texto(v)
     .toUpperCase()
@@ -475,41 +482,31 @@ export default function AuditoriasPage() {
     setMateriales((actual) =>
       actual.map((x, i) =>
         i === index
-          ? { ...x, fisico: numero(valor) }
+          ? {
+              ...x,
+              fisico: numero(valor),
+              observacion: observacionDiferencia(valor, x.sistema),
+            }
           : x
       )
     )
   }
 
-  function cambiarObsMaterial(index, valor) {
-    setMateriales((actual) =>
-      actual.map((x, i) =>
-        i === index
-          ? { ...x, observacion: valor }
-          : x
-      )
-    )
-  }
 
   function cambiarFisicoHerramienta(index, valor) {
     setHerramientas((actual) =>
       actual.map((x, i) =>
         i === index
-          ? { ...x, fisico: numero(valor) }
+          ? {
+              ...x,
+              fisico: numero(valor),
+              observacion: observacionDiferencia(valor, x.sistema),
+            }
           : x
       )
     )
   }
 
-  function cambiarObsHerramienta(index, valor) {
-    setHerramientas((actual) =>
-      actual.map((x, i) =>
-        i === index
-          ? { ...x, observacion: valor }
-          : x
-      )
-    )
-  }
 
   function brincarSiguienteFisico(e, selector) {
     if (e.key !== 'Enter') return
@@ -883,16 +880,7 @@ export default function AuditoriasPage() {
                             </td>
 
                             <td style={styles.td}>
-                              <input
-                                style={styles.inputTabla}
-                                value={x.observacion}
-                                onChange={(e) =>
-                                  cambiarObsMaterial(
-                                    materiales.indexOf(x),
-                                    e.target.value
-                                  )
-                                }
-                              />
+                              <strong>{observacionDiferencia(x.fisico, x.sistema)}</strong>
                             </td>
                           </tr>
                         )
@@ -996,18 +984,7 @@ export default function AuditoriasPage() {
                             </td>
 
                             <td style={styles.td}>
-                              <input
-                                style={styles.inputTabla}
-                                value={x.observacion}
-                                onChange={(e) =>
-                                  cambiarObsHerramienta(
-                                    herramientas.indexOf(
-                                      x
-                                    ),
-                                    e.target.value
-                                  )
-                                }
-                              />
+                              <strong>{observacionDiferencia(x.fisico, x.sistema)}</strong>
                             </td>
                           </tr>
                         )
