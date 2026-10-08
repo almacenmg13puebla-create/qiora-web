@@ -3,23 +3,35 @@ import { createClient } from '@supabase/supabase-js'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// Usuarios autorizados para esta segunda prueba.
-// NO agregar más hasta comprobar que estos funcionan.
-const USUARIOS_PRUEBA = ['1949', '0054', 'ME13']
+// Máximo de usuarios que procesaremos por ejecución.
+// Si quedan más, simplemente se vuelve a ejecutar la ruta.
+const TAMANO_LOTE = 10
 
 function passwordQiora(clave) {
   const c = String(clave ?? '')
 
-  // El usuario sigue utilizando su clave original.
-  // Supabase recibe internamente QIORA# + clave.
+  // La clave visible para el usuario NO cambia.
+  // Esta transformación solamente existe dentro de Supabase Auth.
   return `QIORA#${c}`
+}
+
+function limpiarUsuario(valor) {
+  return String(valor ?? '').trim()
+}
+
+function mensajeError(error) {
+  return error?.message || String(error || 'Error desconocido')
 }
 
 export async function POST(request) {
   try {
     const body = await request.json()
 
-    if (body?.confirmar !== 'MIGRAR_USUARIO_PRUEBA_QIORA') {
+    // ----------------------------------------------------
+    // 1. CONFIRMACIÓN
+    // ----------------------------------------------------
+
+    if (body?.confirmar !== 'MIGRAR_USUARIOS_QIORA') {
       return Response.json(
         {
           ok: false,
@@ -29,32 +41,9 @@ export async function POST(request) {
       )
     }
 
-    const usuarioSolicitado = String(
-      body?.usuario ?? ''
-    ).trim()
-
-    if (!usuarioSolicitado) {
-      return Response.json(
-        {
-          ok: false,
-          error: 'Falta indicar el usuario.',
-        },
-        { status: 400 }
-      )
-    }
-
-    // Seguridad: solamente estos usuarios pueden procesarse.
-    if (!USUARIOS_PRUEBA.includes(usuarioSolicitado)) {
-      return Response.json(
-        {
-          ok: false,
-          error:
-            'Usuario no autorizado para esta prueba.',
-          usuarios_permitidos: USUARIOS_PRUEBA,
-        },
-        { status: 400 }
-      )
-    }
+    // ----------------------------------------------------
+    // 2. VARIABLES SUPABASE
+    // ----------------------------------------------------
 
     const supabaseUrl =
       process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -85,297 +74,449 @@ export async function POST(request) {
     )
 
     // ----------------------------------------------------
-    // 1. BUSCAR PERFIL
+    // 3. CONTAR USUARIOS PENDIENTES
     // ----------------------------------------------------
 
     const {
-      data: perfil,
-      error: perfilError,
+      count: pendientesAntes,
+      error: countError,
+    } = await admin
+      .from('almacen_usuarios')
+      .select('*', {
+        count: 'exact',
+        head: true,
+      })
+      .eq('activo', true)
+      .is('auth_user_id', null)
+
+    if (countError) {
+      return Response.json(
+        {
+          ok: false,
+          etapa: 'CONTAR_PENDIENTES',
+          error: countError.message,
+        },
+        { status: 500 }
+      )
+    }
+
+    // ----------------------------------------------------
+    // 4. OBTENER SOLO UN LOTE
+    // ----------------------------------------------------
+
+    const {
+      data: usuarios,
+      error: usuariosError,
     } = await admin
       .from('almacen_usuarios')
       .select(
         'usuario_almacen, nombre, clave, activo, auth_user_id'
       )
-      .eq(
-        'usuario_almacen',
-        usuarioSolicitado
-      )
-      .maybeSingle()
+      .eq('activo', true)
+      .is('auth_user_id', null)
+      .order('usuario_almacen')
+      .limit(TAMANO_LOTE)
 
-    if (perfilError) {
+    if (usuariosError) {
       return Response.json(
         {
           ok: false,
-          etapa: 'BUSCAR_PERFIL',
-          error: perfilError.message,
+          etapa: 'BUSCAR_PENDIENTES',
+          error: usuariosError.message,
         },
         { status: 500 }
       )
     }
 
-    if (!perfil) {
-      return Response.json(
-        {
-          ok: false,
-          error:
-            `No existe el usuario ${usuarioSolicitado} en almacen_usuarios.`,
-        },
-        { status: 404 }
-      )
+    if (!usuarios || usuarios.length === 0) {
+      return Response.json({
+        ok: true,
+        terminado: true,
+        pendientes_antes: 0,
+        procesados: 0,
+        creados: 0,
+        vinculados_existentes: 0,
+        omitidos: 0,
+        errores: 0,
+        resultados: [],
+        mensaje:
+          'No quedan usuarios activos pendientes de migración.',
+      })
     }
 
-    if (perfil.activo !== true) {
-      return Response.json(
-        {
+    const resultados = []
+
+    let creados = 0
+    let vinculadosExistentes = 0
+    let omitidos = 0
+    let errores = 0
+
+    // ----------------------------------------------------
+    // 5. PROCESAR USUARIOS
+    // ----------------------------------------------------
+
+    for (const perfil of usuarios) {
+      const usuario =
+        limpiarUsuario(perfil.usuario_almacen)
+
+      const claveOriginal =
+        String(perfil.clave ?? '')
+
+      // Nunca devolver la clave original.
+      // Nunca devolver la contraseña transformada.
+
+      if (!usuario) {
+        omitidos++
+
+        resultados.push({
+          usuario: '',
           ok: false,
-          error:
-            `El usuario ${usuarioSolicitado} está inactivo.`,
-        },
-        { status: 400 }
-      )
-    }
+          accion: 'OMITIDO',
+          error: 'Usuario vacío',
+        })
 
-    const claveOriginal =
-      String(perfil.clave ?? '')
+        continue
+      }
 
-    if (!claveOriginal) {
-      return Response.json(
-        {
+      if (!claveOriginal) {
+        omitidos++
+
+        resultados.push({
+          usuario,
+          nombre: perfil.nombre || '',
           ok: false,
-          error:
-            `El usuario ${usuarioSolicitado} no tiene clave.`,
-        },
-        { status: 400 }
-      )
-    }
+          accion: 'OMITIDO',
+          error: 'Clave vacía',
+        })
 
-    // ----------------------------------------------------
-    // 2. PREPARAR AUTH
-    // ----------------------------------------------------
+        continue
+      }
 
-    const email =
-      `${usuarioSolicitado.toLowerCase()}@qiora.local`
+      const email =
+        `${usuario.toLowerCase()}@qiora.local`
 
-    const password =
-      passwordQiora(claveOriginal)
+      const password =
+        passwordQiora(claveOriginal)
 
-    let authUserId =
-      perfil.auth_user_id || null
+      try {
+        // ------------------------------------------------
+        // 6. CREAR USUARIO EN AUTH
+        // ------------------------------------------------
 
-    let accion = ''
-
-    // ----------------------------------------------------
-    // 3. SI YA ESTÁ VINCULADO
-    // ----------------------------------------------------
-
-    if (authUserId) {
-      const {
-        data: authActualizado,
-        error: updateError,
-      } =
-        await admin.auth.admin.updateUserById(
-          authUserId,
-          {
+        const {
+          data: authCreado,
+          error: createError,
+        } =
+          await admin.auth.admin.createUser({
             email,
             password,
             email_confirm: true,
+
             user_metadata: {
-              usuario_almacen:
-                usuarioSolicitado,
-              nombre:
-                perfil.nombre || '',
+              usuario_almacen: usuario,
+              nombre: perfil.nombre || '',
             },
+          })
+
+        // ------------------------------------------------
+        // 7. SI SE CREÓ CORRECTAMENTE
+        // ------------------------------------------------
+
+        if (!createError && authCreado?.user?.id) {
+          const authUserId =
+            authCreado.user.id
+
+          const {
+            data: vinculado,
+            error: vincularError,
+          } = await admin
+            .from('almacen_usuarios')
+            .update({
+              auth_user_id: authUserId,
+            })
+            .eq('usuario_almacen', usuario)
+            .eq('activo', true)
+            .is('auth_user_id', null)
+            .select(
+              'usuario_almacen, auth_user_id'
+            )
+            .maybeSingle()
+
+          if (vincularError || !vinculado) {
+            // Si no podemos vincular el perfil,
+            // eliminamos el Auth recién creado.
+            const {
+              error: deleteError,
+            } =
+              await admin.auth.admin.deleteUser(
+                authUserId
+              )
+
+            errores++
+
+            resultados.push({
+              usuario,
+              nombre: perfil.nombre || '',
+              ok: false,
+              accion:
+                'ERROR_VINCULAR_PERFIL',
+              error:
+                vincularError?.message ||
+                'No fue posible vincular el perfil.',
+              auth_eliminado:
+                !deleteError,
+            })
+
+            continue
           }
-        )
 
-      if (updateError) {
-        return Response.json(
-          {
+          creados++
+
+          resultados.push({
+            usuario,
+            nombre: perfil.nombre || '',
+            ok: true,
+            accion: 'AUTH_CREADO',
+            auth_user_id: authUserId,
+          })
+
+          continue
+        }
+
+        // ------------------------------------------------
+        // 8. CREATEUSER FALLÓ
+        //
+        // Puede ser porque el correo ya existe en Auth.
+        // Buscaremos ese correo para poder reanudar una
+        // migración que haya quedado a medias.
+        // ------------------------------------------------
+
+        const {
+          data: listaAuth,
+          error: listarError,
+        } =
+          await admin.auth.admin.listUsers({
+            page: 1,
+            perPage: 1000,
+          })
+
+        if (listarError) {
+          errores++
+
+          resultados.push({
+            usuario,
+            nombre: perfil.nombre || '',
             ok: false,
-            usuario: usuarioSolicitado,
-            etapa: 'ACTUALIZAR_AUTH',
-            error: updateError.message,
-          },
-          { status: 500 }
-        )
-      }
+            accion: 'ERROR_CREAR_AUTH',
+            error: mensajeError(createError),
+            detalle:
+              `No fue posible comprobar Auth: ${listarError.message}`,
+          })
 
-      authUserId =
-        authActualizado.user.id
+          continue
+        }
 
-      accion =
-        'AUTH_ACTUALIZADO'
-    } else {
-      // --------------------------------------------------
-      // 4. CREAR AUTH
-      // --------------------------------------------------
+        const authExistente =
+          listaAuth?.users?.find(
+            (u) =>
+              String(u.email || '')
+                .toLowerCase() ===
+              email.toLowerCase()
+          )
 
-      const {
-        data: authCreado,
-        error: createError,
-      } =
-        await admin.auth.admin.createUser({
-          email,
-          password,
-          email_confirm: true,
+        if (!authExistente?.id) {
+          errores++
 
-          user_metadata: {
-            usuario_almacen:
-              usuarioSolicitado,
-
-            nombre:
-              perfil.nombre || '',
-          },
-        })
-
-      if (createError) {
-        return Response.json(
-          {
+          resultados.push({
+            usuario,
+            nombre: perfil.nombre || '',
             ok: false,
-            usuario: usuarioSolicitado,
-            etapa: 'CREAR_AUTH',
-            error: createError.message,
-            aviso:
-              'No se realizó ninguna vinculación automática. Si el correo ya existe en Auth, debe revisarse antes de continuar.',
-          },
-          { status: 500 }
-        )
-      }
+            accion: 'ERROR_CREAR_AUTH',
+            error: mensajeError(createError),
+          })
 
-      if (!authCreado?.user?.id) {
-        return Response.json(
-          {
+          continue
+        }
+
+        // ------------------------------------------------
+        // 9. AUTH YA EXISTE
+        //
+        // Lo actualizamos con la contraseña QIORA actual
+        // y después lo vinculamos al perfil.
+        // ------------------------------------------------
+
+        const {
+          data: authActualizado,
+          error: actualizarError,
+        } =
+          await admin.auth.admin.updateUserById(
+            authExistente.id,
+            {
+              email,
+              password,
+              email_confirm: true,
+
+              user_metadata: {
+                usuario_almacen: usuario,
+                nombre: perfil.nombre || '',
+              },
+            }
+          )
+
+        if (
+          actualizarError ||
+          !authActualizado?.user?.id
+        ) {
+          errores++
+
+          resultados.push({
+            usuario,
+            nombre: perfil.nombre || '',
             ok: false,
-            usuario: usuarioSolicitado,
-            etapa: 'CREAR_AUTH',
+            accion:
+              'ERROR_ACTUALIZAR_AUTH_EXISTENTE',
             error:
-              'Supabase no devolvió el ID del usuario creado.',
-          },
-          { status: 500 }
-        )
-      }
+              actualizarError?.message ||
+              'No fue posible actualizar el Auth existente.',
+          })
 
-      authUserId =
-        authCreado.user.id
+          continue
+        }
 
-      accion =
-        'AUTH_CREADO'
+        const authUserId =
+          authActualizado.user.id
 
-      // --------------------------------------------------
-      // 5. VINCULAR CON almacen_usuarios
-      // --------------------------------------------------
+        const {
+          data: perfilVinculado,
+          error: vincularExistenteError,
+        } = await admin
+          .from('almacen_usuarios')
+          .update({
+            auth_user_id: authUserId,
+          })
+          .eq('usuario_almacen', usuario)
+          .eq('activo', true)
+          .is('auth_user_id', null)
+          .select(
+            'usuario_almacen, auth_user_id'
+          )
+          .maybeSingle()
 
-      const {
-        data: perfilVinculado,
-        error: vincularError,
-      } = await admin
-        .from('almacen_usuarios')
-        .update({
+        if (
+          vincularExistenteError ||
+          !perfilVinculado
+        ) {
+          errores++
+
+          resultados.push({
+            usuario,
+            nombre: perfil.nombre || '',
+            ok: false,
+            accion:
+              'ERROR_VINCULAR_AUTH_EXISTENTE',
+            error:
+              vincularExistenteError?.message ||
+              'No fue posible vincular el Auth existente.',
+          })
+
+          continue
+        }
+
+        vinculadosExistentes++
+
+        resultados.push({
+          usuario,
+          nombre: perfil.nombre || '',
+          ok: true,
+          accion:
+            'AUTH_EXISTENTE_VINCULADO',
           auth_user_id: authUserId,
         })
-        .eq(
-          'usuario_almacen',
-          usuarioSolicitado
-        )
-        .is(
-          'auth_user_id',
-          null
-        )
-        .select(
-          'usuario_almacen, auth_user_id'
-        )
-        .maybeSingle()
+      } catch (errorUsuario) {
+        errores++
 
-      if (vincularError || !perfilVinculado) {
-        // Evita dejar un usuario Auth huérfano.
-        await admin.auth.admin.deleteUser(
-          authUserId
-        )
-
-        return Response.json(
-          {
-            ok: false,
-            usuario: usuarioSolicitado,
-            etapa: 'VINCULAR_PERFIL',
-            error:
-              vincularError?.message ||
-              'No fue posible vincular el usuario.',
-          },
-          { status: 500 }
-        )
+        resultados.push({
+          usuario,
+          nombre: perfil.nombre || '',
+          ok: false,
+          accion: 'ERROR_USUARIO',
+          error: mensajeError(errorUsuario),
+        })
       }
     }
 
     // ----------------------------------------------------
-    // 6. VERIFICAR VÍNCULO
+    // 10. CONTAR QUÉ QUEDA
     // ----------------------------------------------------
 
     const {
-      data: verificacion,
-      error: verificarError,
+      count: pendientesDespues,
+      error: countFinalError,
     } = await admin
       .from('almacen_usuarios')
-      .select(
-        'usuario_almacen, nombre, activo, auth_user_id'
-      )
-      .eq(
-        'usuario_almacen',
-        usuarioSolicitado
-      )
-      .maybeSingle()
+      .select('*', {
+        count: 'exact',
+        head: true,
+      })
+      .eq('activo', true)
+      .is('auth_user_id', null)
 
-    if (verificarError) {
+    if (countFinalError) {
       return Response.json(
         {
           ok: false,
-          usuario: usuarioSolicitado,
-          etapa: 'VERIFICAR',
-          error: verificarError.message,
-        },
-        { status: 500 }
-      )
-    }
-
-    if (
-      !verificacion ||
-      verificacion.auth_user_id !== authUserId
-    ) {
-      return Response.json(
-        {
-          ok: false,
-          usuario: usuarioSolicitado,
-          etapa: 'VERIFICAR',
-          error:
-            'El auth_user_id no quedó vinculado correctamente.',
+          etapa: 'CONTAR_RESULTADO',
+          error: countFinalError.message,
+          resultados,
         },
         { status: 500 }
       )
     }
 
     // ----------------------------------------------------
-    // 7. RESULTADO
+    // 11. RESULTADO DEL LOTE
     // ----------------------------------------------------
 
     return Response.json({
       ok: true,
-      usuario: usuarioSolicitado,
-      nombre: perfil.nombre || '',
-      email,
-      auth_user_id: authUserId,
-      accion,
-      vinculado: true,
-      mensaje:
-        'Usuario de prueba preparado correctamente.',
-    })
 
+      terminado:
+        (pendientesDespues || 0) === 0,
+
+      lote_maximo:
+        TAMANO_LOTE,
+
+      pendientes_antes:
+        pendientesAntes || 0,
+
+      procesados:
+        usuarios.length,
+
+      creados,
+
+      vinculados_existentes:
+        vinculadosExistentes,
+
+      omitidos,
+
+      errores,
+
+      pendientes_despues:
+        pendientesDespues || 0,
+
+      resultados,
+
+      mensaje:
+        (pendientesDespues || 0) === 0
+          ? 'Migración terminada.'
+          : 'Lote terminado. Todavía quedan usuarios pendientes.',
+    })
   } catch (error) {
     return Response.json(
       {
         ok: false,
         etapa: 'ERROR_GENERAL',
-        error:
-          error?.message ||
-          'Error interno',
+        error: mensajeError(error),
       },
       { status: 500 }
     )
