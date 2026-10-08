@@ -369,6 +369,7 @@ export default function AuditoriasPage() {
               tipoStock: texto(x.tipo_stock),
               escaneado: false,
               estado,
+              estadoOriginal: estado,
               existeSistema: true,
             }
           })
@@ -502,6 +503,7 @@ export default function AuditoriasPage() {
           tipoStock: '',
           escaneado: true,
           estado: 'NO EXISTE EN SISTEMA',
+          estadoOriginal: 'NO EXISTE EN SISTEMA',
           existeSistema: false,
         },
       ])
@@ -512,6 +514,33 @@ export default function AuditoriasPage() {
     }
 
     setSerie('')
+  }
+
+  function eliminarEscaneo(serieEliminar) {
+    const s = texto(serieEliminar).toUpperCase()
+
+    setEquipos((actual) =>
+      actual
+        .filter(
+          (x) =>
+            !(
+              texto(x.serie).toUpperCase() === s &&
+              x.existeSistema === false
+            )
+        )
+        .map((x) => {
+          if (texto(x.serie).toUpperCase() !== s) return x
+
+          return {
+            ...x,
+            escaneado: false,
+            estado: x.estadoOriginal || 'FALTANTE',
+          }
+        })
+    )
+
+    setMensaje(`Escaneo de la serie ${s} eliminado.`)
+    setError('')
   }
 
   const materialesVista = useMemo(() => {
@@ -946,6 +975,9 @@ export default function AuditoriasPage() {
                       <th style={styles.th}>
                         Estado
                       </th>
+                      <th style={styles.th}>
+                        Acción
+                      </th>
                     </tr>
                   </thead>
 
@@ -975,6 +1007,22 @@ export default function AuditoriasPage() {
                             <strong>
                               {x.estado}
                             </strong>
+                          </td>
+
+                          <td style={styles.td}>
+                            {x.escaneado ? (
+                              <button
+                                type="button"
+                                style={styles.botonEliminarEscaneo}
+                                onClick={() =>
+                                  eliminarEscaneo(x.serie)
+                                }
+                              >
+                                Eliminar escaneo
+                              </button>
+                            ) : (
+                              '-'
+                            )}
                           </td>
                         </tr>
                       )
@@ -1139,6 +1187,17 @@ const styles = {
     color: '#fff',
     fontWeight: 700,
     fontSize: '16px',
+  },
+
+  botonEliminarEscaneo: {
+    border: '1px solid #c94b4b',
+    borderRadius: '7px',
+    padding: '7px 10px',
+    cursor: 'pointer',
+    background: '#fff',
+    color: '#a32020',
+    fontWeight: 700,
+    whiteSpace: 'nowrap',
   },
 
   botonSecundario: {
