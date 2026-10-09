@@ -94,6 +94,15 @@ export default function AuditoriasPage() {
   const [comentarioGeneral, setComentarioGeneral] = useState('')
   const [guardando, setGuardando] = useState(false)
 
+  // Consulta de auditorias realizadas / historicas
+  const [histMes, setHistMes] = useState('')
+  const [histAlmacen, setHistAlmacen] = useState('')
+  const [histFolio, setHistFolio] = useState('')
+  const [histCargando, setHistCargando] = useState(false)
+  const [histResultados, setHistResultados] = useState([])
+  const [histDetalle, setHistDetalle] = useState(null)
+  const [histFaltanteGlobal, setHistFaltanteGlobal] = useState(false)
+
   useEffect(() => {
     iniciar()
   }, [])
@@ -600,6 +609,87 @@ export default function AuditoriasPage() {
     } finally {
       setGuardando(false)
     }
+  }
+
+  async function buscarAuditoriasRealizadas(verFaltanteGlobal = false) {
+    limpiarMensajes()
+    setHistCargando(true)
+    setHistDetalle(null)
+    setHistFaltanteGlobal(verFaltanteGlobal)
+
+    try {
+      const almacenFiltro = normalizarAlmacen(histAlmacen)
+      const folioFiltro = texto(histFolio)
+      const mesFiltro = texto(histMes)
+      const tablas = [
+        { nombre: 'auditorias_materiales', tipo: 'MATERIALES' },
+        { nombre: 'auditorias_herramientas', tipo: 'HERRAMIENTAS' },
+        { nombre: 'auditorias_equipos', tipo: 'EQUIPOS' },
+      ]
+
+      const grupos = new Map()
+
+      for (const cfg of tablas) {
+        let q = supabase.from(cfg.nombre).select('*').order('fecha', { ascending: false }).limit(10000)
+        if (almacenFiltro) q = q.eq('almacen', almacenFiltro)
+        if (folioFiltro) q = q.eq('folio', folioFiltro)
+        if (mesFiltro) q = q.eq('mes', mesFiltro)
+        const { data, error: qError } = await q
+        if (qError) throw qError
+
+        for (const fila of data || []) {
+          const folio = texto(fila.folio)
+          if (!folio) continue
+          if (!grupos.has(folio)) {
+            grupos.set(folio, {
+              folio,
+              fecha: fila.fecha,
+              mes: fila.mes,
+              tipoAuditoria: fila.tipo_auditoria,
+              almacen: fila.almacen,
+              tecnico: fila.tecnico,
+              auditor: fila.auditor_nombre || fila.auditor_usuario,
+              materiales: [], herramientas: [], equipos: [],
+            })
+          }
+          const g = grupos.get(folio)
+          if (cfg.tipo === 'MATERIALES') g.materiales.push(fila)
+          if (cfg.tipo === 'HERRAMIENTAS') g.herramientas.push(fila)
+          if (cfg.tipo === 'EQUIPOS') g.equipos.push(fila)
+        }
+      }
+
+      let resultados = [...grupos.values()].sort((a,b) => String(b.fecha||'').localeCompare(String(a.fecha||'')))
+      if (verFaltanteGlobal) {
+        resultados = resultados.map(g => ({
+          ...g,
+          materiales: g.materiales.filter(x => numero(x.diferencia) < 0 || texto(x.observacion).toUpperCase() === 'FALTANTE'),
+          herramientas: g.herramientas.filter(x => numero(x.diferencia) < 0 || texto(x.observacion).toUpperCase() === 'FALTANTE'),
+          equipos: g.equipos.filter(x => texto(x.estado).toUpperCase() === 'FALTANTE'),
+        })).filter(g => g.materiales.length || g.herramientas.length || g.equipos.length)
+      }
+
+      setHistResultados(resultados)
+      if (folioFiltro && resultados.length === 1) setHistDetalle(resultados[0])
+      setMensaje(`${resultados.length} auditoria(s) encontrada(s).`)
+    } catch (e) {
+      setError(e?.message || 'No fue posible consultar las auditorias realizadas.')
+    } finally {
+      setHistCargando(false)
+    }
+  }
+
+  function abrirDetalleHistorico(item) {
+    setHistDetalle(item)
+  }
+
+  function limpiarHistoricos() {
+    setHistMes('')
+    setHistAlmacen('')
+    setHistFolio('')
+    setHistResultados([])
+    setHistDetalle(null)
+    setHistFaltanteGlobal(false)
   }
 
   function registrarSerie(e) {
@@ -1185,6 +1275,33 @@ export default function AuditoriasPage() {
             </section>
           )}
 
+
+        <section style={styles.tarjeta}>
+          <h2 style={styles.seccionTitulo}>Auditorias realizadas</h2>
+          <div style={styles.formulario}>
+            <label style={styles.campo}><span>Mes</span><input type="month" style={styles.input} value={histMes} onChange={(e)=>setHistMes(e.target.value)} /></label>
+            <label style={styles.campo}><span>Almacen</span><input style={styles.input} value={histAlmacen} onChange={(e)=>setHistAlmacen(e.target.value.toUpperCase())} placeholder="Ej. 0045" /></label>
+            <label style={styles.campo}><span>Folio</span><input style={styles.input} value={histFolio} onChange={(e)=>setHistFolio(e.target.value.toUpperCase())} placeholder="AUD-PUE-..." /></label>
+          </div>
+          <div style={styles.botones}>
+            <button type="button" style={styles.botonPrincipal} disabled={histCargando} onClick={()=>buscarAuditoriasRealizadas(false)}>{histCargando ? 'Buscando...' : 'Buscar auditorias'}</button>
+            <button type="button" style={styles.botonFaltantes} disabled={histCargando} onClick={()=>buscarAuditoriasRealizadas(true)}>Ver faltante global</button>
+            <button type="button" style={styles.botonSecundario} onClick={limpiarHistoricos}>Limpiar filtros</button>
+          </div>
+          {histFaltanteGlobal && <div style={styles.tecnico}><strong>Faltante global:</strong> se muestran solamente faltantes de las auditorias que coinciden con los filtros.</div>}
+
+          {histResultados.length > 0 && <div style={styles.tablaWrap}>
+            <table style={styles.tabla}><thead><tr><th style={styles.th}>Folio</th><th style={styles.th}>Fecha</th><th style={styles.th}>Mes</th><th style={styles.th}>Almacen</th><th style={styles.th}>Tecnico</th><th style={styles.th}>Auditor</th><th style={styles.th}>Mat.</th><th style={styles.th}>Herr.</th><th style={styles.th}>Eq.</th><th style={styles.th}>Accion</th></tr></thead>
+            <tbody>{histResultados.map((x)=><tr key={x.folio}><td style={styles.td}>{x.folio}</td><td style={styles.td}>{texto(x.fecha)}</td><td style={styles.td}>{x.mes}</td><td style={styles.td}>{x.almacen}</td><td style={styles.td}>{x.tecnico}</td><td style={styles.td}>{x.auditor}</td><td style={styles.td}>{x.materiales.length}</td><td style={styles.td}>{x.herramientas.length}</td><td style={styles.td}>{x.equipos.length}</td><td style={styles.td}><button type="button" style={styles.botonSecundario} onClick={()=>abrirDetalleHistorico(x)}>Ver detalle</button></td></tr>)}</tbody></table>
+          </div>}
+
+          {histDetalle && <div style={{marginTop:'18px'}}>
+            <h3>Detalle: {histDetalle.folio}</h3>
+            {histDetalle.materiales.length > 0 && <><h4>Materiales</h4><div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr><th style={styles.th}>SKU</th><th style={styles.th}>Material</th><th style={styles.th}>Lote</th><th style={styles.th}>Sistema</th><th style={styles.th}>Fisico</th><th style={styles.th}>Diferencia</th><th style={styles.th}>Observacion</th></tr></thead><tbody>{histDetalle.materiales.map((x,i)=><tr key={i}><td style={styles.td}>{x.sku}</td><td style={styles.td}>{x.material}</td><td style={styles.td}>{x.lote}</td><td style={styles.td}>{x.sistema}</td><td style={styles.td}>{x.fisico}</td><td style={styles.td}>{x.diferencia}</td><td style={styles.td}>{x.observacion}</td></tr>)}</tbody></table></div></>}
+            {histDetalle.herramientas.length > 0 && <><h4>Herramientas</h4><div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr><th style={styles.th}>Producto</th><th style={styles.th}>Ubicacion</th><th style={styles.th}>Sistema</th><th style={styles.th}>Fisico</th><th style={styles.th}>Diferencia</th><th style={styles.th}>Observacion</th></tr></thead><tbody>{histDetalle.herramientas.map((x,i)=><tr key={i}><td style={styles.td}>{x.producto}</td><td style={styles.td}>{x.ubicacion}</td><td style={styles.td}>{x.sistema}</td><td style={styles.td}>{x.fisico}</td><td style={styles.td}>{x.diferencia}</td><td style={styles.td}>{x.observacion}</td></tr>)}</tbody></table></div></>}
+            {histDetalle.equipos.length > 0 && <><h4>Equipos</h4><div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr><th style={styles.th}>Serie</th><th style={styles.th}>Material</th><th style={styles.th}>Descripcion</th><th style={styles.th}>Lote</th><th style={styles.th}>Estado</th></tr></thead><tbody>{histDetalle.equipos.map((x,i)=><tr key={i}><td style={styles.td}>{x.serie}</td><td style={styles.td}>{x.material}</td><td style={styles.td}>{x.descripcion}</td><td style={styles.td}>{x.lote}</td><td style={styles.td}>{x.estado}</td></tr>)}</tbody></table></div></>}
+          </div>}
+        </section>
         {tecnico && (
           <section style={styles.tarjeta}>
             <h2 style={styles.subtitulo}>Observaciones generales</h2>
