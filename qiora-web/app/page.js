@@ -4,31 +4,11 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
-// Compatibilidad temporal con las contraseñas actuales de QIORA.
-// Se debe migrar posteriormente a contraseñas independientes.
+// Compatibilidad temporal con las claves actuales de QIORA.
+// Posteriormente se deben migrar las contraseñas.
 function passwordSupabase(clave) {
   return `QIORA#${String(clave ?? '')}`
 }
-
-const CAMPOS_PERFIL = [
-  'id',
-  'auth_user_id',
-  'usuario_almacen',
-  'nombre',
-  'puesto',
-  'distrito',
-  'activo',
-  'odoo',
-  'auditoria',
-  'ver_auditorias',
-  'recolecciones',
-  'solicitud_material',
-  'devoluciones',
-  'asignaciones',
-  'bajas',
-  'traspasos',
-  'dashboard',
-].join(',')
 
 const MODULOS = [
   ['auditoria', 'Auditorías'],
@@ -66,7 +46,7 @@ export default function Home() {
           return
         }
 
-        await cargarPerfil(user.id, () => activo)
+        await cargarPerfil(() => activo)
       } catch (error) {
         console.error('ERROR VALIDANDO SESIÓN:', error)
 
@@ -88,13 +68,13 @@ export default function Home() {
     }
   }, [])
 
-  async function cargarPerfil(uid, sigueActivo = () => true) {
+  async function cargarPerfil(sigueActivo = () => true) {
     try {
-      const { data, error } = await supabase
-        .from('almacen_usuarios')
-        .select(CAMPOS_PERFIL)
-        .eq('auth_user_id', uid)
-        .maybeSingle()
+      // La función utiliza auth.uid() dentro de Supabase.
+      // No enviamos el identificador del usuario desde el navegador.
+      const { data, error } = await supabase.rpc(
+        'qiora_mi_perfil'
+      )
 
       if (error) {
         console.error('ERROR CARGANDO PERFIL:', error)
@@ -104,7 +84,7 @@ export default function Home() {
         if (sigueActivo()) {
           setPerfil(null)
           setMsg(
-            'No fue posible cargar el perfil vinculado.'
+            `No fue posible cargar el perfil: ${error.message}`
           )
         }
 
@@ -116,7 +96,9 @@ export default function Home() {
 
         if (sigueActivo()) {
           setPerfil(null)
-          setMsg('No se encontró el perfil vinculado.')
+          setMsg(
+            'No se encontró un perfil activo vinculado.'
+          )
         }
 
         return false
@@ -192,7 +174,7 @@ export default function Home() {
         return
       }
 
-      const perfilCargado = await cargarPerfil(data.user.id)
+      const perfilCargado = await cargarPerfil()
 
       if (!perfilCargado) {
         return
