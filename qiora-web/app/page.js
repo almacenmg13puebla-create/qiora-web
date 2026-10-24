@@ -1,14 +1,46 @@
+
 'use client'
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
-// IMPORTANTE:
-// El usuario sigue escribiendo exactamente su clave normal de QIORA.
-// Esta transformación solo se utiliza internamente para Supabase Auth.
+// Compatibilidad temporal con las contraseñas actuales de QIORA.
+// Se debe migrar posteriormente a contraseñas independientes.
 function passwordSupabase(clave) {
   return `QIORA#${String(clave ?? '')}`
 }
+
+const CAMPOS_PERFIL = [
+  'id',
+  'auth_user_id',
+  'usuario_almacen',
+  'nombre',
+  'puesto',
+  'distrito',
+  'activo',
+  'odoo',
+  'auditoria',
+  'ver_auditorias',
+  'recolecciones',
+  'solicitud_material',
+  'devoluciones',
+  'asignaciones',
+  'bajas',
+  'traspasos',
+  'dashboard',
+].join(',')
+
+const MODULOS = [
+  ['auditoria', 'Auditorías'],
+  ['ver_auditorias', 'Ver auditorías'],
+  ['recolecciones', 'Recolecciones'],
+  ['solicitud_material', 'Solicitud de material'],
+  ['devoluciones', 'Devoluciones'],
+  ['asignaciones', 'Asignaciones'],
+  ['bajas', 'Bajas'],
+  ['traspasos', 'Traspasos'],
+  ['dashboard', 'Dashboard'],
+]
 
 export default function Home() {
   const [usuario, setUsuario] = useState('')
@@ -18,33 +50,49 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    ;(async () => {
+    let activo = true
+
+    async function validarSesion() {
       try {
         const {
-          data: { session },
+          data: { user },
           error,
-        } = await supabase.auth.getSession()
+        } = await supabase.auth.getUser()
 
-        if (error) {
-          console.error('ERROR OBTENIENDO SESIÓN:', error)
+        if (error || !user?.id) {
+          if (activo) {
+            setPerfil(null)
+          }
+          return
         }
 
-        if (session?.user?.id) {
-          await cargarPerfil(session.user.id)
-        }
+        await cargarPerfil(user.id, () => activo)
       } catch (error) {
         console.error('ERROR VALIDANDO SESIÓN:', error)
+
+        if (activo) {
+          setPerfil(null)
+          setMsg('Error al validar la sesión.')
+        }
       } finally {
-        setLoading(false)
+        if (activo) {
+          setLoading(false)
+        }
       }
-    })()
+    }
+
+    validarSesion()
+
+    return () => {
+      activo = false
+    }
   }, [])
 
-  async function cargarPerfil(uid) {
+  async function cargarPerfil(uid, sigueActivo = () => true) {
     try {
       const { data, error } = await supabase
         .from('almacen_usuarios')
-        .select('*')
+        .select(CAMPOS_PERFIL)
         .eq('auth_user_id', uid)
         .maybeSingle()
 
@@ -52,38 +100,54 @@ export default function Home() {
         console.error('ERROR CARGANDO PERFIL:', error)
 
         await supabase.auth.signOut()
-        setPerfil(null)
-        setMsg(`No se encontró el perfil vinculado: ${error.message}`)
+
+        if (sigueActivo()) {
+          setPerfil(null)
+          setMsg(
+            'No fue posible cargar el perfil vinculado.'
+          )
+        }
 
         return false
       }
 
       if (!data) {
         await supabase.auth.signOut()
-        setPerfil(null)
-        setMsg('No se encontró el perfil vinculado.')
+
+        if (sigueActivo()) {
+          setPerfil(null)
+          setMsg('No se encontró el perfil vinculado.')
+        }
 
         return false
       }
 
       if (data.activo !== true) {
         await supabase.auth.signOut()
-        setPerfil(null)
-        setMsg('Usuario inactivo.')
+
+        if (sigueActivo()) {
+          setPerfil(null)
+          setMsg('Usuario inactivo.')
+        }
 
         return false
       }
 
-      setPerfil(data)
-      setMsg('')
+      if (sigueActivo()) {
+        setPerfil(data)
+        setMsg('')
+      }
 
       return true
     } catch (error) {
       console.error('ERROR CARGANDO PERFIL:', error)
 
       await supabase.auth.signOut()
-      setPerfil(null)
-      setMsg('Error al cargar el perfil del usuario.')
+
+      if (sigueActivo()) {
+        setPerfil(null)
+        setMsg('Error al cargar el perfil del usuario.')
+      }
 
       return false
     }
@@ -109,9 +173,6 @@ export default function Home() {
       }
 
       const email = `${u.toLowerCase()}@qiora.local`
-
-      // El usuario escribe su clave normal.
-      // Supabase recibe la versión transformada.
       const password = passwordSupabase(claveNormal)
 
       const { data, error } =
@@ -122,7 +183,6 @@ export default function Home() {
 
       if (error) {
         console.error('ERROR LOGIN SUPABASE:', error)
-
         setMsg('Usuario o clave incorrectos.')
         return
       }
@@ -132,8 +192,7 @@ export default function Home() {
         return
       }
 
-      const perfilCargado =
-        await cargarPerfil(data.user.id)
+      const perfilCargado = await cargarPerfil(data.user.id)
 
       if (!perfilCargado) {
         return
@@ -142,7 +201,6 @@ export default function Home() {
       setClave('')
     } catch (error) {
       console.error('ERROR LOGIN:', error)
-
       setMsg('No fue posible iniciar sesión.')
     } finally {
       setLoading(false)
@@ -151,15 +209,20 @@ export default function Home() {
 
   async function salir() {
     try {
-      await supabase.auth.signOut()
+      const { error } = await supabase.auth.signOut()
+
+      if (error) {
+        throw error
+      }
+
+      setPerfil(null)
+      setUsuario('')
+      setClave('')
+      setMsg('')
     } catch (error) {
       console.error('ERROR CERRANDO SESIÓN:', error)
+      setMsg('No fue posible cerrar la sesión.')
     }
-
-    setPerfil(null)
-    setUsuario('')
-    setClave('')
-    setMsg('')
   }
 
   if (loading) {
@@ -207,6 +270,7 @@ export default function Home() {
             spellCheck={false}
             placeholder="1903"
             disabled={loading}
+            required
           />
 
           <label>
@@ -222,6 +286,7 @@ export default function Home() {
             autoComplete="current-password"
             placeholder="********"
             disabled={loading}
+            required
           />
 
           {msg && (
@@ -243,20 +308,9 @@ export default function Home() {
     )
   }
 
-  const modulos = [
-    ['auditoria', 'Auditorías'],
-    ['ver_auditorias', 'Ver auditorías'],
-    ['recolecciones', 'Recolecciones'],
-    [
-      'solicitud_material',
-      'Solicitud de material',
-    ],
-    ['devoluciones', 'Devoluciones'],
-    ['asignaciones', 'Asignaciones'],
-    ['bajas', 'Bajas'],
-    ['traspasos', 'Traspasos'],
-    ['dashboard', 'Dashboard'],
-  ].filter(([permiso]) => perfil[permiso] === true)
+  const modulos = MODULOS.filter(
+    ([permiso]) => perfil[permiso] === true
+  )
 
   return (
     <main className="dash">
@@ -306,26 +360,24 @@ export default function Home() {
 
       <section className="grid">
         {modulos.length > 0 ? (
-          modulos.map(
-            ([permiso, nombre]) => (
-              <article key={permiso}>
-                <h3>
-                  {nombre}
-                </h3>
+          modulos.map(([permiso, nombre]) => (
+            <article key={permiso}>
+              <h3>
+                {nombre}
+              </h3>
 
-                <p>
-                  Módulo habilitado por permiso.
-                </p>
+              <p>
+                Módulo habilitado por permiso.
+              </p>
 
-                <button
-                  type="button"
-                  disabled
-                >
-                  Abrir próximamente
-                </button>
-              </article>
-            )
-          )
+              <button
+                type="button"
+                disabled
+              >
+                Abrir próximamente
+              </button>
+            </article>
+          ))
         ) : (
           <article>
             <h3>
