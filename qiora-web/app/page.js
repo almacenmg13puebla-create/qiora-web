@@ -1,6 +1,6 @@
 
 'use client'
-// QIORA PERFIL RPC - VERSION CORREGIDA 2026-10-24
+
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
