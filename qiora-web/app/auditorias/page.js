@@ -709,6 +709,8 @@ export default function AuditoriasPage() {
 
       setHistResultados(resultados)
       if (folioFiltro && resultados.length === 1) setHistDetalle(resultados[0])
+      setVista(verFaltanteGlobal ? 'FALTANTE_GLOBAL' : 'HISTORICO')
+      window.scrollTo({ top: 0, behavior: 'instant' })
       setMensaje(`${resultados.length} auditoria(s) encontrada(s).`)
     } catch (e) {
       setError(e?.message || 'No fue posible consultar las auditorias realizadas.')
@@ -719,6 +721,14 @@ export default function AuditoriasPage() {
 
   function abrirDetalleHistorico(item) {
     setHistDetalle(item)
+    setVista(vista === 'FALTANTE_GLOBAL' ? 'DETALLE_FALTANTE' : 'DETALLE_HISTORICO')
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }
+
+  function regresarDesdeFaltante() {
+    setHistDetalle(null)
+    setVista('HISTORICO')
+    window.scrollTo({ top: 0, behavior: 'instant' })
   }
 
   function limpiarHistoricos() {
@@ -876,10 +886,10 @@ export default function AuditoriasPage() {
         ) : (
           <div style={styles.encabezado}>
             <div>
-              <h1 style={styles.titulo}>{vista === 'CAPTURA' ? 'Auditorías Técnicos' : vista === 'HISTORICO' ? 'Auditorías realizadas' : 'Programar Auditorías por Semana'}</h1>
+              <h1 style={styles.titulo}>{vista === 'CAPTURA' ? 'Auditorías Técnicos' : vista === 'HISTORICO' ? 'Auditorías realizadas' : vista === 'FALTANTE_GLOBAL' ? 'Faltante global' : vista === 'DETALLE_FALTANTE' ? 'Detalle de faltantes' : vista === 'DETALLE_HISTORICO' ? 'Detalle de auditoría' : 'Programar Auditorías por Semana'}</h1>
               <div style={styles.subtitulo}>QIORA CONECTA · {perfil?.distrito || ''}</div>
             </div>
-            <button type="button" style={styles.botonSecundario} onClick={() => setVista('MENU')}>← Regresar a Auditorías</button>
+            <button type="button" style={styles.botonSecundario} onClick={() => (['FALTANTE_GLOBAL', 'DETALLE_HISTORICO'].includes(vista) ? regresarDesdeFaltante() : vista === 'DETALLE_FALTANTE' ? setVista('FALTANTE_GLOBAL') : setVista('MENU'))}>{['FALTANTE_GLOBAL', 'DETALLE_HISTORICO'].includes(vista) ? '← Regresar al historial' : vista === 'DETALLE_FALTANTE' ? '← Regresar al faltante global' : '← Regresar a Auditorías'}</button>
           </div>
         )}
 
@@ -905,9 +915,9 @@ export default function AuditoriasPage() {
         )}
 
         {vista === 'HISTORICO' && (
-        <section style={styles.tarjeta}>
-          <h2 style={styles.seccionTitulo}>Auditorías realizadas</h2>
-          <p style={{ color: '#53675e', marginTop: -4 }}>Consulta el historial por mes, almacén o folio. Sin filtros, consulta todas las auditorías disponibles.</p>
+          <section style={styles.tarjeta}>
+            <h2 style={styles.seccionTitulo}>Auditorías realizadas</h2>
+            <p style={{color:'#53675e'}}>Consulta por mes, almacén o folio. El faltante global se abre en una pantalla independiente.</p>
           <div style={styles.formulario}>
             <label style={styles.campo}><span>Mes</span><input type="month" style={{...styles.input, colorScheme: 'light', minHeight: 46}} value={histMes} onChange={(e)=>setHistMes(e.target.value)} /></label>
             <label style={styles.campo}><span>Almacen</span><input style={styles.input} value={histAlmacen} onChange={(e)=>setHistAlmacen(e.target.value.toUpperCase())} placeholder="Ej. 0045" /></label>
@@ -918,7 +928,23 @@ export default function AuditoriasPage() {
             <button type="button" style={styles.botonFaltantes} disabled={histCargando} onClick={()=>buscarAuditoriasRealizadas(true)}>Ver faltante global</button>
             <button type="button" style={styles.botonSecundario} onClick={limpiarHistoricos}>Limpiar filtros</button>
           </div>
-          {histFaltanteGlobal && (
+            {histResultados.length > 0 && <div style={styles.tablaWrap}>
+            <table style={styles.tabla}><thead><tr><th style={styles.th}>Folio</th><th style={styles.th}>Fecha</th><th style={styles.th}>Mes</th><th style={styles.th}>Almacen</th><th style={styles.th}>Tecnico</th><th style={styles.th}>Auditor</th><th style={styles.th}>Mat.</th><th style={styles.th}>Herr.</th><th style={styles.th}>Eq.</th><th style={styles.th}>Accion</th></tr></thead>
+            <tbody>{histResultados.map((x)=><tr key={`${x.folio}|${x.almacen}`}><td style={styles.td}>{x.folio}</td><td style={styles.td}>{texto(x.fecha)}</td><td style={styles.td}>{x.mes}</td><td style={styles.td}>{x.almacen}</td><td style={styles.td}>{x.tecnico}</td><td style={styles.td}>{x.auditor}</td><td style={styles.td}>{x.materiales.length}</td><td style={styles.td}>{x.herramientas.length}</td><td style={styles.td}>{x.equipos.length}</td><td style={styles.td}><button type="button" style={styles.botonSecundario} onClick={()=>abrirDetalleHistorico(x)}>Ver detalle</button></td></tr>)}</tbody></table>
+          </div>}
+          </section>
+        )}
+
+        {vista === 'FALTANTE_GLOBAL' && (
+          <section style={styles.tarjeta}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+              <div>
+                <h2 style={styles.seccionTitulo}>Faltante global de auditorías</h2>
+                <p style={{color:'#53675e',margin:'4px 0 12px'}}>Mes: <strong>{histMes || 'Todos'}</strong> · Almacén: <strong>{normalizarAlmacen(histAlmacen) || 'Todos'}</strong> · Folio: <strong>{histFolio || 'Todos'}</strong></p>
+              </div>
+              <button type="button" style={styles.botonSecundario} onClick={regresarDesdeFaltante}>← Regresar al historial</button>
+            </div>
+{histFaltanteGlobal && (
             <div style={styles.tecnico}>
               <strong>Faltante global · Resultados sin filas idénticas repetidas</strong>
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:12,marginTop:12}}>
@@ -941,19 +967,27 @@ export default function AuditoriasPage() {
               </p>
             </div>
           )}
-
-          {histResultados.length > 0 && <div style={styles.tablaWrap}>
+            <h3 style={{marginTop:22}}>Auditorías con faltantes ({histResultados.length})</h3>
+{histResultados.length > 0 && <div style={styles.tablaWrap}>
             <table style={styles.tabla}><thead><tr><th style={styles.th}>Folio</th><th style={styles.th}>Fecha</th><th style={styles.th}>Mes</th><th style={styles.th}>Almacen</th><th style={styles.th}>Tecnico</th><th style={styles.th}>Auditor</th><th style={styles.th}>Mat.</th><th style={styles.th}>Herr.</th><th style={styles.th}>Eq.</th><th style={styles.th}>Accion</th></tr></thead>
-            <tbody>{histResultados.map((x)=><tr key={x.folio}><td style={styles.td}>{x.folio}</td><td style={styles.td}>{texto(x.fecha)}</td><td style={styles.td}>{x.mes}</td><td style={styles.td}>{x.almacen}</td><td style={styles.td}>{x.tecnico}</td><td style={styles.td}>{x.auditor}</td><td style={styles.td}>{x.materiales.length}</td><td style={styles.td}>{x.herramientas.length}</td><td style={styles.td}>{x.equipos.length}</td><td style={styles.td}><button type="button" style={styles.botonSecundario} onClick={()=>abrirDetalleHistorico(x)}>Ver detalle</button></td></tr>)}</tbody></table>
+            <tbody>{histResultados.map((x)=><tr key={`${x.folio}|${x.almacen}`}><td style={styles.td}>{x.folio}</td><td style={styles.td}>{texto(x.fecha)}</td><td style={styles.td}>{x.mes}</td><td style={styles.td}>{x.almacen}</td><td style={styles.td}>{x.tecnico}</td><td style={styles.td}>{x.auditor}</td><td style={styles.td}>{x.materiales.length}</td><td style={styles.td}>{x.herramientas.length}</td><td style={styles.td}>{x.equipos.length}</td><td style={styles.td}><button type="button" style={styles.botonSecundario} onClick={()=>abrirDetalleHistorico(x)}>Ver detalle</button></td></tr>)}</tbody></table>
           </div>}
+            {histResultados.length === 0 && <p>No se encontraron faltantes con los filtros seleccionados.</p>}
+          </section>
+        )}
 
-          {histDetalle && <div style={{marginTop:'18px'}}>
+        {(vista === 'DETALLE_FALTANTE' || vista === 'DETALLE_HISTORICO') && (
+          <section style={styles.tarjeta}>
+            <button type="button" style={styles.botonSecundario} onClick={() => { setVista(vista === 'DETALLE_FALTANTE' ? 'FALTANTE_GLOBAL' : 'HISTORICO'); window.scrollTo({top:0,behavior:'instant'}) }}>
+              ← {vista === 'DETALLE_FALTANTE' ? 'Regresar al faltante global' : 'Regresar al historial'}
+            </button>
+{histDetalle && <div style={{marginTop:'18px'}}>
             <h3>Detalle: {histDetalle.folio}</h3>
             {histDetalle.materiales.length > 0 && <><h4>Materiales</h4><div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr><th style={styles.th}>SKU</th><th style={styles.th}>Material</th><th style={styles.th}>Lote</th><th style={styles.th}>Sistema</th><th style={styles.th}>Fisico</th><th style={styles.th}>Diferencia</th><th style={styles.th}>Observacion</th></tr></thead><tbody>{histDetalle.materiales.map((x,i)=><tr key={i}><td style={styles.td}>{x.sku}</td><td style={styles.td}>{x.material}</td><td style={styles.td}>{x.lote}</td><td style={styles.td}>{x.sistema}</td><td style={styles.td}>{x.fisico}</td><td style={styles.td}>{x.diferencia}</td><td style={styles.td}>{x.observacion}</td></tr>)}</tbody></table></div></>}
             {histDetalle.herramientas.length > 0 && <><h4>Herramientas</h4><div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr><th style={styles.th}>Producto</th><th style={styles.th}>Ubicacion</th><th style={styles.th}>Sistema</th><th style={styles.th}>Fisico</th><th style={styles.th}>Diferencia</th><th style={styles.th}>Observacion</th></tr></thead><tbody>{histDetalle.herramientas.map((x,i)=><tr key={i}><td style={styles.td}>{x.producto}</td><td style={styles.td}>{x.ubicacion}</td><td style={styles.td}>{x.sistema}</td><td style={styles.td}>{x.fisico}</td><td style={styles.td}>{x.diferencia}</td><td style={styles.td}>{x.observacion}</td></tr>)}</tbody></table></div></>}
             {histDetalle.equipos.length > 0 && <><h4>Equipos</h4><div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr><th style={styles.th}>Serie</th><th style={styles.th}>Material</th><th style={styles.th}>Descripcion</th><th style={styles.th}>Lote</th><th style={styles.th}>Estado</th></tr></thead><tbody>{histDetalle.equipos.map((x,i)=><tr key={i}><td style={styles.td}>{x.serie}</td><td style={styles.td}>{x.material}</td><td style={styles.td}>{x.descripcion}</td><td style={styles.td}>{x.lote}</td><td style={styles.td}>{x.estado}</td></tr>)}</tbody></table></div></>}
           </div>}
-        </section>
+          </section>
         )}
 
         {vista === 'CAPTURA' && (<>
