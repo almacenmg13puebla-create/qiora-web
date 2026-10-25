@@ -24,7 +24,7 @@ function observacionDiferencia(fisico, sistema) {
   const diferencia = numero(fisico) - numero(sistema)
   if (diferencia < 0) return 'FALTANTE'
   if (diferencia > 0) return 'SOBRANTE'
-  return ''
+  return 'COINCIDE'
 }
 
 function normalizarSerie(v) {
@@ -69,6 +69,35 @@ function bool(v) {
     texto(v).toUpperCase() === 'SI' ||
     texto(v).toUpperCase() === 'SÍ' ||
     texto(v).toUpperCase() === 'TRUE'
+}
+
+// Deduplicación visual: únicamente filas idénticas en sus datos operativos.
+// No elimina ni modifica registros de Supabase.
+function sinDuplicadosHistoricos(filas, tipo) {
+  const campos = tipo === 'MATERIALES'
+    ? ['sku', 'material', 'lote', 'sistema', 'fisico', 'diferencia', 'observacion']
+    : tipo === 'HERRAMIENTAS'
+      ? ['producto', 'ubicacion', 'sistema', 'fisico', 'diferencia', 'observacion']
+      : ['serie', 'material', 'descripcion', 'lote', 'estado']
+  const vistos = new Set()
+  return filas.filter((fila) => {
+    const clave = JSON.stringify([fila.folio, fila.almacen, ...campos.map((c) => fila[c] ?? null)])
+    if (vistos.has(clave)) return false
+    vistos.add(clave)
+    return true
+  })
+}
+
+function resumenFaltantesHistoricos(resultados) {
+  const r = { materiales: 0, herramientas: 0, equipos: 0, unidadesMateriales: 0, unidadesHerramientas: 0 }
+  for (const g of resultados) {
+    r.materiales += g.materiales.length
+    r.herramientas += g.herramientas.length
+    r.equipos += g.equipos.length
+    for (const x of g.materiales) r.unidadesMateriales += Math.max(0, -numero(x.diferencia))
+    for (const x of g.herramientas) r.unidadesHerramientas += Math.max(0, -numero(x.diferencia))
+  }
+  return r
 }
 
 export default function AuditoriasPage() {
@@ -628,19 +657,29 @@ export default function AuditoriasPage() {
 
       const grupos = new Map()
 
+      // Leer todas las páginas para evitar que un límite de 1,000 filas
+      // produzca faltantes globales incompletos.
       for (const cfg of tablas) {
-        let q = supabase.from(cfg.nombre).select('*').order('fecha', { ascending: false }).limit(10000)
-        if (almacenFiltro) q = q.eq('almacen', almacenFiltro)
-        if (folioFiltro) q = q.eq('folio', folioFiltro)
-        if (mesFiltro) q = q.eq('mes', mesFiltro)
-        const { data, error: qError } = await q
-        if (qError) throw qError
-
-        for (const fila of data || []) {
+        const filas = []
+        const tamano = 500
+        for (let inicio = 0; ; inicio += tamano) {
+          let q = supabase.from(cfg.nombre).select('*')
+            .order('fecha', { ascending: false })
+            .range(inicio, inicio + tamano - 1)
+          if (almacenFiltro) q = q.eq('almacen', almacenFiltro)
+          if (folioFiltro) q = q.eq('folio', folioFiltro)
+          if (mesFiltro) q = q.eq('mes', mesFiltro)
+          const { data, error: qError } = await q
+          if (qError) throw qError
+          filas.push(...(data || []))
+          if (!data || data.length < tamano) break
+        }
+        for (const fila of sinDuplicadosHistoricos(filas, cfg.tipo)) {
           const folio = texto(fila.folio)
           if (!folio) continue
-          if (!grupos.has(folio)) {
-            grupos.set(folio, {
+          const claveGrupo = `${folio}|${texto(fila.almacen)}`
+          if (!grupos.has(claveGrupo)) {
+            grupos.set(claveGrupo, {
               folio,
               fecha: fila.fecha,
               mes: fila.mes,
@@ -651,7 +690,7 @@ export default function AuditoriasPage() {
               materiales: [], herramientas: [], equipos: [],
             })
           }
-          const g = grupos.get(folio)
+          const g = grupos.get(claveGrupo)
           if (cfg.tipo === 'MATERIALES') g.materiales.push(fila)
           if (cfg.tipo === 'HERRAMIENTAS') g.herramientas.push(fila)
           if (cfg.tipo === 'EQUIPOS') g.equipos.push(fila)
@@ -879,7 +918,29 @@ export default function AuditoriasPage() {
             <button type="button" style={styles.botonFaltantes} disabled={histCargando} onClick={()=>buscarAuditoriasRealizadas(true)}>Ver faltante global</button>
             <button type="button" style={styles.botonSecundario} onClick={limpiarHistoricos}>Limpiar filtros</button>
           </div>
-          {histFaltanteGlobal && <div style={styles.tecnico}><strong>Faltante global:</strong> se muestran solamente faltantes de las auditorias que coinciden con los filtros.</div>}
+          {histFaltanteGlobal && (
+            <div style={styles.tecnico}>
+              <strong>Faltante global · Resultados sin filas idénticas repetidas</strong>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:12,marginTop:12}}>
+                {[
+                  ['Materiales faltantes', resumenFaltantesHistoricos(histResultados).materiales],
+                  ['Unidades materiales', resumenFaltantesHistoricos(histResultados).unidadesMateriales],
+                  ['Herramientas faltantes', resumenFaltantesHistoricos(histResultados).herramientas],
+                  ['Unidades herramientas', resumenFaltantesHistoricos(histResultados).unidadesHerramientas],
+                  ['Equipos faltantes', resumenFaltantesHistoricos(histResultados).equipos],
+                ].map(([nombre, valor]) => (
+                  <div key={nombre} style={{background:'#e6f3ed',border:'1px solid #b7d9cb',borderRadius:10,padding:14}}>
+                    <div style={{fontSize:13,color:'#344c41'}}>{nombre}</div>
+                    <strong style={{fontSize:25,color:'#095538'}}>{valor}</strong>
+                  </div>
+                ))}
+              </div>
+              <p style={{fontSize:12,color:'#53675e',marginBottom:0}}>
+                Se cuentan registros únicos por folio y almacén. Los datos originales no se modifican.
+                Para reportes multidistrito es necesario verificar la atribución histórica de cada almacén.
+              </p>
+            </div>
+          )}
 
           {histResultados.length > 0 && <div style={styles.tablaWrap}>
             <table style={styles.tabla}><thead><tr><th style={styles.th}>Folio</th><th style={styles.th}>Fecha</th><th style={styles.th}>Mes</th><th style={styles.th}>Almacen</th><th style={styles.th}>Tecnico</th><th style={styles.th}>Auditor</th><th style={styles.th}>Mat.</th><th style={styles.th}>Herr.</th><th style={styles.th}>Eq.</th><th style={styles.th}>Accion</th></tr></thead>
