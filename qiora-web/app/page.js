@@ -146,6 +146,7 @@ export default function Home() {
 
   const modulos = MODULOS.filter((modulo) => perfil[modulo.permiso] === true)
   const disponibles = modulos.filter((modulo) => modulo.disponible)
+  const inventariosPermitidos = ['auditoria', 'dashboard', 'traspasos', 'solicitud_material'].some((p) => perfil[p] === true)
 
   return (
     <main className="qiora-app">
@@ -154,6 +155,7 @@ export default function Home() {
         <div className="qiora-sidebar-section">NAVEGACIÓN</div>
         <a className="qiora-nav-item qiora-nav-active" href="/" onClick={() => setMenuAbierto(false)}>Panel principal</a>
         <div className="qiora-sidebar-section">MIS MÓDULOS</div>
+        {inventariosPermitidos && <a className="qiora-nav-item" href="/inventarios" onClick={() => setMenuAbierto(false)}>Consultar inventarios</a>}
         {modulos.length ? modulos.map((modulo) => (
           modulo.disponible ?
             <a key={modulo.permiso} className="qiora-nav-item" href={modulo.ruta} onClick={() => setMenuAbierto(false)}>{modulo.nombre}</a> :
@@ -178,6 +180,7 @@ export default function Home() {
           {msg && <div className="error" role="alert">{msg}</div>}
           <div className="qiora-section-heading"><div><h2>Mis módulos</h2><p>Las funciones disponibles respetan los permisos de tu perfil.</p></div><span>{disponibles.length} disponible(s)</span></div>
           <section className="qiora-modules">
+            {inventariosPermitidos && <article className="qiora-module"><span className="qiora-module-status qiora-status-ready">Consulta disponible</span><h3>Inventarios</h3><p>Stock técnico e IQ09 por almacén y distrito, con paginación.</p><a className="qiora-module-action" href="/inventarios">Consultar inventarios</a></article>}
             {modulos.length ? modulos.map((modulo) => (
               <article className="qiora-module" key={modulo.permiso}>
                 <span className={`qiora-module-status ${modulo.disponible ? 'qiora-status-ready' : ''}`}>{modulo.disponible ? 'Ruta existente' : 'Próximamente'}</span>
