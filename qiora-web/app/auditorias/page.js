@@ -80,6 +80,7 @@ export default function AuditoriasPage() {
   const [error, setError] = useState('')
 
   const [perfil, setPerfil] = useState(null)
+  const [vista, setVista] = useState('MENU')
 
   const [almacen, setAlmacen] = useState('')
   const [tipo, setTipo] = useState(TIPOS.TODO)
@@ -820,27 +821,30 @@ export default function AuditoriasPage() {
   return (
     <main style={styles.pagina}>
       <div style={styles.contenedor}>
-        <div style={styles.encabezado}>
-          <div>
-            <h1 style={styles.titulo}>
-              Auditorías Técnicos
-            </h1>
-
-            <div style={styles.subtitulo}>
-              QIORA · Auditoría de materiales,
-              herramientas y equipos
+        {vista === 'MENU' ? (
+          <section style={styles.menuShell}>
+            <button type="button" style={styles.menuVolver} onClick={() => router.push('/')}>← Regresar al menú</button>
+            <div style={styles.menuHero}>
+              <h1 style={styles.menuTitulo}>▤ AUDITORÍAS</h1>
+              <p style={styles.menuDescripcion}>Seleccione una opción de auditorías</p>
             </div>
+            <div style={styles.menuGrid}>
+              <button type="button" style={styles.menuOpcion} onClick={() => setVista('CAPTURA')}>▤ Auditorías Técnicos</button>
+              <button type="button" style={styles.menuOpcion} onClick={() => setVista('HISTORICO')}>☑ Auditorías realizadas</button>
+              <button type="button" style={styles.menuOpcion} onClick={() => setVista('PROGRAMACION')}>▤ Programar Auditorías por Semana</button>
+            </div>
+          </section>
+        ) : (
+          <div style={styles.encabezado}>
+            <div>
+              <h1 style={styles.titulo}>{vista === 'CAPTURA' ? 'Auditorías Técnicos' : vista === 'HISTORICO' ? 'Auditorías realizadas' : 'Programar Auditorías por Semana'}</h1>
+              <div style={styles.subtitulo}>QIORA CONECTA · {perfil?.distrito || ''}</div>
+            </div>
+            <button type="button" style={styles.botonSecundario} onClick={() => setVista('MENU')}>← Regresar a Auditorías</button>
           </div>
+        )}
 
-          <button
-            style={styles.botonSecundario}
-            onClick={() => router.push('/')}
-          >
-            Regresar
-          </button>
-        </div>
-
-        {perfil && (
+        {perfil && vista !== 'MENU' && (
           <div style={styles.usuario}>
             Auditor:{' '}
             <strong>{perfil.nombre}</strong>
@@ -853,14 +857,15 @@ export default function AuditoriasPage() {
           </div>
         )}
 
-        {error && (
+        {error && vista !== 'MENU' && (
           <div style={styles.error}>{error}</div>
         )}
 
-        {mensaje && (
+        {mensaje && vista !== 'MENU' && (
           <div style={styles.ok}>{mensaje}</div>
         )}
 
+        {vista === 'HISTORICO' && (
         <section style={styles.tarjeta}>
           <h2 style={styles.seccionTitulo}>Auditorías realizadas</h2>
           <p style={{ color: '#53675e', marginTop: -4 }}>Consulta el historial por mes, almacén o folio. Sin filtros, consulta todas las auditorías disponibles.</p>
@@ -888,7 +893,9 @@ export default function AuditoriasPage() {
             {histDetalle.equipos.length > 0 && <><h4>Equipos</h4><div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr><th style={styles.th}>Serie</th><th style={styles.th}>Material</th><th style={styles.th}>Descripcion</th><th style={styles.th}>Lote</th><th style={styles.th}>Estado</th></tr></thead><tbody>{histDetalle.equipos.map((x,i)=><tr key={i}><td style={styles.td}>{x.serie}</td><td style={styles.td}>{x.material}</td><td style={styles.td}>{x.descripcion}</td><td style={styles.td}>{x.lote}</td><td style={styles.td}>{x.estado}</td></tr>)}</tbody></table></div></>}
           </div>}
         </section>
+        )}
 
+        {vista === 'CAPTURA' && (<>
         <section style={styles.tarjeta}>
           <div style={styles.formulario}>
             <label style={styles.campo}>
@@ -1328,6 +1335,15 @@ export default function AuditoriasPage() {
             </button>
           </section>
         )}
+        </>)}
+
+        {vista === 'PROGRAMACION' && (
+          <section style={styles.tarjeta}>
+            <h2 style={styles.seccionTitulo}>Programación semanal de auditorías</h2>
+            <p>Esta pantalla está separada como en el sistema original. La programación, asignación de técnicos, asistencias y reprogramaciones requieren migrar las funciones de Code.gs a Supabase.</p>
+            <p><strong>No se guardarán programaciones hasta que el servicio de Supabase esté implementado y validado.</strong></p>
+          </section>
+        )}
       </div>
     </main>
   )
@@ -1336,8 +1352,8 @@ export default function AuditoriasPage() {
 const styles = {
   pagina: {
     minHeight: '100vh',
-    background: '#f4f7f6',
-    padding: '24px',
+    background: '#063126',
+    padding: '12px',
     fontFamily: 'Arial, sans-serif',
     color: '#17211d',
   },
@@ -1349,6 +1365,13 @@ const styles = {
     fontFamily: 'Arial, sans-serif',
   },
 
+  menuShell: {background:'linear-gradient(135deg,#092b22,#061f18)', border:'2px solid #416b5c', borderRadius:22, padding:20, color:'#fff', maxWidth:1200, boxShadow:'0 15px 40px #0005'},
+  menuVolver: {border:0, borderRadius:12, background:'#107859', color:'#fff', fontWeight:700, padding:'9px 16px', cursor:'pointer', marginBottom:15},
+  menuHero: {background:'linear-gradient(105deg,#0d5440,#1aa67e)', border:'2px solid #498d78', borderRadius:17, textAlign:'center', padding:'23px 15px', marginBottom:20},
+  menuTitulo: {margin:'0 0 10px', fontSize:30, fontWeight:900},
+  menuDescripcion: {margin:0, fontSize:13, color:'#e5fff4'},
+  menuGrid: {display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:14},
+  menuOpcion: {minHeight:86,background:'linear-gradient(120deg,#138665,#1ab38a)',color:'#fff',border:0,borderRadius:13,padding:18,fontWeight:800,textAlign:'left',fontSize:15,cursor:'pointer',boxShadow:'0 6px 14px #0002'},
   contenedor: {
     maxWidth: '1500px',
     margin: '0 auto',
