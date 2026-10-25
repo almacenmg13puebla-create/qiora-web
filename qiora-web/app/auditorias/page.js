@@ -889,7 +889,7 @@ export default function AuditoriasPage() {
               <h1 style={styles.titulo}>{vista === 'CAPTURA' ? 'Auditorías Técnicos' : vista === 'HISTORICO' ? 'Auditorías realizadas' : vista === 'FALTANTE_GLOBAL' ? 'Faltante global' : vista === 'DETALLE_FALTANTE' ? 'Detalle de faltantes' : vista === 'DETALLE_HISTORICO' ? 'Detalle de auditoría' : 'Programar Auditorías por Semana'}</h1>
               <div style={styles.subtitulo}>QIORA CONECTA · {perfil?.distrito || ''}</div>
             </div>
-            <button type="button" style={styles.botonSecundario} onClick={() => (['FALTANTE_GLOBAL', 'DETALLE_HISTORICO'].includes(vista) ? regresarDesdeFaltante() : vista === 'DETALLE_FALTANTE' ? setVista('FALTANTE_GLOBAL') : setVista('MENU'))}>{['FALTANTE_GLOBAL', 'DETALLE_HISTORICO'].includes(vista) ? '← Regresar al historial' : vista === 'DETALLE_FALTANTE' ? '← Regresar al faltante global' : '← Regresar a Auditorías'}</button>
+            <button type="button" style={styles.botonSecundario} onClick={() => (vista === 'DETALLE_FALTANTE' ? setVista('FALTANTE_GLOBAL') : ['FALTANTE_GLOBAL', 'DETALLE_HISTORICO'].includes(vista) ? regresarDesdeFaltante() : setVista('MENU'))}>{vista === 'DETALLE_FALTANTE' ? '← Regresar al faltante global' : ['FALTANTE_GLOBAL', 'DETALLE_HISTORICO'].includes(vista) ? '← Regresar al historial' : '← Regresar a Auditorías'}</button>
           </div>
         )}
 
@@ -910,7 +910,7 @@ export default function AuditoriasPage() {
           <div style={styles.error}>{error}</div>
         )}
 
-        {mensaje && vista !== 'MENU' && (
+        {mensaje && ['CAPTURA', 'HISTORICO', 'FALTANTE_GLOBAL', 'PROGRAMACION'].includes(vista) && (
           <div style={styles.ok}>{mensaje}</div>
         )}
 
@@ -982,7 +982,20 @@ export default function AuditoriasPage() {
               ← {vista === 'DETALLE_FALTANTE' ? 'Regresar al faltante global' : 'Regresar al historial'}
             </button>
 {histDetalle && <div style={{marginTop:'18px'}}>
-            <h3>Detalle: {histDetalle.folio}</h3>
+            <h3 style={{marginBottom:8}}>Detalle: {histDetalle.folio}</h3>
+            <p style={{color:'#53675e',margin:'0 0 16px'}}>Almacén: <strong>{histDetalle.almacen}</strong> · Técnico: <strong>{histDetalle.tecnico || '-'}</strong> · Mes: <strong>{histDetalle.mes || '-'}</strong></p>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(155px,1fr))',gap:12,marginBottom:20}}>
+              {[
+                ['Materiales', histDetalle.materiales.length],
+                ['Herramientas', histDetalle.herramientas.length],
+                ['Equipos', histDetalle.equipos.length],
+              ].map(([etiqueta,cantidad]) => (
+                <div key={etiqueta} style={{border:'1px solid #b7d9cb',borderRadius:10,padding:14,background:'#eaf5ef'}}>
+                  <span style={{display:'block',color:'#406053',fontSize:13}}>{vista === 'DETALLE_FALTANTE' ? `${etiqueta} faltantes` : etiqueta}</span>
+                  <strong style={{fontSize:25,color:'#07553d'}}>{cantidad}</strong>
+                </div>
+              ))}
+            </div>
             {histDetalle.materiales.length > 0 && <><h4>Materiales</h4><div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr><th style={styles.th}>SKU</th><th style={styles.th}>Material</th><th style={styles.th}>Lote</th><th style={styles.th}>Sistema</th><th style={styles.th}>Fisico</th><th style={styles.th}>Diferencia</th><th style={styles.th}>Observacion</th></tr></thead><tbody>{histDetalle.materiales.map((x,i)=><tr key={i}><td style={styles.td}>{x.sku}</td><td style={styles.td}>{x.material}</td><td style={styles.td}>{x.lote}</td><td style={styles.td}>{x.sistema}</td><td style={styles.td}>{x.fisico}</td><td style={styles.td}>{x.diferencia}</td><td style={styles.td}>{x.observacion}</td></tr>)}</tbody></table></div></>}
             {histDetalle.herramientas.length > 0 && <><h4>Herramientas</h4><div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr><th style={styles.th}>Producto</th><th style={styles.th}>Ubicacion</th><th style={styles.th}>Sistema</th><th style={styles.th}>Fisico</th><th style={styles.th}>Diferencia</th><th style={styles.th}>Observacion</th></tr></thead><tbody>{histDetalle.herramientas.map((x,i)=><tr key={i}><td style={styles.td}>{x.producto}</td><td style={styles.td}>{x.ubicacion}</td><td style={styles.td}>{x.sistema}</td><td style={styles.td}>{x.fisico}</td><td style={styles.td}>{x.diferencia}</td><td style={styles.td}>{x.observacion}</td></tr>)}</tbody></table></div></>}
             {histDetalle.equipos.length > 0 && <><h4>Equipos</h4><div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr><th style={styles.th}>Serie</th><th style={styles.th}>Material</th><th style={styles.th}>Descripcion</th><th style={styles.th}>Lote</th><th style={styles.th}>Estado</th></tr></thead><tbody>{histDetalle.equipos.map((x,i)=><tr key={i}><td style={styles.td}>{x.serie}</td><td style={styles.td}>{x.material}</td><td style={styles.td}>{x.descripcion}</td><td style={styles.td}>{x.lote}</td><td style={styles.td}>{x.estado}</td></tr>)}</tbody></table></div></>}
@@ -1483,6 +1496,8 @@ const styles = {
   titulo: {
     margin: 0,
     fontSize: '30px',
+    color: '#f2fff8',
+    fontWeight: 800,
   },
 
   subtitulo: {
