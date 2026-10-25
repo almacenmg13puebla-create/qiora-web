@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
+import { createClient } from '@supabase/supabase-js'
 
 const TIPOS = {
   TODO: 'TODO',
@@ -367,6 +368,32 @@ function descargarExcelAuditoria(g) {
   setTimeout(()=>URL.revokeObjectURL(url),60000)
 }
 
+
+function fechaQiora(valor) {
+  if (!valor) return '-'
+  const fecha = new Date(valor)
+  if (Number.isNaN(fecha.getTime())) return '-'
+  return new Intl.DateTimeFormat('es-MX', {
+    timeZone: 'America/Mexico_City', day: '2-digit', month: '2-digit',
+    year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).format(fecha)
+}
+function fechaDiaMexico(valor) {
+  const d = new Date(valor)
+  if (Number.isNaN(d.getTime())) return ''
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City',
+    year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
+}
+function esHoyMexico(valor) { return !!valor && fechaDiaMexico(valor) === fechaDiaMexico(new Date()) }
+function gruposEdicion(g) {
+  return {
+    materiales: (g?.materiales || []).map(x => ({ ...x, fisico: Number(x.fisico ?? 0) })),
+    herramientas: (g?.herramientas || []).map(x => ({ ...x, fisico: Number(x.fisico ?? 0) })),
+    equipos: (g?.equipos || []).map(x => ({ ...x, estado: String(x.estado || 'FALTANTE') })),
+  }
+}
+
 export default function AuditoriasPage() {
   const router = useRouter()
 
@@ -400,6 +427,11 @@ export default function AuditoriasPage() {
   const [histResultados, setHistResultados] = useState([])
   const [histDetalle, setHistDetalle] = useState(null)
   const [histFaltanteGlobal, setHistFaltanteGlobal] = useState(false)
+  const [edicion, setEdicion] = useState(null)
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false)
+  const [padreUsuario, setPadreUsuario] = useState('')
+  const [padreClave, setPadreClave] = useState('')
+  const [edicionComentario, setEdicionComentario] = useState('')
 
   useEffect(() => {
     iniciar()
@@ -1028,6 +1060,67 @@ export default function AuditoriasPage() {
     window.scrollTo({ top: 0, behavior: 'instant' })
   }
 
+
+  function abrirEditor(item) {
+    limpiarMensajes()
+    setEdicion({ ...item, ...gruposEdicion(item) })
+    setEdicionComentario(item?.materiales?.[0]?.comentario_general ?? item?.herramientas?.[0]?.comentario_general ?? item?.equipos?.[0]?.comentario_general ?? '')
+    setPadreUsuario('')
+    setPadreClave('')
+    setVista('EDITAR')
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }
+  function cambiarFilaEdicion(grupo, indice, campo, valor) {
+    setEdicion(actual => ({ ...actual, [grupo]: actual[grupo].map((item,i) =>
+      i === indice ? { ...item, [campo]: valor } : item) }))
+  }
+  async function guardarEdicion() {
+    if (!edicion || guardandoEdicion) return
+    setGuardandoEdicion(true)
+    setError('')
+    setMensaje('')
+    let clientePadre = null
+    try {
+      const antiguo = !esHoyMexico(edicion.fecha)
+      let cliente = supabase
+      if (antiguo) {
+        const usuario = padreUsuario.trim().toLowerCase()
+        if (!usuario || !padreClave) throw new Error('Capture usuario y contraseña del Usuario Padre.')
+        const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+        const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+        clientePadre = createClient(url, key, {
+          auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+        })
+        const { error: credencialError } = await clientePadre.auth.signInWithPassword({
+          email: `${usuario}@qiora.local`, password: `QIORA#${padreClave}`,
+        })
+        if (credencialError) throw new Error('Usuario Padre o contraseña inválidos.')
+        cliente = clientePadre
+      }
+      const payload = {
+        p_folio: edicion.folio,
+        p_almacen: edicion.almacen,
+        p_comentario: edicionComentario,
+        p_materiales: edicion.materiales.map(x => ({ sku: x.sku, lote: x.lote, fisico: Number(x.fisico) })),
+        p_herramientas: edicion.herramientas.map(x => ({ producto: x.producto, ubicacion: x.ubicacion, fisico: Number(x.fisico) })),
+        p_equipos: edicion.equipos.map(x => ({ serie: x.serie, estado: x.estado })),
+      }
+      const { data, error: guardarError } = await cliente.rpc('qiora_editar_auditoria', payload)
+      if (guardarError) throw guardarError
+      if (!data?.ok) throw new Error('Supabase no confirmó la edición.')
+      setMensaje(`Folio ${edicion.folio} actualizado correctamente. Vuelva a buscar para consultar los cambios.`)
+      setEdicion(null)
+      setPadreClave('')
+      setVista('HISTORICO')
+      setHistResultados([])
+      setHistDetalle(null)
+    } catch (e) { setError(e.message || 'No fue posible actualizar el folio.') }
+    finally {
+      if (clientePadre) await clientePadre.auth.signOut().catch(() => {})
+      setGuardandoEdicion(false)
+    }
+  }
+
   function limpiarHistoricos() {
     setHistMes('')
     setHistAlmacen('')
@@ -1183,10 +1276,10 @@ export default function AuditoriasPage() {
         ) : (
           <div style={styles.encabezado}>
             <div>
-              <h1 style={styles.titulo}>{vista === 'CAPTURA' ? 'Auditorías Técnicos' : vista === 'HISTORICO' ? 'Auditorías realizadas' : vista === 'FALTANTE_GLOBAL' ? 'Faltante global' : vista === 'DETALLE_FALTANTE' ? 'Detalle de faltantes' : vista === 'DETALLE_HISTORICO' ? 'Detalle de auditoría' : 'Programar Auditorías por Semana'}</h1>
+              <h1 style={styles.titulo}>{vista === 'CAPTURA' ? 'Auditorías Técnicos' : vista === 'HISTORICO' ? 'Auditorías realizadas' : vista === 'FALTANTE_GLOBAL' ? 'Faltante global' : vista === 'DETALLE_FALTANTE' ? 'Detalle de faltantes' : vista === 'DETALLE_HISTORICO' ? 'Detalle de auditoría' : vista === 'EDITAR' ? 'Editar auditoría' : 'Programar Auditorías por Semana'}</h1>
               <div style={styles.subtitulo}>QIORA CONECTA · {perfil?.distrito || ''}</div>
             </div>
-            <button type="button" style={styles.botonSecundario} onClick={() => (vista === 'DETALLE_FALTANTE' ? setVista('FALTANTE_GLOBAL') : ['FALTANTE_GLOBAL', 'DETALLE_HISTORICO'].includes(vista) ? regresarDesdeFaltante() : setVista('MENU'))}>{vista === 'DETALLE_FALTANTE' ? '← Regresar al faltante global' : ['FALTANTE_GLOBAL', 'DETALLE_HISTORICO'].includes(vista) ? '← Regresar al historial' : '← Regresar a Auditorías'}</button>
+            <button type="button" style={styles.botonSecundario} onClick={() => (vista === 'DETALLE_FALTANTE' ? setVista('FALTANTE_GLOBAL') : ['FALTANTE_GLOBAL', 'DETALLE_HISTORICO', 'EDITAR'].includes(vista) ? regresarDesdeFaltante() : setVista('MENU'))}>{vista === 'DETALLE_FALTANTE' ? '← Regresar al faltante global' : ['FALTANTE_GLOBAL', 'DETALLE_HISTORICO', 'EDITAR'].includes(vista) ? '← Regresar al historial' : '← Regresar a Auditorías'}</button>
           </div>
         )}
 
@@ -1219,6 +1312,46 @@ export default function AuditoriasPage() {
           </div>
         )}
 
+        {vista === 'EDITAR' && edicion && (
+          <section style={styles.tarjeta}>
+            <h2>Editar folio: {edicion.folio}</h2>
+            <p>Auditoría: {fechaQiora(edicion.fecha)} · Almacén: {edicion.almacen} · Técnico: {edicion.tecnico}</p>
+            {!esHoyMexico(edicion.fecha) && (
+              <div style={styles.usuario}>
+                <h3 style={{marginTop:0}}>Autorización del Usuario Padre</h3>
+                <p>La auditoría es de un día anterior. Se requiere una cuenta autorizada expresamente por el administrador.</p>
+                <div style={styles.formulario}>
+                  <label style={styles.campo}>Usuario Padre<input autoComplete="off" style={styles.input} value={padreUsuario} onChange={e=>setPadreUsuario(e.target.value)} /></label>
+                  <label style={styles.campo}>Contraseña<input type="password" autoComplete="off" style={styles.input} value={padreClave} onChange={e=>setPadreClave(e.target.value)} /></label>
+                </div>
+              </div>
+            )}
+            <p style={{color:'#55675c'}}>Solo se modifican cantidades físicas, estados y observaciones. Se conserva el folio y la información de origen.</p>
+            {[['materiales','MATERIALES'],['herramientas','HERRAMIENTAS'],['equipos','EQUIPOS']].map(([grupo,titulo]) => (
+              <div key={grupo} style={{marginTop:18}}>
+                <h3>{titulo}</h3>
+                <div style={styles.tablaWrap}><table style={styles.tabla}>
+                  <thead><tr><th style={styles.th}>Identificación</th><th style={styles.th}>Sistema / lote</th><th style={styles.th}>Físico / estado</th></tr></thead>
+                  <tbody>{(edicion[grupo] || []).map((fila,i) => <tr key={i}>
+                    <td style={styles.td}>{grupo==='materiales' ? `${fila.sku} · ${fila.material}` : grupo==='herramientas' ? `${fila.producto} · ${fila.ubicacion}` : `${fila.serie} · ${fila.descripcion || ''}`}</td>
+                    <td style={styles.td}>{grupo==='equipos' ? fila.lote : `${fila.sistema} · ${fila.lote || ''}`}</td>
+                    <td style={styles.td}>{grupo==='equipos' ? (
+                      <select style={styles.input} value={fila.estado || 'FALTANTE'} onChange={e=>cambiarFilaEdicion(grupo,i,'estado',e.target.value)}>
+                        {['FALTANTE','COINCIDE','ENTREGADO','VALIDACION BRM','ENTRADA PENDIENTE','NO EXISTE EN SISTEMA'].map(v=><option key={v} value={v}>{v}</option>)}
+                      </select>
+                    ) : <input type="number" min="0" step="1" style={styles.inputTabla} value={fila.fisico} onChange={e=>cambiarFilaEdicion(grupo,i,'fisico',e.target.value)} />}</td>
+                  </tr>)}</tbody>
+                </table></div>
+              </div>
+            ))}
+            <label style={{...styles.campo,marginTop:18}}>Observaciones generales<textarea rows={3} style={styles.textarea} value={edicionComentario} onChange={e=>setEdicionComentario(e.target.value)} /></label>
+            <div style={styles.botones}>
+              <button type="button" style={styles.botonPrincipal} disabled={guardandoEdicion} onClick={guardarEdicion}>{guardandoEdicion ? 'Guardando...' : 'Guardar cambios del mismo folio'}</button>
+              <button type="button" style={styles.botonSecundario} onClick={()=>{setEdicion(null);setPadreClave('');setVista('HISTORICO')}}>Cancelar</button>
+            </div>
+          </section>
+        )}
+
         {vista === 'HISTORICO' && (
           <section style={styles.tarjeta}>
             <h2 style={styles.seccionTitulo}>Auditorías realizadas</h2>
@@ -1235,7 +1368,7 @@ export default function AuditoriasPage() {
           </div>
             {histResultados.length > 0 && <div style={styles.tablaWrap}>
             <table style={styles.tabla}><thead><tr><th style={styles.th}>Folio</th><th style={styles.th}>Fecha</th><th style={styles.th}>Mes</th><th style={styles.th}>Almacen</th><th style={styles.th}>Tecnico</th><th style={styles.th}>Auditor</th><th style={styles.th}>Mat.</th><th style={styles.th}>Herr.</th><th style={styles.th}>Eq.</th><th style={styles.th}>Accion</th></tr></thead>
-            <tbody>{histResultados.map((x)=><tr key={`${x.folio}|${x.almacen}`}><td style={styles.td}>{x.folio}</td><td style={styles.td}>{texto(x.fecha)}</td><td style={styles.td}>{x.mes}</td><td style={styles.td}>{x.almacen}</td><td style={styles.td}>{x.tecnico}</td><td style={styles.td}>{x.auditor}</td><td style={styles.td}>{x.materiales.length}</td><td style={styles.td}>{x.herramientas.length}</td><td style={styles.td}>{x.equipos.length}</td><td style={styles.td}><button type="button" style={styles.botonSecundario} onClick={()=>abrirDetalleHistorico(x)}>Ver faltantes</button> <button type="button" style={{...styles.botonSecundario,opacity:.5,cursor:'not-allowed'}} disabled title="La edición segura por fecha y Usuario Padre requiere una función autorizada en Supabase">Editar</button> <button type="button" style={styles.botonPrincipal} onClick={()=>{ try { descargarPdfAuditoria({folio:x.folio,fecha:fechaHoraMx(x.fecha),distrito:perfil?.distrito,almacen:x.almacen,tecnico:x.tecnico,auditor:x.auditor,usuario:x.materiales[0]?.auditor_usuario||x.herramientas[0]?.auditor_usuario||x.equipos[0]?.auditor_usuario||perfil?.usuario_almacen,tipo:x.tipoAuditoria||'TODO',comentario:x.materiales[0]?.comentario_general||x.herramientas[0]?.comentario_general||x.equipos[0]?.comentario_general||'',materiales:x.materiales,herramientas:x.herramientas,equipos:x.equipos}) } catch(e) {setError('Error al descargar PDF: '+(e.message||e))} }}>PDF</button> <button type="button" style={styles.botonPrincipal} onClick={()=>{ try { descargarExcelAuditoria(x) } catch (e) { setError("Error al descargar Excel: "+(e.message||e)) } }}>Excel</button></td></tr>)}</tbody></table>
+            <tbody>{histResultados.map((x)=><tr key={`${x.folio}|${x.almacen}`}><td style={styles.td}>{x.folio}</td><td style={styles.td}>{fechaQiora(x.fecha)}</td><td style={styles.td}>{x.mes}</td><td style={styles.td}>{x.almacen}</td><td style={styles.td}>{x.tecnico}</td><td style={styles.td}>{x.auditor}</td><td style={styles.td}>{x.materiales.length}</td><td style={styles.td}>{x.herramientas.length}</td><td style={styles.td}>{x.equipos.length}</td><td style={styles.td}><button type="button" style={styles.botonSecundario} onClick={()=>abrirDetalleHistorico(x)}>Ver faltantes</button> <button type="button" style={styles.botonSecundario} onClick={() => abrirEditor(x)}>Editar</button> <button type="button" style={styles.botonPrincipal} onClick={()=>{ try { descargarPdfAuditoria({folio:x.folio,fecha:fechaHoraMx(x.fecha),distrito:perfil?.distrito,almacen:x.almacen,tecnico:x.tecnico,auditor:x.auditor,usuario:x.materiales[0]?.auditor_usuario||x.herramientas[0]?.auditor_usuario||x.equipos[0]?.auditor_usuario||perfil?.usuario_almacen,tipo:x.tipoAuditoria||'TODO',comentario:x.materiales[0]?.comentario_general||x.herramientas[0]?.comentario_general||x.equipos[0]?.comentario_general||'',materiales:x.materiales,herramientas:x.herramientas,equipos:x.equipos}) } catch(e) {setError('Error al descargar PDF: '+(e.message||e))} }}>PDF</button> <button type="button" style={styles.botonPrincipal} onClick={()=>{ try { descargarExcelAuditoria(x) } catch (e) { setError("Error al descargar Excel: "+(e.message||e)) } }}>Excel</button></td></tr>)}</tbody></table>
           </div>}
           </section>
         )}
@@ -1275,7 +1408,7 @@ export default function AuditoriasPage() {
             <h3 style={{marginTop:22}}>Auditorías con faltantes ({histResultados.length})</h3>
 {histResultados.length > 0 && <div style={styles.tablaWrap}>
             <table style={styles.tabla}><thead><tr><th style={styles.th}>Folio</th><th style={styles.th}>Fecha</th><th style={styles.th}>Mes</th><th style={styles.th}>Almacen</th><th style={styles.th}>Tecnico</th><th style={styles.th}>Auditor</th><th style={styles.th}>Mat.</th><th style={styles.th}>Herr.</th><th style={styles.th}>Eq.</th><th style={styles.th}>Accion</th></tr></thead>
-            <tbody>{histResultados.map((x)=><tr key={`${x.folio}|${x.almacen}`}><td style={styles.td}>{x.folio}</td><td style={styles.td}>{texto(x.fecha)}</td><td style={styles.td}>{x.mes}</td><td style={styles.td}>{x.almacen}</td><td style={styles.td}>{x.tecnico}</td><td style={styles.td}>{x.auditor}</td><td style={styles.td}>{x.materiales.length}</td><td style={styles.td}>{x.herramientas.length}</td><td style={styles.td}>{x.equipos.length}</td><td style={styles.td}><button type="button" style={styles.botonSecundario} onClick={()=>abrirDetalleHistorico(x)}>Ver faltantes</button> <button type="button" style={{...styles.botonSecundario,opacity:.5,cursor:'not-allowed'}} disabled title="La edición segura por fecha y Usuario Padre requiere una función autorizada en Supabase">Editar</button> <button type="button" style={styles.botonPrincipal} onClick={()=>{ try { descargarPdfAuditoria({folio:x.folio,fecha:fechaHoraMx(x.fecha),distrito:perfil?.distrito,almacen:x.almacen,tecnico:x.tecnico,auditor:x.auditor,usuario:x.materiales[0]?.auditor_usuario||x.herramientas[0]?.auditor_usuario||x.equipos[0]?.auditor_usuario||perfil?.usuario_almacen,tipo:x.tipoAuditoria||'TODO',comentario:x.materiales[0]?.comentario_general||x.herramientas[0]?.comentario_general||x.equipos[0]?.comentario_general||'',materiales:x.materiales,herramientas:x.herramientas,equipos:x.equipos}) } catch(e) {setError('Error al descargar PDF: '+(e.message||e))} }}>PDF</button> <button type="button" style={styles.botonPrincipal} onClick={()=>{ try { descargarExcelAuditoria(x) } catch (e) { setError("Error al descargar Excel: "+(e.message||e)) } }}>Excel</button></td></tr>)}</tbody></table>
+            <tbody>{histResultados.map((x)=><tr key={`${x.folio}|${x.almacen}`}><td style={styles.td}>{x.folio}</td><td style={styles.td}>{fechaQiora(x.fecha)}</td><td style={styles.td}>{x.mes}</td><td style={styles.td}>{x.almacen}</td><td style={styles.td}>{x.tecnico}</td><td style={styles.td}>{x.auditor}</td><td style={styles.td}>{x.materiales.length}</td><td style={styles.td}>{x.herramientas.length}</td><td style={styles.td}>{x.equipos.length}</td><td style={styles.td}><button type="button" style={styles.botonSecundario} onClick={()=>abrirDetalleHistorico(x)}>Ver faltantes</button> <button type="button" style={styles.botonSecundario} onClick={() => abrirEditor(x)}>Editar</button> <button type="button" style={styles.botonPrincipal} onClick={()=>{ try { descargarPdfAuditoria({folio:x.folio,fecha:fechaHoraMx(x.fecha),distrito:perfil?.distrito,almacen:x.almacen,tecnico:x.tecnico,auditor:x.auditor,usuario:x.materiales[0]?.auditor_usuario||x.herramientas[0]?.auditor_usuario||x.equipos[0]?.auditor_usuario||perfil?.usuario_almacen,tipo:x.tipoAuditoria||'TODO',comentario:x.materiales[0]?.comentario_general||x.herramientas[0]?.comentario_general||x.equipos[0]?.comentario_general||'',materiales:x.materiales,herramientas:x.herramientas,equipos:x.equipos}) } catch(e) {setError('Error al descargar PDF: '+(e.message||e))} }}>PDF</button> <button type="button" style={styles.botonPrincipal} onClick={()=>{ try { descargarExcelAuditoria(x) } catch (e) { setError("Error al descargar Excel: "+(e.message||e)) } }}>Excel</button></td></tr>)}</tbody></table>
           </div>}
             {histResultados.length === 0 && <p>No se encontraron faltantes con los filtros seleccionados.</p>}
           </section>
