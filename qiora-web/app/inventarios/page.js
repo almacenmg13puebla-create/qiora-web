@@ -18,12 +18,7 @@ const CAMPOS = {
 }
 const PUEDE = (p) => ['auditoria','dashboard','traspasos','solicitud_material'].some(k=>p?.[k]===true)
 const lim = 200
-const GRUPOS_SKU = {
-  ONTS: ['60573','84558','17868','66262','72691','72676','69643','75076','79735','89129','88715','60483','60584'],
-  M36: ['69360','81809'], EXTENDER: ['74497'], OTS: [],
-  CONSUMIBLE: ['16383','17972','16109','16089','80046','69022','16036','17997','16048','16113','80047','16635','16638','16639','66813','16165','16166','16637','80186','66225','74999','75070','89312','75071','73488','89313','75073','67367','74529']
-}
-const grupoSKU = sku => Object.entries(GRUPOS_SKU).find(([,lista]) => lista.includes(String(sku??'').trim()))?.[0] || 'SIN CLASIFICAR'
+const grupoSKU = (sku, catalogo) => catalogo[String(sku??'').trim()] || 'SIN CLASIFICAR'
 const etiquetaEstado = dias => dias == null ? 'SIN FECHA' : dias > 30 ? 'CRÍTICO' : dias > 15 ? 'FUERA DE TIEMPO' : dias < 15 ? 'EN TIEMPO' : 'DÍA 15 (LÍMITE)'
 const filtrarEstado = (dias, filtro) => !filtro || (dias != null && (filtro === 'EN_TIEMPO' ? dias < 15 : filtro === 'FUERA_TIEMPO' ? dias > 15 : filtro === 'CRITICO' ? dias > 30 : false))
 
@@ -70,6 +65,8 @@ async function descargarPdf(datos, columnas, nombre, detalle) {
 export default function InventariosPage() {
   const router = useRouter()
   const [perfil, setPerfil] = useState(null)
+  const [catalogoSKU, setCatalogoSKU] = useState({})
+  const [adminCatalogos, setAdminCatalogos] = useState(false)
   const [validando, setValidando] = useState(true)
   const [tipo, setTipo] = useState('')
   const [almacen, setAlmacen] = useState('')
@@ -111,6 +108,19 @@ export default function InventariosPage() {
     return () => { vivo = false }
   }, [router])
 
+  useEffect(() => {
+    if (!perfil) return
+    let vivo = true
+    ;(async () => {
+      const {data, error: e} = await supabase.rpc('qiora_catalogos_listar')
+      if (e) { if (vivo) setError('Catálogos: ' + e.message); return }
+      if (vivo) setCatalogoSKU(Object.fromEntries((data?.materiales || []).filter(m=>m.activo).map(m=>[String(m.sku),m.grupo])))
+      const {data: a} = await supabase.rpc('qiora_catalogos_es_admin')
+      if (vivo) setAdminCatalogos(a === true)
+    })()
+    return () => { vivo = false }
+  }, [perfil])
+
   // El servidor solo devuelve nombre y contacto del almacén autorizado del distrito.
   useEffect(() => {
     let cancelado = false
@@ -129,7 +139,7 @@ export default function InventariosPage() {
 
   // La consulta de IQ09 usa una RPC que añade dias y estado calculados en el servidor.
   const consultaRpc = tipo === 'IQ09_EQUIPOS' ? 'qiora_consultar_equipos_tiempo' : tipo === 'STOCK_TECNICOS' ? 'qiora_consultar_materiales_sin_usado' : 'qiora_consultar_inventario_v2'
-  const preparar = filas => (filas||[]).filter(f => !esMateriales || normalizar(f.lote) !== 'TPE USADO').map(f => esMateriales ? {...f, grupo:grupoSKU(f.sku)} : f)
+  const preparar = filas => (filas||[]).filter(f => !esMateriales || normalizar(f.lote) !== 'TPE USADO').map(f => esMateriales ? {...f, grupo:grupoSKU(f.sku,catalogoSKU)} : f)
   function coincide(f) {
     if (esMateriales && soloCoincidencias && buscador) {
       const b=normalizar(buscador)
@@ -244,7 +254,7 @@ export default function InventariosPage() {
   return <main style={s.pagina}><div style={s.marco}>
     <button type="button" style={s.regresar} onClick={regresar}>← {tipo ? 'Regresar a Inventarios' : 'Regresar al menú principal'}</button>
     <header style={s.hero}><h1 style={{margin:0,fontSize:29}}>{tipo ? (esMateriales ? 'Técnicos - Materiales' : esEquipos ? 'Equipos' : OPCIONES.find(o=>o.id===tipo)?.titulo) : 'INVENTARIOS'}</h1><p style={{margin:'8px 0 0'}}>{!tipo ? 'Seleccione una opción de inventarios' : esMateriales ? 'Consulta de materiales cargados por técnico y almacén.' : esEquipos ? 'Consulta general de equipos por almacén o todos los almacenes.' : 'Consulta de existencias del distrito ' + perfil.distrito}</p></header>
-    {!tipo ? <section style={s.menu}>{OPCIONES.map(o => <button type="button" key={o.id} style={s.opcion} onClick={() => abrir(o.id)}><strong>{o.id==='STOCK_TECNICOS'?'Técnicos - Materiales':o.id==='IQ09_EQUIPOS'?'Equipos':o.titulo}</strong><small style={{display:'block',marginTop:9}}>{o.descripcion}</small></button>)}</section> : <>
+    {!tipo ? <section style={s.menu}>{adminCatalogos && <button type="button" style={s.opcion} onClick={()=>router.push('/inventarios/catalogos')}><strong>Administrar Materiales y Grupos</strong><small style={{display:'block',marginTop:9}}>Catálogos editables de Supabase</small></button>}{OPCIONES.map(o => <button type="button" key={o.id} style={s.opcion} onClick={() => abrir(o.id)}><strong>{o.id==='STOCK_TECNICOS'?'Técnicos - Materiales':o.id==='IQ09_EQUIPOS'?'Equipos':o.titulo}</strong><small style={{display:'block',marginTop:9}}>{o.descripcion}</small></button>)}</section> : <>
       <section style={s.panelOscuro}>
         <div style={s.filtros}>
           <label style={s.campo}>Almacén (opcional)<input style={s.input} value={almacen} placeholder="Vacío = todos los autorizados" maxLength={10} onChange={e=>setAlmacen(e.target.value.toUpperCase())}/></label>
