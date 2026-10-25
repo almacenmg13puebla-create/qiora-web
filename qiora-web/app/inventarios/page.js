@@ -18,6 +18,15 @@ const CAMPOS = {
 }
 const PUEDE = (p) => ['auditoria','dashboard','traspasos','solicitud_material'].some(k=>p?.[k]===true)
 const lim = 200
+const GRUPOS_SKU = {
+  ONTS: ['60573','84558','17868','66262','72691','72676','69643','75076','79735','89129','88715','60483','60584'],
+  M36: ['69360','81809'], EXTENDER: ['74497'], OTS: [],
+  CONSUMIBLE: ['16383','17972','16109','16089','80046','69022','16036','17997','16048','16113','80047','16635','16638','16639','66813','16165','16166','16637','80186','66225','74999','75070','89312','75071','73488','89313','75073','67367','74529']
+}
+const grupoSKU = sku => Object.entries(GRUPOS_SKU).find(([,lista]) => lista.includes(String(sku??'').trim()))?.[0] || 'SIN CLASIFICAR'
+const etiquetaEstado = dias => dias == null ? 'SIN FECHA' : dias > 30 ? 'CRÍTICO' : dias > 15 ? 'FUERA DE TIEMPO' : dias < 15 ? 'EN TIEMPO' : 'DÍA 15 (LÍMITE)'
+const filtrarEstado = (dias, filtro) => !filtro || (dias != null && (filtro === 'EN_TIEMPO' ? dias < 15 : filtro === 'FUERA_TIEMPO' ? dias > 15 : filtro === 'CRITICO' ? dias > 30 : false))
+
 const mx = (x) => String(x??'').trim()
 const normalizar = x => mx(x).toLocaleUpperCase('es-MX')
 const fechaMX = () => new Intl.DateTimeFormat('es-MX',{timeZone:'America/Mexico_City',dateStyle:'short',timeStyle:'short'}).format(new Date())
@@ -68,6 +77,9 @@ export default function InventariosPage() {
   const [buscador, setBuscador] = useState('')
   const [estado, setEstado] = useState('')
   const [serie, setSerie] = useState('')
+  const [telefono, setTelefono] = useState('')
+  const [tecnicoResuelto, setTecnicoResuelto] = useState('')
+  const [advertencia, setAdvertencia] = useState('')
   const [pagina, setPagina] = useState(1)
   const [respuesta, setRespuesta] = useState(null)
   const [filtroAplicado, setFiltroAplicado] = useState('')
@@ -78,9 +90,9 @@ export default function InventariosPage() {
   const esMateriales = tipo === 'STOCK_TECNICOS'
   const esEquipos = tipo === 'IQ09_EQUIPOS'
   const columnas = esMateriales
-    ? [['almacen','Almacén'],['tecnico','Técnico'],['sku','SKU'],['material','Material'],['lote','Lote'],['disponible','Cantidad disponible']]
+    ? [['almacen','Almacén'],['tecnico','Técnico'],['sku','SKU'],['material','Material'],['grupo','Grupo'],['lote','Lote'],['disponible','Cantidad disponible']]
     : esEquipos
-      ? [['almacen','Almacén'],['material','Material'],['descripcion','Descripción'],['serie','Serie'],['lote','Lote'],['estatus_sap','Estado SAP']]
+      ? [['almacen','Almacén'],['material','Material'],['descripcion','Descripción'],['serie','Serie'],['lote','Lote'],['dias','Días'],['estado_tiempo','Estado']]
       : CAMPOS[tipo] || []
 
   useEffect(() => {
@@ -99,15 +111,44 @@ export default function InventariosPage() {
     return () => { vivo = false }
   }, [router])
 
+  // El servidor solo devuelve nombre y contacto del almacén autorizado del distrito.
+  useEffect(() => {
+    let cancelado = false
+    const a = mx(almacen).toUpperCase()
+    setTelefono(''); setTecnicoResuelto(''); setAdvertencia('')
+    if (!perfil || !a || (!esMateriales && !esEquipos)) return
+    ;(async () => {
+      try {
+        const { data, error: e } = await supabase.rpc('qiora_contacto_inventario', { p_almacen: a })
+        if (e) throw e
+        if (!cancelado) { setTecnicoResuelto(data?.tecnico || ''); setTelefono(data?.telefono || '') }
+      } catch (e) { if (!cancelado) setAdvertencia(e.message || 'No se encontró el técnico del almacén') }
+    })()
+    return () => { cancelado = true }
+  }, [almacen, perfil, esMateriales, esEquipos])
+
+  // La consulta de IQ09 usa una RPC que añade dias y estado calculados en el servidor.
+  const consultaRpc = tipo === 'IQ09_EQUIPOS' ? 'qiora_consultar_equipos_tiempo' : 'qiora_consultar_inventario_v2'
+  const preparar = filas => (filas||[]).map(f => esMateriales ? {...f, grupo:grupoSKU(f.sku)} : f)
+  function coincide(f) {
+    if (esMateriales && soloCoincidencias && buscador) {
+      const b=normalizar(buscador)
+      if (![f.sku,f.material,f.grupo].some(x=>normalizar(x).includes(b))) return false
+    }
+    if (esEquipos && !filtrarEstado(f.dias, estado)) return false
+    if (esEquipos && serie && !normalizar(f.serie).includes(normalizar(serie))) return false
+    return true
+  }
+
   function regresar() {
     if (!tipo) return router.push('/')
-    setTipo(''); setAlmacen(''); setTecnico(''); setBuscador('')
+    setTipo(''); setAlmacen(''); setTecnico(''); setBuscador(''); setTelefono(''); setTecnicoResuelto('')
     setEstado(''); setSerie(''); setRespuesta(null); setError(''); setFiltroAplicado('')
   }
 
   function abrir(modulo) {
     setTipo(modulo); setRespuesta(null); setError(''); setAlmacen('')
-    setTecnico(''); setBuscador(''); setEstado(''); setSerie(''); setFiltroAplicado('')
+    setTecnico(''); setBuscador(''); setEstado(''); setSerie(''); setFiltroAplicado(''); setTelefono(''); setTecnicoResuelto('')
     setPagina(1); setSoloCoincidencias(false)
   }
 
@@ -116,7 +157,7 @@ export default function InventariosPage() {
     setCargando(true); setError('')
     try {
       const f = mx(filtroAlmacen).toUpperCase()
-      const { data, error: queryError } = await supabase.rpc('qiora_consultar_inventario_v2', {
+      const { data, error: queryError } = await supabase.rpc(consultaRpc, {
         p_tipo: tipo,
         p_almacen: f || null,
         p_pagina: nuevaPagina,
@@ -124,7 +165,7 @@ export default function InventariosPage() {
       })
       if (queryError) throw queryError
       if (!data?.ok) throw new Error(data?.mensaje || 'No se pudo consultar el inventario.')
-      setRespuesta(data); setPagina(nuevaPagina); setFiltroAplicado(f)
+      setRespuesta({...data,filas:preparar(data.filas)}); setPagina(nuevaPagina); setFiltroAplicado(f)
       if (filtroTexto !== null) setSoloCoincidencias(Boolean(mx(filtroTexto)))
     } catch(e) {
       setRespuesta(null)
@@ -132,19 +173,9 @@ export default function InventariosPage() {
     } finally { setCargando(false) }
   }, [tipo, almacen])
 
-  // Estos filtros se aplican a la página devuelta por Supabase (hasta 200 filas).
-  // No se afirma que hayan buscado en todo el histórico del distrito.
-  const filas = (respuesta?.filas || []).filter(f => {
-    if (tecnico && !normalizar(f.tecnico).includes(normalizar(tecnico)) && !normalizar(f.almacen).includes(normalizar(tecnico))) return false
-    if (esMateriales && soloCoincidencias && buscador) {
-      if (![f.sku, f.material, f.grupo].some(x => normalizar(x).includes(normalizar(buscador)))) return false
-    }
-    if (esEquipos && estado) {
-      if (![f.estatus_sap,f.denom_status,f.tipo_stock].some(x => normalizar(x).includes(normalizar(estado)))) return false
-    }
-    if (esEquipos && serie && !normalizar(f.serie).includes(normalizar(serie))) return false
-    return true
-  })
+  // Los resultados visibles se filtran en la página; para Estado/Serie se cargan
+  // todas las páginas autorizadas y luego se filtran para evitar cortes falsos.
+  const filas = (respuesta?.filas||[]).filter(coincide)
   const totalPaginas = Math.max(1, Math.ceil(Number(respuesta?.total || 0) / lim))
 
   async function obtenerTodo() {
@@ -153,12 +184,12 @@ export default function InventariosPage() {
     if (total > 50000) throw new Error('Hay más de 50,000 registros. Filtra por almacén para exportar.')
     const salida = []
     for (let n=1; n<=Math.ceil(total / lim); n++) {
-      const { data, error: e } = await supabase.rpc('qiora_consultar_inventario_v2', {
+      const { data, error: e } = await supabase.rpc(consultaRpc, {
         p_tipo: tipo, p_almacen: filtroAplicado || null, p_pagina:n, p_limite:lim
       })
       if (e) throw e
       if (!data?.ok) throw new Error('Error al descargar página ' + n)
-      salida.push(...(data.filas || []))
+      salida.push(...preparar(data.filas || []))
     }
     return salida
   }
@@ -167,13 +198,7 @@ export default function InventariosPage() {
     setExportando(true); setError('')
     try {
       const todos = await obtenerTodo()
-      const filtro = todos.filter(f => {
-        if (tecnico && !normalizar(f.tecnico).includes(normalizar(tecnico)) && !normalizar(f.almacen).includes(normalizar(tecnico))) return false
-        if (esMateriales && soloCoincidencias && buscador && ![f.sku,f.material,f.grupo].some(x => normalizar(x).includes(normalizar(buscador)))) return false
-        if (esEquipos && estado && ![f.estatus_sap,f.denom_status,f.tipo_stock].some(x => normalizar(x).includes(normalizar(estado)))) return false
-        if (esEquipos && serie && !normalizar(f.serie).includes(normalizar(serie))) return false
-        return true
-      })
+      const filtro = todos.filter(coincide)
       const nom = 'QIORA_' + tipo + '_' + perfil.distrito + '_' + new Date().toISOString().slice(0,10)
       const det = { tipo, distrito: perfil.distrito, almacen:filtroAplicado }
       if (formato === 'Excel') await descargarExcel(filtro, columnas, nom, det)
@@ -183,20 +208,31 @@ export default function InventariosPage() {
     finally { setExportando(false) }
   }
 
-  function compartirWhatsapp() {
-    if (!respuesta) { setError('Primero realiza la consulta.'); return }
-    // WhatsApp usa solamente las filas actualmente mostradas para evitar enlaces demasiado grandes.
-    const primeros = filas.slice(0,20)
-    const txt = [
-      'QIORA CONECTA | EQUIPOS',
-      'Distrito: ' + perfil.distrito,
-      'Almacén: ' + (filtroAplicado || 'Autorizados'),
-      'Página: ' + pagina,
-      'Resultados mostrados: ' + filas.length,
-      ...primeros.map(x => [x.almacen,x.material,x.serie,x.estatus_sap || x.denom_status].map(mx).join(' | ')),
-      filas.length > 20 ? 'Se muestran los primeros 20 equipos; utiliza Excel para el reporte completo.' : '',
-    ].filter(Boolean).join('\n')
-    window.open('https://wa.me/?text=' + encodeURIComponent(txt), '_blank', 'noopener,noreferrer')
+  async function compartirWhatsapp() {
+    setError('')
+    if (!esEquipos || !mx(almacen)) { setError('Selecciona un almacén para determinar el destinatario.'); return }
+    if (!respuesta || filtroAplicado !== mx(almacen).toUpperCase()) { setError('Primero consulta ese mismo almacén.'); return }
+    if (!telefono) { setError('No hay teléfono válido autorizado para este técnico. Revisa la columna de contacto en Supabase.'); return }
+    setExportando(true)
+    try {
+      // Whatsapp no admite adjuntar directamente Excel desde un enlace wa.me.
+      // El texto se limita para no exceder la longitud de URL y se indica si queda incompleto.
+      const datos = (await obtenerTodo()).filter(coincide)
+      if (!datos.length) throw new Error('No hay series con los filtros seleccionados.')
+      const maximo = 35
+      const msg = [
+        '*QIORA CONECTA | EQUIPOS*',
+        'Distrito: '+perfil.distrito,
+        'Almacén: '+filtroAplicado,
+        'Técnico: '+(tecnicoResuelto||'Sin nombre'),
+        'Filtro: '+(estado==='EN_TIEMPO'?'EN TIEMPO':estado==='FUERA_TIEMPO'?'FUERA DE TIEMPO':estado==='CRITICO'?'CRÍTICO':'TODOS'),
+        'Total de equipos: '+datos.length,
+        ...datos.slice(0,maximo).map((x,i)=> `${i+1}. Serie: ${x.serie||'-'} | Material: ${x.material||'-'} | Días: ${x.dias??'Sin fecha'} | ${x.estado_tiempo||'SIN FECHA'}`),
+        datos.length>maximo ? `Se incluyen ${maximo} de ${datos.length} equipos. Descarga Excel para el listado completo.` : '',
+      ].filter(Boolean).join('\n')
+      window.open('https://wa.me/'+telefono+'?text='+encodeURIComponent(msg),'_blank','noopener,noreferrer')
+    } catch(e) { setError(e.message||'No fue posible preparar WhatsApp.') }
+    finally { setExportando(false) }
   }
 
   const btn = (etiqueta, accion, secundario = false, disabled = false) =>
@@ -212,8 +248,8 @@ export default function InventariosPage() {
       <section style={s.panelOscuro}>
         <div style={s.filtros}>
           <label style={s.campo}>Almacén (opcional)<input style={s.input} value={almacen} placeholder="Vacío = todos los autorizados" maxLength={10} onChange={e=>setAlmacen(e.target.value.toUpperCase())}/></label>
-          {(esMateriales || esEquipos) && <label style={s.campo}>{esMateriales?'Técnico':'Técnico responsable / almacén'}<input style={s.input} value={tecnico} placeholder="Todos los técnicos (según filtro)" onChange={e=>setTecnico(e.target.value)}/></label>}
-          {esEquipos && <label style={s.campo}>Estado<select style={s.input} value={estado} onChange={e=>setEstado(e.target.value)}><option value="">Todos</option><option value="DISPONIBLE">Disponible</option><option value="FALTANTE">Faltante</option><option value="ENTREGADO">Entregado</option><option value="04">Tipo stock 04</option></select></label>}
+          {(esMateriales || esEquipos) && <label style={s.campo}>{esMateriales?'Técnico':'Técnico responsable'}<input style={s.input} readOnly value={almacen ? tecnicoResuelto : 'Todos los técnicos autorizados'} placeholder="Automático por almacén"/></label>}
+          {esEquipos && <label style={s.campo}>Estado<select style={s.input} value={estado} onChange={e=>setEstado(e.target.value)}><option value="">Todos</option><option value="EN_TIEMPO">Equipo en Tiempo (menos de 15 días)</option><option value="FUERA_TIEMPO">Equipos fuera de tiempo (más de 15 días)</option><option value="CRITICO">Equipo Crítico (más de 30 días)</option></select></label>}
           {esMateriales && <label style={s.campo}>SKU, material o grupo<input style={s.input} value={buscador} placeholder="Escribe SKU, material o grupo" onChange={e=>setBuscador(e.target.value)}/></label>}
           {esEquipos && <label style={{...s.campo,gridColumn:'1 / -1'}}>Serie (opcional)<input style={s.input} value={serie} placeholder="Escanea o captura la serie" onChange={e=>setSerie(e.target.value.toUpperCase())}/></label>}
         </div>
@@ -222,13 +258,13 @@ export default function InventariosPage() {
           {esEquipos && <>{btn('Enviar por WhatsApp',compartirWhatsapp,true,!respuesta)}{btn('Descargar Excel',()=>exportar('Excel'),true,!respuesta||exportando)}</>}
           {!esEquipos && respuesta && <>{btn('Excel',()=>exportar('Excel'),true,exportando)}{btn('PDF',()=>exportar('PDF'),true,exportando)}</>}
         </div>
-        <p style={s.aviso}>Los filtros de técnico, SKU, serie y estado se aplican sobre la página consultada (hasta 200 filas). Para exportar, se consultan todas las páginas autorizadas. Los permisos y el distrito se comprueban en Supabase.</p>
+        <p style={s.aviso}>Los filtros se aplican sobre la página consultada; Excel y WhatsApp recorren las páginas autorizadas. Los días se calculan únicamente si existe fecha de referencia registrada. Exactamente 15 días se identifica como límite sin clasificar. WhatsApp abre el mensaje para confirmar el envío.</p>
       </section>
-      {error && <p role="alert" style={s.error}>{error}</p>}
+      {error && <p role="alert" style={s.error}>{error}</p>}{advertencia && <p style={s.aviso}>{advertencia}</p>}
       <section style={s.panelOscuro}>
         {respuesta && <p style={{...s.aviso,marginTop:0}}>Almacén: {respuesta.almacen || 'Autorizados'} · {respuesta.total} registros en la consulta · {filas.length} visibles en esta página</p>}
         <div style={s.tablaWrap}><table style={s.tabla}><thead><tr>{columnas.map(([k,t])=><th key={k} style={s.th}>{t}</th>)}</tr></thead><tbody>
-        {respuesta ? filas.map((fila,i)=><tr key={i}>{columnas.map(([campo])=><td style={s.td} key={campo}>{String(fila[campo] ?? '-')}</td>)}</tr>) : <tr><td colSpan={columnas.length} style={s.vacio}>Sin consulta realizada.</td></tr>}
+        {respuesta ? filas.map((fila,i)=><tr key={i}>{columnas.map(([campo])=><td style={s.td} key={campo}>{String(fila[campo] ?? (campo==='dias'?'Sin fecha':'-'))}</td>)}</tr>) : <tr><td colSpan={columnas.length} style={s.vacio}>Sin consulta realizada.</td></tr>}
         {respuesta && !filas.length && <tr><td colSpan={columnas.length} style={s.vacio}>Sin resultados en esta página con los filtros seleccionados.</td></tr>}
         </tbody></table></div>
         {respuesta && <div style={s.paginacion}><button style={s.secVerde} disabled={cargando||pagina<=1} onClick={()=>consultar(pagina-1,filtroAplicado)}>Anterior</button><span>Página {pagina} de {totalPaginas}</span><button style={s.secVerde} disabled={cargando||pagina>=totalPaginas} onClick={()=>consultar(pagina+1,filtroAplicado)}>Siguiente</button></div>}
