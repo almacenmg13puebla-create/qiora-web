@@ -271,6 +271,84 @@ function descargarPdfAuditoria(info) {
   setTimeout(() => URL.revokeObjectURL(url), 60000)
 }
 
+
+// Exportacion XLSX local sin dependencias nuevas. No consulta ni modifica la base.
+function xmlExcel(v) {
+  return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,'')
+}
+function colExcel(n) {
+  let s = ''
+  for (let x = n + 1; x > 0; x = Math.floor((x - 1) / 26)) s = String.fromCharCode(65 + (x - 1) % 26) + s
+  return s
+}
+function crc32Qiora(bytes) {
+  let c = -1
+  for (let i = 0; i < bytes.length; i++) {
+    c ^= bytes[i]
+    for (let j = 0; j < 8; j++) c = (c >>> 1) ^ (c & 1 ? 0xEDB88320 : 0)
+  }
+  return (c ^ -1) >>> 0
+}
+function crearZipXlsx(archivos) {
+  const encoder = new TextEncoder()
+  const partes = [], central = []
+  let desplazamiento = 0
+  const u16 = (v) => [v & 255, (v >>> 8) & 255]
+  const u32 = (v) => [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]
+  for (const [nombre, contenido] of archivos) {
+    const nombreBytes = encoder.encode(nombre), datos = encoder.encode(contenido)
+    const crc = crc32Qiora(datos)
+    const local = new Uint8Array([80,75,3,4,20,0,0,0,0,0,0,0,0,0,...u32(crc),...u32(datos.length),...u32(datos.length),...u16(nombreBytes.length),0,0])
+    partes.push(local,nombreBytes,datos)
+    const centro = new Uint8Array([80,75,1,2,20,0,20,0,0,0,0,0,0,0,0,0,...u32(crc),...u32(datos.length),...u32(datos.length),...u16(nombreBytes.length),0,0,0,0,0,0,0,0,0,0,0,0,...u32(desplazamiento)])
+    central.push(centro,nombreBytes)
+    desplazamiento += local.length + nombreBytes.length + datos.length
+  }
+  const tamCentral = central.reduce((n,x)=>n+x.length,0)
+  const end = new Uint8Array([80,75,5,6,0,0,0,0,...u16(archivos.length),...u16(archivos.length),...u32(tamCentral),...u32(desplazamiento),0,0])
+  return new Blob([...partes,...central,end],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})
+}
+function hojaXmlQiora(filas, indicesNumericos=[]) {
+  const ancho = Math.max(1,...filas.map(x=>x.length)), fin = colExcel(ancho-1)
+  const cuerpo = filas.map((fila, ri) => '<row r="'+(ri+1)+'">'+fila.map((valor,ci)=>{
+    if (valor === null || valor === undefined || valor === '') return ''
+    const celda = colExcel(ci)+(ri+1)
+    if (ri>0 && indicesNumericos.includes(ci) && typeof valor==='number' && Number.isFinite(valor)) return '<c r="'+celda+'"><v>'+valor+'</v></c>'
+    return '<c r="'+celda+'" t="inlineStr"><is><t xml:space="preserve">'+xmlExcel(valor)+'</t></is></c>'
+  }).join('')+'</row>').join('')
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:'+fin+Math.max(1,filas.length)+'"/><sheetViews><sheetView showGridLines="0" workbookViewId="0"/></sheetViews><sheetData>'+cuerpo+'</sheetData></worksheet>'
+}
+function excelAuditoriaFolio(g) {
+  const meta = (fila) => [g.folio, texto(g.fecha), texto(g.mes), texto(g.tipoAuditoria || 'TODO'), texto(g.almacen), texto(g.tecnico), texto(fila?.auditor_usuario || ''), texto(g.auditor),]
+  const mat = ['FOLIO','FECHA','MES','TIPO_AUDITORIA','ALMACEN','TECNICO','AUDITOR_USUARIO','AUDITOR_NOMBRE','SKU','MATERIAL','LOTE','SISTEMA','FISICO','DIFERENCIA','OBSERVACION','COMENTARIO_GENERAL']
+  const her = ['FOLIO','FECHA','MES','TIPO_AUDITORIA','ALMACEN','TECNICO','AUDITOR_USUARIO','AUDITOR_NOMBRE','PRODUCTO','UBICACION','SISTEMA','FISICO','DIFERENCIA','OBSERVACION','COMENTARIO_GENERAL']
+  const eq = ['FOLIO','FECHA','MES','TIPO_AUDITORIA','ALMACEN','TECNICO','AUDITOR_USUARIO','AUDITOR_NOMBRE','SERIE','MATERIAL','DESCRIPCION','LOTE','ESTADO','COMENTARIO_GENERAL']
+  const materiales = [mat,...g.materiales.map(r=>[...meta(r),texto(r.sku),texto(r.material),texto(r.lote),numero(r.sistema),numero(r.fisico),numero(r.diferencia),texto(r.observacion)||observacionDiferencia(r.fisico,r.sistema),texto(r.comentario_general)])]
+  const herramientas = [her,...g.herramientas.map(r=>[...meta(r),texto(r.producto),texto(r.ubicacion),numero(r.sistema),numero(r.fisico),numero(r.diferencia),texto(r.observacion)||observacionDiferencia(r.fisico,r.sistema),texto(r.comentario_general)])]
+  const equipos = [eq,...g.equipos.map(r=>[...meta(r),texto(r.serie),texto(r.material),texto(r.descripcion),texto(r.lote),texto(r.estado),texto(r.comentario_general)])]
+  const resumen = [['FOLIO',g.folio],['FECHA',texto(g.fecha)],['MES',texto(g.mes)],['TIPO AUDITORIA',texto(g.tipoAuditoria||'TODO')],['ALMACEN',texto(g.almacen)],['TECNICO',texto(g.tecnico)],['AUDITOR',texto(g.auditor)],['MATERIALES',g.materiales.length],['HERRAMIENTAS',g.herramientas.length],['EQUIPOS',g.equipos.length]]
+  const hojas = [hojaXmlQiora(resumen),hojaXmlQiora(materiales,[11,12,13]),hojaXmlQiora(equipos),hojaXmlQiora(herramientas,[10,11,12])]
+  const lista = [
+    ['[Content_Types].xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'+hojas.map((_,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+'</Types>'],
+    ['_rels/.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+    ['xl/workbook.xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'+['RESUMEN','MATERIALES','EQUIPOS','HERRAMIENTAS'].map((n,i)=>'<sheet name="'+n+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>').join('')+'</sheets></workbook>'],
+    ['xl/_rels/workbook.xml.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+hojas.map((_,i)=>'<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>').join('')+'</Relationships>'],
+    ...hojas.map((x,i)=>['xl/worksheets/sheet'+(i+1)+'.xml',x]),
+  ]
+  return crearZipXlsx(lista)
+}
+function descargarExcelAuditoria(g) {
+  const blob = excelAuditoriaFolio(g)
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'AUDITORIA_REALIZADA_'+texto(g.folio).replace(/[^A-Z0-9_-]/gi,'_')+'.xlsx'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(()=>URL.revokeObjectURL(url),60000)
+}
+
 export default function AuditoriasPage() {
   const router = useRouter()
 
@@ -1139,7 +1217,7 @@ export default function AuditoriasPage() {
           </div>
             {histResultados.length > 0 && <div style={styles.tablaWrap}>
             <table style={styles.tabla}><thead><tr><th style={styles.th}>Folio</th><th style={styles.th}>Fecha</th><th style={styles.th}>Mes</th><th style={styles.th}>Almacen</th><th style={styles.th}>Tecnico</th><th style={styles.th}>Auditor</th><th style={styles.th}>Mat.</th><th style={styles.th}>Herr.</th><th style={styles.th}>Eq.</th><th style={styles.th}>Accion</th></tr></thead>
-            <tbody>{histResultados.map((x)=><tr key={`${x.folio}|${x.almacen}`}><td style={styles.td}>{x.folio}</td><td style={styles.td}>{texto(x.fecha)}</td><td style={styles.td}>{x.mes}</td><td style={styles.td}>{x.almacen}</td><td style={styles.td}>{x.tecnico}</td><td style={styles.td}>{x.auditor}</td><td style={styles.td}>{x.materiales.length}</td><td style={styles.td}>{x.herramientas.length}</td><td style={styles.td}>{x.equipos.length}</td><td style={styles.td}><button type="button" style={styles.botonSecundario} onClick={()=>abrirDetalleHistorico(x)}>Ver detalle</button></td></tr>)}</tbody></table>
+            <tbody>{histResultados.map((x)=><tr key={`${x.folio}|${x.almacen}`}><td style={styles.td}>{x.folio}</td><td style={styles.td}>{texto(x.fecha)}</td><td style={styles.td}>{x.mes}</td><td style={styles.td}>{x.almacen}</td><td style={styles.td}>{x.tecnico}</td><td style={styles.td}>{x.auditor}</td><td style={styles.td}>{x.materiales.length}</td><td style={styles.td}>{x.herramientas.length}</td><td style={styles.td}>{x.equipos.length}</td><td style={styles.td}><button type="button" style={styles.botonSecundario} onClick={()=>abrirDetalleHistorico(x)}>Ver detalle</button> <button type="button" style={styles.botonPrincipal} onClick={()=>{ try { descargarExcelAuditoria(x) } catch (e) { setError("Error al descargar Excel: "+(e.message||e)) } }}>Excel</button></td></tr>)}</tbody></table>
           </div>}
           </section>
         )}
@@ -1179,7 +1257,7 @@ export default function AuditoriasPage() {
             <h3 style={{marginTop:22}}>Auditorías con faltantes ({histResultados.length})</h3>
 {histResultados.length > 0 && <div style={styles.tablaWrap}>
             <table style={styles.tabla}><thead><tr><th style={styles.th}>Folio</th><th style={styles.th}>Fecha</th><th style={styles.th}>Mes</th><th style={styles.th}>Almacen</th><th style={styles.th}>Tecnico</th><th style={styles.th}>Auditor</th><th style={styles.th}>Mat.</th><th style={styles.th}>Herr.</th><th style={styles.th}>Eq.</th><th style={styles.th}>Accion</th></tr></thead>
-            <tbody>{histResultados.map((x)=><tr key={`${x.folio}|${x.almacen}`}><td style={styles.td}>{x.folio}</td><td style={styles.td}>{texto(x.fecha)}</td><td style={styles.td}>{x.mes}</td><td style={styles.td}>{x.almacen}</td><td style={styles.td}>{x.tecnico}</td><td style={styles.td}>{x.auditor}</td><td style={styles.td}>{x.materiales.length}</td><td style={styles.td}>{x.herramientas.length}</td><td style={styles.td}>{x.equipos.length}</td><td style={styles.td}><button type="button" style={styles.botonSecundario} onClick={()=>abrirDetalleHistorico(x)}>Ver detalle</button></td></tr>)}</tbody></table>
+            <tbody>{histResultados.map((x)=><tr key={`${x.folio}|${x.almacen}`}><td style={styles.td}>{x.folio}</td><td style={styles.td}>{texto(x.fecha)}</td><td style={styles.td}>{x.mes}</td><td style={styles.td}>{x.almacen}</td><td style={styles.td}>{x.tecnico}</td><td style={styles.td}>{x.auditor}</td><td style={styles.td}>{x.materiales.length}</td><td style={styles.td}>{x.herramientas.length}</td><td style={styles.td}>{x.equipos.length}</td><td style={styles.td}><button type="button" style={styles.botonSecundario} onClick={()=>abrirDetalleHistorico(x)}>Ver detalle</button> <button type="button" style={styles.botonPrincipal} onClick={()=>{ try { descargarExcelAuditoria(x) } catch (e) { setError("Error al descargar Excel: "+(e.message||e)) } }}>Excel</button></td></tr>)}</tbody></table>
           </div>}
             {histResultados.length === 0 && <p>No se encontraron faltantes con los filtros seleccionados.</p>}
           </section>
@@ -1192,6 +1270,7 @@ export default function AuditoriasPage() {
             </button>
 {histDetalle && <div style={{marginTop:'18px'}}>
             <h3 style={{marginBottom:8}}>Detalle: {histDetalle.folio}</h3>
+            {vista === 'DETALLE_HISTORICO' && <button type="button" style={styles.botonPrincipal} onClick={()=>{try {descargarExcelAuditoria(histDetalle)} catch(e) {setError(e.message||"No se pudo descargar")}}}>Descargar Excel del folio</button>}
             <p style={{color:'#53675e',margin:'0 0 16px'}}>Almacén: <strong>{histDetalle.almacen}</strong> · Técnico: <strong>{histDetalle.tecnico || '-'}</strong> · Mes: <strong>{histDetalle.mes || '-'}</strong></p>
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(155px,1fr))',gap:12,marginBottom:20}}>
               {[
