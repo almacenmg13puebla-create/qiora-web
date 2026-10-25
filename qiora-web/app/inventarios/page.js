@@ -19,8 +19,8 @@ const CAMPOS = {
 const PUEDE = (p) => ['auditoria','dashboard','traspasos','solicitud_material'].some(k=>p?.[k]===true)
 const lim = 200
 const grupoSKU = (sku, catalogo) => catalogo[String(sku??'').trim()] || 'SIN CLASIFICAR'
-const etiquetaEstado = dias => dias == null ? 'SIN FECHA' : dias > 30 ? 'CRÍTICO' : dias > 15 ? 'FUERA DE TIEMPO' : dias < 15 ? 'EN TIEMPO' : 'DÍA 15 (LÍMITE)'
-const filtrarEstado = (dias, filtro) => !filtro || (dias != null && (filtro === 'EN_TIEMPO' ? dias < 15 : filtro === 'FUERA_TIEMPO' ? dias > 15 : filtro === 'CRITICO' ? dias > 30 : false))
+const etiquetaEstado = dias => dias == null ? 'SIN FECHA' : dias > 30 ? 'CRÍTICO' : dias >= 15 ? 'FUERA DE TIEMPO' : 'EN TIEMPO'
+const filtrarEstado = (dias, filtro) => !filtro || (dias != null && (filtro === 'EN_TIEMPO' ? dias < 15 : filtro === 'FUERA_TIEMPO' ? dias >= 15 : filtro === 'CRITICO' ? dias > 30 : false))
 
 const mx = (x) => String(x??'').trim()
 const normalizar = x => mx(x).toLocaleUpperCase('es-MX')
@@ -80,6 +80,8 @@ export default function InventariosPage() {
   const [pagina, setPagina] = useState(1)
   const [respuesta, setRespuesta] = useState(null)
   const [filtroAplicado, setFiltroAplicado] = useState('')
+  const [filtrosEquiposAplicados, setFiltrosEquiposAplicados] = useState({ estado: '', serie: '' })
+  const [busquedaMaterialAplicada, setBusquedaMaterialAplicada] = useState('')
   const [soloCoincidencias, setSoloCoincidencias] = useState(false)
   const [cargando, setCargando] = useState(false)
   const [exportando, setExportando] = useState(false)
@@ -137,54 +139,58 @@ export default function InventariosPage() {
     return () => { cancelado = true }
   }, [almacen, perfil, esMateriales, esEquipos])
 
-  // La consulta de IQ09 usa una RPC que añade dias y estado calculados en el servidor.
-  const consultaRpc = tipo === 'IQ09_EQUIPOS' ? 'qiora_consultar_equipos_tiempo' : tipo === 'STOCK_TECNICOS' ? 'qiora_consultar_materiales_sin_usado' : 'qiora_consultar_inventario_v2'
+  // Todos los filtros IQ09 se ejecutan en Supabase ANTES de paginar.
+  const consultaRpc = tipo === 'IQ09_EQUIPOS' ? 'qiora_consultar_equipos_filtrados' : tipo === 'STOCK_TECNICOS' ? 'qiora_consultar_materiales_sin_usado' : 'qiora_consultar_inventario_v2'
   const preparar = filas => (filas||[]).filter(f => !esMateriales || normalizar(f.lote) !== 'TPE USADO').map(f => esMateriales ? {...f, grupo:grupoSKU(f.sku,catalogoSKU)} : f)
   function coincide(f) {
-    if (esMateriales && soloCoincidencias && buscador) {
-      const b=normalizar(buscador)
+    if (esMateriales && busquedaMaterialAplicada) {
+      const b=normalizar(busquedaMaterialAplicada)
       if (![f.sku,f.material,f.grupo].some(x=>normalizar(x).includes(b))) return false
     }
-    if (esEquipos && !filtrarEstado(f.dias, estado)) return false
-    if (esEquipos && serie && !normalizar(f.serie).includes(normalizar(serie))) return false
     return true
   }
+  const argumentosConsulta = (numero, a, filtros) => esEquipos
+    ? { p_almacen: a || null, p_estado: ({EN_TIEMPO:'EN TIEMPO', FUERA_TIEMPO:'FUERA DE TIEMPO', CRITICO:'CRÍTICO'})[filtros.estado] || 'TODOS', p_serie: filtros.serie || null, p_pagina: numero, p_limite: lim }
+    : { p_tipo: tipo, p_almacen: a || null, p_pagina: numero, p_limite: lim }
 
   function regresar() {
     if (!tipo) return router.push('/')
     setTipo(''); setAlmacen(''); setTecnico(''); setBuscador(''); setTelefono(''); setTecnicoResuelto('')
-    setEstado(''); setSerie(''); setRespuesta(null); setError(''); setFiltroAplicado('')
+    setEstado(''); setSerie(''); setRespuesta(null); setError(''); setFiltroAplicado(''); setFiltrosEquiposAplicados({estado:'',serie:''}); setBusquedaMaterialAplicada('')
   }
 
   function abrir(modulo) {
     setTipo(modulo); setRespuesta(null); setError(''); setAlmacen('')
     setTecnico(''); setBuscador(''); setEstado(''); setSerie(''); setFiltroAplicado(''); setTelefono(''); setTecnicoResuelto('')
-    setPagina(1); setSoloCoincidencias(false)
+    setPagina(1); setSoloCoincidencias(false); setFiltrosEquiposAplicados({estado:'',serie:''}); setBusquedaMaterialAplicada('')
   }
 
-  const consultar = useCallback(async (nuevaPagina = 1, filtroAlmacen = almacen, filtroTexto = null) => {
+  const consultar = async (nuevaPagina = 1, filtroAlmacen = almacen, filtroTexto = null) => {
     if (!tipo) return
     setCargando(true); setError('')
     try {
       const f = mx(filtroAlmacen).toUpperCase()
-      const { data, error: queryError } = await supabase.rpc(consultaRpc, {
-        p_tipo: tipo,
-        p_almacen: f || null,
-        p_pagina: nuevaPagina,
-        p_limite: lim,
-      })
+      const filtros = esEquipos
+        ? (nuevaPagina === 1 ? {estado, serie: mx(serie).toUpperCase()} : filtrosEquiposAplicados)
+        : {estado:'',serie:''}
+      const { data, error: queryError } = await supabase.rpc(consultaRpc, argumentosConsulta(nuevaPagina, f, filtros))
       if (queryError) throw queryError
       if (!data?.ok) throw new Error(data?.mensaje || 'No se pudo consultar el inventario.')
-      setRespuesta({...data,filas:preparar(data.filas)}); setPagina(nuevaPagina); setFiltroAplicado(f)
-      if (filtroTexto !== null) setSoloCoincidencias(Boolean(mx(filtroTexto)))
+      setRespuesta({...data,filas:preparar(data.filas)})
+      setPagina(nuevaPagina)
+      setFiltroAplicado(f)
+      if (esEquipos) setFiltrosEquiposAplicados(filtros)
+      if (esMateriales && filtroTexto !== null) {
+        setSoloCoincidencias(Boolean(mx(filtroTexto)))
+        setBusquedaMaterialAplicada(mx(filtroTexto))
+      }
     } catch(e) {
       setRespuesta(null)
       setError(e?.message || 'No fue posible consultar Inventarios.')
     } finally { setCargando(false) }
-  }, [tipo, almacen])
+  }
 
-  // Los resultados visibles se filtran en la página; para Estado/Serie se cargan
-  // todas las páginas autorizadas y luego se filtran para evitar cortes falsos.
+  // IQ09 ya llega filtrado y paginado en Supabase.
   const filas = (respuesta?.filas||[]).filter(coincide)
   const totalPaginas = Math.max(1, Math.ceil(Number(respuesta?.total || 0) / lim))
 
@@ -194,9 +200,8 @@ export default function InventariosPage() {
     if (total > 50000) throw new Error('Hay más de 50,000 registros. Filtra por almacén para exportar.')
     const salida = []
     for (let n=1; n<=Math.ceil(total / lim); n++) {
-      const { data, error: e } = await supabase.rpc(consultaRpc, {
-        p_tipo: tipo, p_almacen: filtroAplicado || null, p_pagina:n, p_limite:lim
-      })
+      const { data, error: e } = await supabase.rpc(consultaRpc,
+        argumentosConsulta(n, filtroAplicado, filtrosEquiposAplicados))
       if (e) throw e
       if (!data?.ok) throw new Error('Error al descargar página ' + n)
       salida.push(...preparar(data.filas || []))
@@ -207,6 +212,7 @@ export default function InventariosPage() {
   async function exportar(formato) {
     setExportando(true); setError('')
     try {
+      if (cambiosEquiposPendientes) throw new Error('Pulsa Buscar para aplicar los nuevos filtros antes de exportar.')
       const todos = await obtenerTodo()
       const filtro = todos.filter(coincide)
       const nom = 'QIORA_' + tipo + '_' + perfil.distrito + '_' + new Date().toISOString().slice(0,10)
@@ -220,6 +226,7 @@ export default function InventariosPage() {
 
   async function compartirWhatsapp() {
     setError('')
+    if (cambiosEquiposPendientes) { setError('Pulsa Buscar para aplicar los nuevos filtros.'); return }
     if (!esEquipos || !mx(almacen)) { setError('Selecciona un almacén para determinar el destinatario.'); return }
     if (!respuesta || filtroAplicado !== mx(almacen).toUpperCase()) { setError('Primero consulta ese mismo almacén.'); return }
     if (!telefono) { setError('No hay teléfono válido autorizado para este técnico. Revisa la columna de contacto en Supabase.'); return }
@@ -235,7 +242,7 @@ export default function InventariosPage() {
         'Distrito: '+perfil.distrito,
         'Almacén: '+filtroAplicado,
         'Técnico: '+(tecnicoResuelto||'Sin nombre'),
-        'Filtro: '+(estado==='EN_TIEMPO'?'EN TIEMPO':estado==='FUERA_TIEMPO'?'FUERA DE TIEMPO':estado==='CRITICO'?'CRÍTICO':'TODOS'),
+        'Filtro: '+(filtrosEquiposAplicados.estado==='EN_TIEMPO'?'EN TIEMPO':filtrosEquiposAplicados.estado==='FUERA_TIEMPO'?'FUERA DE TIEMPO':filtrosEquiposAplicados.estado==='CRITICO'?'CRÍTICO':'TODOS'),
         'Total de equipos: '+datos.length,
         ...datos.slice(0,maximo).map((x,i)=> `${i+1}. Serie: ${x.serie||'-'} | Material: ${x.material||'-'} | Días: ${x.dias??'Sin fecha'} | ${x.estado_tiempo||'SIN FECHA'}`),
         datos.length>maximo ? `Se incluyen ${maximo} de ${datos.length} equipos. Descarga Excel para el listado completo.` : '',
@@ -244,6 +251,8 @@ export default function InventariosPage() {
     } catch(e) { setError(e.message||'No fue posible preparar WhatsApp.') }
     finally { setExportando(false) }
   }
+
+  const cambiosEquiposPendientes = esEquipos && respuesta && (estado !== filtrosEquiposAplicados.estado || mx(serie).toUpperCase() !== filtrosEquiposAplicados.serie || (mx(almacen).match(/^[0-9]{1,4}$/) ? mx(almacen).padStart(4,'0') : mx(almacen).toUpperCase()) !== (filtroAplicado.match(/^[0-9]{1,4}$/) ? filtroAplicado.padStart(4,'0') : filtroAplicado))
 
   const btn = (etiqueta, accion, secundario = false, disabled = false) =>
     <button type="button" style={secundario ? s.secVerde : s.principal} disabled={disabled} onClick={accion}>{etiqueta}</button>
@@ -259,25 +268,25 @@ export default function InventariosPage() {
         <div style={s.filtros}>
           <label style={s.campo}>Almacén (opcional)<input style={s.input} value={almacen} placeholder="Vacío = todos los autorizados" maxLength={10} onChange={e=>setAlmacen(e.target.value.toUpperCase())}/></label>
           {(esMateriales || esEquipos) && <label style={s.campo}>{esMateriales?'Técnico':'Técnico responsable'}<input style={s.input} readOnly value={almacen ? tecnicoResuelto : 'Todos los técnicos autorizados'} placeholder="Automático por almacén"/></label>}
-          {esEquipos && <label style={s.campo}>Estado<select style={s.input} value={estado} onChange={e=>setEstado(e.target.value)}><option value="">Todos</option><option value="EN_TIEMPO">Equipo en Tiempo (menos de 15 días)</option><option value="FUERA_TIEMPO">Equipos fuera de tiempo (más de 15 días)</option><option value="CRITICO">Equipo Crítico (más de 30 días)</option></select></label>}
+          {esEquipos && <label style={s.campo}>Estado<select style={s.input} value={estado} onChange={e=>setEstado(e.target.value)}><option value="">Todos</option><option value="EN_TIEMPO">Equipo en Tiempo (menos de 15 días)</option><option value="FUERA_TIEMPO">Equipos fuera de tiempo (desde 15 días)</option><option value="CRITICO">Equipo Crítico (más de 30 días)</option></select></label>}
           {esMateriales && <label style={s.campo}>SKU, material o grupo<input style={s.input} value={buscador} placeholder="Escribe SKU, material o grupo" onChange={e=>setBuscador(e.target.value)}/></label>}
           {esEquipos && <label style={{...s.campo,gridColumn:'1 / -1'}}>Serie (opcional)<input style={s.input} value={serie} placeholder="Escanea o captura la serie" onChange={e=>setSerie(e.target.value.toUpperCase())}/></label>}
         </div>
         <div style={s.acciones}>
           {esMateriales ? <>{btn('Buscar todo',()=>{setSoloCoincidencias(false); consultar(1,almacen,'')},false,cargando)}{btn('Buscar material o grupo',()=>{setSoloCoincidencias(true);consultar(1,almacen,buscador)},false,cargando)} </> : btn('Buscar',()=>consultar(1,almacen),false,cargando)}
-          {esEquipos && <>{btn('Enviar por WhatsApp',compartirWhatsapp,true,!respuesta)}{btn('Descargar Excel',()=>exportar('Excel'),true,!respuesta||exportando)}</>}
+          {esEquipos && <>{btn('Enviar por WhatsApp',compartirWhatsapp,true,!respuesta||cambiosEquiposPendientes||exportando)}{btn('Descargar Excel',()=>exportar('Excel'),true,!respuesta||cambiosEquiposPendientes||exportando)}</>}
           {!esEquipos && respuesta && <>{btn('Excel',()=>exportar('Excel'),true,exportando)}{btn('PDF',()=>exportar('PDF'),true,exportando)}</>}
         </div>
-        <p style={s.aviso}>En Técnicos - Materiales se excluye TPE USADO desde Supabase; Excel y PDF respetan la exclusión. Los filtros de búsqueda se aplican sobre la página consultada; Excel y WhatsApp recorren las páginas autorizadas. Los días se calculan únicamente si existe fecha de referencia registrada. Exactamente 15 días se identifica como límite sin clasificar. WhatsApp abre el mensaje para confirmar el envío.</p>
+        <p style={s.aviso}>Técnicos - Materiales excluye TPE USADO; la búsqueda de materiales se realiza sobre la página obtenida. Equipos filtra por estado y serie en Supabase antes de paginar; Excel y WhatsApp respetan los filtros consultados. Desde 15 días se considera fuera de tiempo y más de 30 días crítico. WhatsApp abre el mensaje para confirmar el envío.</p>{cambiosEquiposPendientes && <p style={s.aviso}>Cambiaste los filtros. Pulsa Buscar para actualizar la consulta antes de exportar o enviar.</p>}
       </section>
       {error && <p role="alert" style={s.error}>{error}</p>}{advertencia && <p style={s.aviso}>{advertencia}</p>}
       <section style={s.panelOscuro}>
-        {respuesta && <p style={{...s.aviso,marginTop:0}}>Almacén: {respuesta.almacen || 'Autorizados'} · {respuesta.total} registros en la consulta · {filas.length} visibles en esta página</p>}
+        {respuesta && <p style={{...s.aviso,marginTop:0}}>Almacén: {respuesta.almacen || 'Autorizados'} · {esEquipos ? `${respuesta.total_sin_estado ?? respuesta.total} equipos de la consulta · ${respuesta.total} coinciden con el filtro · ${filas.length} en esta página` : `${respuesta.total} registros en la consulta · ${filas.length} visibles en esta página`}</p>}
         <div style={s.tablaWrap}><table style={s.tabla}><thead><tr>{columnas.map(([k,t])=><th key={k} style={s.th}>{t}</th>)}</tr></thead><tbody>
         {respuesta ? filas.map((fila,i)=><tr key={i}>{columnas.map(([campo])=><td style={s.td} key={campo}>{String(fila[campo] ?? (campo==='dias'?'Sin fecha':'-'))}</td>)}</tr>) : <tr><td colSpan={columnas.length} style={s.vacio}>Sin consulta realizada.</td></tr>}
         {respuesta && !filas.length && <tr><td colSpan={columnas.length} style={s.vacio}>Sin resultados en esta página con los filtros seleccionados.</td></tr>}
         </tbody></table></div>
-        {respuesta && <div style={s.paginacion}><button style={s.secVerde} disabled={cargando||pagina<=1} onClick={()=>consultar(pagina-1,filtroAplicado)}>Anterior</button><span>Página {pagina} de {totalPaginas}</span><button style={s.secVerde} disabled={cargando||pagina>=totalPaginas} onClick={()=>consultar(pagina+1,filtroAplicado)}>Siguiente</button></div>}
+        {respuesta && <div style={s.paginacion}><button style={s.secVerde} disabled={cargando||pagina<=1||cambiosEquiposPendientes} onClick={()=>consultar(pagina-1,filtroAplicado)}>Anterior</button><span>Página {pagina} de {totalPaginas}</span><button style={s.secVerde} disabled={cargando||pagina>=totalPaginas||cambiosEquiposPendientes} onClick={()=>consultar(pagina+1,filtroAplicado)}>Siguiente</button></div>}
       </section>
     </>}
   </div></main>
