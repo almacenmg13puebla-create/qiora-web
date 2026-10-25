@@ -122,11 +122,9 @@ export default function AuditoriasPage() {
         return
       }
 
-      const { data, error: perfilError } = await supabase
-        .from('almacen_usuarios')
-        .select('*')
-        .eq('auth_user_id', user.id)
-        .maybeSingle()
+      const { data, error: perfilError } = await supabase.rpc(
+        'qiora_mi_perfil'
+      )
 
       if (perfilError) throw perfilError
 
