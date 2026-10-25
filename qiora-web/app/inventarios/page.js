@@ -140,18 +140,13 @@ export default function InventariosPage() {
   }, [almacen, perfil, esMateriales, esEquipos])
 
   // Todos los filtros IQ09 se ejecutan en Supabase ANTES de paginar.
-  const consultaRpc = tipo === 'IQ09_EQUIPOS' ? 'qiora_consultar_equipos_filtrados' : tipo === 'STOCK_TECNICOS' ? 'qiora_consultar_materiales_sin_usado' : 'qiora_consultar_inventario_v2'
-  const preparar = filas => (filas||[]).filter(f => !esMateriales || normalizar(f.lote) !== 'TPE USADO').map(f => esMateriales ? {...f, grupo:grupoSKU(f.sku,catalogoSKU)} : f)
-  function coincide(f) {
-    if (esMateriales && busquedaMaterialAplicada) {
-      const b=normalizar(busquedaMaterialAplicada)
-      if (![f.sku,f.material,f.grupo].some(x=>normalizar(x).includes(b))) return false
-    }
-    return true
-  }
+  const consultaRpc = tipo === 'IQ09_EQUIPOS' ? 'qiora_consultar_equipos_filtrados' : tipo === 'STOCK_TECNICOS' ? 'qiora_consultar_materiales_filtrados' : 'qiora_consultar_inventario_v2'
+  const preparar = filas => (filas||[]).filter(f => !esMateriales || normalizar(f.lote) !== 'TPE USADO')
   const argumentosConsulta = (numero, a, filtros) => esEquipos
     ? { p_almacen: a || null, p_estado: ({EN_TIEMPO:'EN TIEMPO', FUERA_TIEMPO:'FUERA DE TIEMPO', CRITICO:'CRÍTICO'})[filtros.estado] || 'TODOS', p_serie: filtros.serie || null, p_pagina: numero, p_limite: lim }
-    : { p_tipo: tipo, p_almacen: a || null, p_pagina: numero, p_limite: lim }
+    : esMateriales
+      ? { p_tipo: tipo, p_almacen: a || null, p_busqueda: filtros.busqueda || null, p_pagina: numero, p_limite: lim }
+      : { p_tipo: tipo, p_almacen: a || null, p_pagina: numero, p_limite: lim }
 
   function regresar() {
     if (!tipo) return router.push('/')
@@ -172,7 +167,9 @@ export default function InventariosPage() {
       const f = mx(filtroAlmacen).toUpperCase()
       const filtros = esEquipos
         ? (nuevaPagina === 1 ? {estado, serie: mx(serie).toUpperCase()} : filtrosEquiposAplicados)
-        : {estado:'',serie:''}
+        : esMateriales
+          ? {busqueda: nuevaPagina === 1 ? mx(filtroTexto ?? busquedaMaterialAplicada) : busquedaMaterialAplicada}
+          : {}
       const { data, error: queryError } = await supabase.rpc(consultaRpc, argumentosConsulta(nuevaPagina, f, filtros))
       if (queryError) throw queryError
       if (!data?.ok) throw new Error(data?.mensaje || 'No se pudo consultar el inventario.')
@@ -180,9 +177,9 @@ export default function InventariosPage() {
       setPagina(nuevaPagina)
       setFiltroAplicado(f)
       if (esEquipos) setFiltrosEquiposAplicados(filtros)
-      if (esMateriales && filtroTexto !== null) {
-        setSoloCoincidencias(Boolean(mx(filtroTexto)))
-        setBusquedaMaterialAplicada(mx(filtroTexto))
+      if (esMateriales) {
+        setSoloCoincidencias(Boolean(filtros.busqueda))
+        setBusquedaMaterialAplicada(filtros.busqueda)
       }
     } catch(e) {
       setRespuesta(null)
@@ -191,7 +188,7 @@ export default function InventariosPage() {
   }
 
   // IQ09 ya llega filtrado y paginado en Supabase.
-  const filas = (respuesta?.filas||[]).filter(coincide)
+  const filas = respuesta?.filas || []
   const totalPaginas = Math.max(1, Math.ceil(Number(respuesta?.total || 0) / lim))
 
   async function obtenerTodo() {
@@ -201,7 +198,7 @@ export default function InventariosPage() {
     const salida = []
     for (let n=1; n<=Math.ceil(total / lim); n++) {
       const { data, error: e } = await supabase.rpc(consultaRpc,
-        argumentosConsulta(n, filtroAplicado, filtrosEquiposAplicados))
+        argumentosConsulta(n, filtroAplicado, esMateriales ? {busqueda: busquedaMaterialAplicada} : filtrosEquiposAplicados))
       if (e) throw e
       if (!data?.ok) throw new Error('Error al descargar página ' + n)
       salida.push(...preparar(data.filas || []))
@@ -214,7 +211,7 @@ export default function InventariosPage() {
     try {
       if (cambiosEquiposPendientes) throw new Error('Pulsa Buscar para aplicar los nuevos filtros antes de exportar.')
       const todos = await obtenerTodo()
-      const filtro = todos.filter(coincide)
+      const filtro = todos
       const nom = 'QIORA_' + tipo + '_' + perfil.distrito + '_' + new Date().toISOString().slice(0,10)
       const det = { tipo, distrito: perfil.distrito, almacen:filtroAplicado }
       if (formato === 'Excel') await descargarExcel(filtro, columnas, nom, det)
@@ -234,7 +231,7 @@ export default function InventariosPage() {
     try {
       // Whatsapp no admite adjuntar directamente Excel desde un enlace wa.me.
       // El texto se limita para no exceder la longitud de URL y se indica si queda incompleto.
-      const datos = (await obtenerTodo()).filter(coincide)
+      const datos = await obtenerTodo()
       if (!datos.length) throw new Error('No hay series con los filtros seleccionados.')
       const maximo = 35
       const msg = [
@@ -269,7 +266,7 @@ export default function InventariosPage() {
           <label style={s.campo}>Almacén (opcional)<input style={s.input} value={almacen} placeholder="Vacío = todos los autorizados" maxLength={10} onChange={e=>{setAlmacen(e.target.value.toUpperCase());setRespuesta(null);setPagina(1)}}/></label>
           {(esMateriales || esEquipos) && <label style={s.campo}>{esMateriales?'Técnico':'Técnico responsable'}<input style={s.input} readOnly value={almacen ? tecnicoResuelto : 'Todos los técnicos autorizados'} placeholder="Automático por almacén"/></label>}
           {esEquipos && <label style={s.campo}>Estado<select style={s.input} value={estado} onChange={e=>{setEstado(e.target.value);setRespuesta(null);setPagina(1)}}><option value="">Todos</option><option value="EN_TIEMPO">Equipo en Tiempo (menos de 15 días)</option><option value="FUERA_TIEMPO">Equipos fuera de tiempo (15 a 30 días)</option><option value="CRITICO">Equipo Crítico (más de 30 días)</option></select></label>}
-          {esMateriales && <label style={s.campo}>SKU, material o grupo<input style={s.input} value={buscador} placeholder="Escribe SKU, material o grupo" onChange={e=>setBuscador(e.target.value)}/></label>}
+          {esMateriales && <label style={s.campo}>SKU, material o grupo<input style={s.input} value={buscador} placeholder="Escribe SKU, material o grupo" onChange={e=>{setBuscador(e.target.value);setRespuesta(null);setPagina(1)}}/></label>}
           {esEquipos && <label style={{...s.campo,gridColumn:'1 / -1'}}>Serie (opcional)<input style={s.input} value={serie} placeholder="Escanea o captura la serie" onChange={e=>{setSerie(e.target.value.toUpperCase());setRespuesta(null);setPagina(1)}}/></label>}
         </div>
         <div style={s.acciones}>
@@ -277,11 +274,11 @@ export default function InventariosPage() {
           {esEquipos && <>{btn('Enviar por WhatsApp',compartirWhatsapp,true,!respuesta||cambiosEquiposPendientes||exportando)}{btn('Descargar Excel',()=>exportar('Excel'),true,!respuesta||cambiosEquiposPendientes||exportando)}</>}
           {!esEquipos && respuesta && <>{btn('Excel',()=>exportar('Excel'),true,exportando)}{btn('PDF',()=>exportar('PDF'),true,exportando)}</>}
         </div>
-        <p style={s.aviso}>Técnicos - Materiales excluye TPE USADO; la búsqueda de materiales se realiza sobre la página obtenida. Equipos filtra por estado y serie en Supabase antes de paginar; al cambiar un filtro se limpia la consulta anterior y debes presionar Buscar; Excel y WhatsApp respetan los filtros consultados. Los estados son excluyentes: 0 a 14 días en tiempo, 15 a 30 días fuera de tiempo y desde 31 días crítico. WhatsApp abre el mensaje para confirmar el envío.</p>{cambiosEquiposPendientes && <p style={s.aviso}>Cambiaste los filtros. Pulsa Buscar para actualizar la consulta antes de exportar o enviar.</p>}
+        <p style={s.aviso}>Técnicos - Materiales excluye TPE USADO; SKU, nombre y grupo se buscan en Supabase antes de paginar, con grupos del catálogo dinámico. Equipos filtra por estado y serie en Supabase antes de paginar; al cambiar un filtro se limpia la consulta anterior y debes presionar Buscar; Excel y WhatsApp respetan los filtros consultados. Los estados son excluyentes: 0 a 14 días en tiempo, 15 a 30 días fuera de tiempo y desde 31 días crítico. WhatsApp abre el mensaje para confirmar el envío.</p>{cambiosEquiposPendientes && <p style={s.aviso}>Cambiaste los filtros. Pulsa Buscar para actualizar la consulta antes de exportar o enviar.</p>}
       </section>
       {error && <p role="alert" style={s.error}>{error}</p>}{advertencia && <p style={s.aviso}>{advertencia}</p>}
       <section style={s.panelOscuro}>
-        {respuesta && <p style={{...s.aviso,marginTop:0}}>Almacén: {respuesta.almacen || 'Autorizados'} · {esEquipos ? `${respuesta.total_sin_estado ?? respuesta.total} equipos de la consulta · ${respuesta.total} coinciden con el filtro · ${filas.length} en esta página` : `${respuesta.total} registros en la consulta · ${filas.length} visibles en esta página`}</p>}
+        {respuesta && <p style={{...s.aviso,marginTop:0}}>Almacén: {respuesta.almacen || 'Autorizados'} · {esEquipos ? `${respuesta.total_sin_estado ?? respuesta.total} equipos de la consulta · ${respuesta.total} coinciden con el filtro · ${filas.length} en esta página` : `${respuesta.total} registros coinciden con la búsqueda · ${filas.length} en esta página`}</p>}
         <div style={s.tablaWrap}><table style={s.tabla}><thead><tr>{columnas.map(([k,t])=><th key={k} style={s.th}>{t}</th>)}</tr></thead><tbody>
         {respuesta ? filas.map((fila,i)=><tr key={i}>{columnas.map(([campo])=><td style={s.td} key={campo}>{String(fila[campo] ?? (campo==='dias'?'Sin fecha':'-'))}</td>)}</tr>) : <tr><td colSpan={columnas.length} style={s.vacio}>Sin consulta realizada.</td></tr>}
         {respuesta && !filas.length && <tr><td colSpan={columnas.length} style={s.vacio}>No hay registros que coincidan con los filtros aplicados.</td></tr>}
