@@ -103,115 +103,159 @@ function resumenFaltantesHistoricos(resultados) {
 
 // Generador PDF autonomo: sin dependencias ni servicios externos.
 // Emite PDF A4 multipagina con tipografia Helvetica (WinAnsi).
+// PDF A4, estilo del reporte QIORA original. No requiere dependencias externas.
 function crearPdfAuditoria(info) {
-  const lineas = []
-  const agregar = (texto, negrita = false, tam = 9) => lineas.push({ texto: String(texto ?? ''), negrita, tam })
-  const limpio = (v) => String(v ?? '').replace(/[\\r\n\\t]+/g, ' ').trim()
-  const diferencia = (x) => numero(x.fisico) - numero(x.sistema)
-
-  agregar('QIORA CONECTA | REPORTE DE AUDITORIA', true, 16)
-  agregar('Folio: ' + limpio(info.folio), true, 12)
-  agregar('Fecha: ' + limpio(info.fecha) + ' | Distrito: ' + limpio(info.distrito))
-  agregar('Almacen: ' + limpio(info.almacen) + ' | Tecnico: ' + limpio(info.tecnico))
-  agregar('Auditor: ' + limpio(info.auditor) + ' | Usuario: ' + limpio(info.usuario))
-  agregar('Tipo: ' + limpio(info.tipo))
-  agregar('Materiales: ' + info.materiales.length + ' | Herramientas: ' + info.herramientas.length + ' | Equipos: ' + info.equipos.length, true)
-  agregar(' ')
-
-  if (info.materiales.length) {
-    agregar('MATERIALES / CONSUMIBLES', true, 12)
-    for (const x of info.materiales) {
-      agregar(limpio(x.sku) + ' | ' + limpio(x.material) + ' | Lote: ' + limpio(x.lote))
-      agregar('Sistema: ' + numero(x.sistema) + '  Fisico: ' + numero(x.fisico) + '  Diferencia: ' + diferencia(x) + '  ' + observacionDiferencia(x.fisico, x.sistema))
-    }
-    agregar(' ')
-  }
-  if (info.herramientas.length) {
-    agregar('HERRAMIENTAS', true, 12)
-    for (const x of info.herramientas) {
-      agregar(limpio(x.producto) + ' | Ubicacion: ' + limpio(x.ubicacion))
-      agregar('Sistema: ' + numero(x.sistema) + '  Fisico: ' + numero(x.fisico) + '  Diferencia: ' + diferencia(x) + '  ' + observacionDiferencia(x.fisico, x.sistema))
-    }
-    agregar(' ')
-  }
-  if (info.equipos.length) {
-    agregar('EQUIPOS / SERIES', true, 12)
-    for (const x of info.equipos) {
-      agregar('Serie: ' + limpio(x.serie) + ' | Material: ' + limpio(x.material) + ' | Lote: ' + limpio(x.lote))
-      agregar('Descripcion: ' + limpio(x.descripcion) + ' | Estado: ' + limpio(x.estado))
-    }
-    agregar(' ')
-  }
-  agregar('OBSERVACIONES GENERALES', true, 12)
-  agregar(limpio(info.comentario) || 'Sin observaciones')
-  agregar(' ')
-  agregar('Reporte generado desde QIORA CONECTA. Folio confirmado por Supabase.')
-
-  // PDF con Helvetica WinAnsi. Caracteres fuera del repertorio se transliteran.
-  const toWinAnsi = (s) => String(s)
-    .replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"')
-    .replace(/[\u2013\u2014]/g, '-').replace(/\u2022/g, '-')
-    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  const normal = (v) => String(v ?? '').replace(/\s+/g, ' ').trim()
+  const ansi = (s) => normal(s).replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\x20-\x7e\xa1-\xff]/g, '?')
-  const escapar = (s) => toWinAnsi(s).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')
-  const envolver = (s, max) => {
-    const words = toWinAnsi(s).split(/\s+/).filter(Boolean)
-    const out = []
-    let line = ''
-    for (const word of words) {
-      if (word.length > max) {
-        if (line) { out.push(line); line = '' }
-        for (let i = 0; i < word.length; i += max) out.push(word.slice(i, i + max))
-      } else if ((line + ' ' + word).trim().length > max) {
-        if (line) out.push(line)
-        line = word
-      } else line = line ? line + ' ' + word : word
+  const esc = (s) => ansi(s).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')
+  const anchoTexto = (s, tam = 8) => ansi(s).length * tam * 0.61
+  const ajustar = (valor, ancho, tam = 8) => {
+    const palabras = ansi(valor).split(' '), partes = []
+    let linea = ''
+    for (const palabra of palabras) {
+      if (anchoTexto((linea ? linea + ' ' : '') + palabra, tam) <= ancho - 7) {
+        linea += (linea ? ' ' : '') + palabra
+      } else {
+        if (linea) partes.push(linea)
+        linea = ''
+        for (const c of palabra) {
+          if (anchoTexto(linea + c, tam) > ancho - 7 && linea) { partes.push(linea); linea = '' }
+          linea += c
+        }
+      }
     }
-    if (line) out.push(line)
-    return out.length ? out : ['']
+    if (linea) partes.push(linea)
+    return partes.length ? partes : ['']
   }
-  const paginas = [[]]
-  let y = 799
-  for (const linea of lineas) {
-    const chars = linea.tam >= 16 ? 55 : linea.tam >= 12 ? 76 : 104
-    for (const fragmento of envolver(linea.texto, chars)) {
-      const alto = linea.tam >= 16 ? 25 : linea.tam >= 12 ? 19 : 14
-      if (y < 66) { paginas.push([]); y = 799 }
-      paginas[paginas.length - 1].push({ y, texto: fragmento, tam: linea.tam, negrita: linea.negrita })
-      y -= alto
+  const verde = [0.025, 0.32, 0.25], verdeClaro = [0.92, 0.98, 0.95]
+  const rgb = (c) => c.join(' ')
+  const paginas = []
+  let ops = [], y = 812
+  const rect = (x, abajo, w, h, color, borde = null) => {
+    if (color) ops.push(`${rgb(color)} rg ${x} ${abajo} ${w} ${h} re f`)
+    if (borde) ops.push(`${rgb(borde)} RG 0.6 w ${x} ${abajo} ${w} ${h} re S`)
+  }
+  const linea = (x1, y1, x2, y2, color = verde) => ops.push(`${rgb(color)} RG 0.7 w ${x1} ${y1} m ${x2} ${y2} l S`)
+  const txt = (s, x, yy, tam = 8, bold = false, color = [0.1, 0.18, 0.15], centrar = false) => {
+    const val = ansi(s)
+    const pos = centrar ? x - anchoTexto(val, tam) / 2 : x
+    ops.push(`${rgb(color)} rg BT /${bold ? 'F2' : 'F1'} ${tam} Tf ${pos.toFixed(1)} ${yy.toFixed(1)} Td (${esc(val)}) Tj ET`)
+  }
+  const encabezado = (seccion, continuacion = false) => {
+    rect(28, 767, 539, 57, verde)
+    txt('QIORA CONECTA', 297, 797, 16, true, [1, 1, 1], true)
+    // PUEBLA se conoce para MG13. Para otros, mostrar codigo sin inventar una sede.
+    const sede = String(info.distrito || '').toUpperCase() === 'MG13'
+      ? 'PUEBLA | ALMACENES' : `${normal(info.distrito) || 'DISTRITO'} | ALMACENES`
+    txt(sede, 297, 780, 10, true, [1, 1, 1], true)
+    txt(`REPORTE DE AUDITORIA - ${seccion}${continuacion ? ' (CONTINUACION)' : ''}`, 297, 742, 13, true, verde, true)
+    y = 720
+  }
+  const datos = () => {
+    const labels = [
+      ['Folio', info.folio], ['Fecha', info.fecha], ['Tipo de auditoria', info.tipo],
+      ['Distrito', info.distrito], ['Almacen', info.almacen], ['Tecnico', info.tecnico],
+      ['Auditor', info.auditor], ['Usuario', info.usuario],
+      ['Observaciones', info.comentario || 'Sin observaciones']
+    ]
+    let alto = 15 * labels.length + 15
+    rect(28, y - alto, 539, alto, verdeClaro, [0.25, 0.57, 0.46])
+    let yy = y - 17
+    labels.forEach(([k,v]) => { txt(`${k}: ${normal(v)}`, 38, yy, 8, false); yy -= 15 })
+    y -= alto + 14
+  }
+  const nueva = (seccion, continuacion = false) => {
+    if (ops.length) paginas.push(ops.join('\n') + '\n')
+    ops = []; encabezado(seccion, continuacion)
+    if (!continuacion) datos()
+  }
+  const columnasMat = [
+    { k:'sku', n:'SKU', w:58 }, { k:'material', n:'Material', w:145 },
+    { k:'lote', n:'Lote', w:67 }, { k:'sistema', n:'Sistema', w:55 },
+    { k:'fisico', n:'Fisico', w:50 }, { k:'diferencia', n:'Diferencia', w:65 },
+    { k:'observacion', n:'Observacion', w:99 }
+  ]
+  const columnasHer = [
+    { k:'producto', n:'Producto', w:157 }, { k:'ubicacion', n:'Ubicacion', w:160 },
+    { k:'sistema', n:'Sistema', w:49 }, { k:'fisico', n:'Fisico', w:49 },
+    { k:'diferencia', n:'Diferencia', w:55 }, { k:'observacion', n:'Observacion', w:69 }
+  ]
+  const columnasEq = [
+    { k:'serie', n:'Serie', w:133 }, { k:'material', n:'Material', w:65 },
+    { k:'descripcion', n:'Descripcion', w:166 }, { k:'lote', n:'Lote', w:84 },
+    { k:'estado', n:'Estado', w:91 }
+  ]
+  const cabTabla = (cols) => {
+    rect(28, y - 26, 539, 26, verde)
+    let x = 28
+    cols.forEach(c => { txt(c.n, x + c.w/2, y - 17, 8, true, [1,1,1], true); x += c.w })
+    y -= 26
+  }
+  const tabla = (nombre, filas, cols) => {
+    nueva(nombre)
+    cabTabla(cols)
+    for (const item of filas) {
+      const datosFila = {...item}
+      if (nombre !== 'EQUIPOS') {
+        const d = Number(item.fisico || 0) - Number(item.sistema || 0)
+        datosFila.diferencia = d
+        datosFila.observacion = d < 0 ? 'FALTANTE' : d > 0 ? 'SOBRANTE' : 'COINCIDE'
+      }
+      const wraps = cols.map(c => ajustar(datosFila[c.k] ?? '', c.w, 7.3))
+      const altura = Math.max(23, 9 + Math.max(...wraps.map(r => r.length)) * 10)
+      if (y - altura < 70) { nueva(nombre, true); cabTabla(cols) }
+      rect(28, y - altura, 539, altura, [1,1,1], [0.25,0.57,0.46])
+      let x = 28
+      cols.forEach((c, i) => {
+        linea(x, y, x, y - altura)
+        const color = datosFila[c.k] === 'FALTANTE' || (c.k === 'observacion' && datosFila.observacion === 'FALTANTE') || (c.k === 'estado' && normal(datosFila.estado) === 'FALTANTE') ? [0.68,0.12,0.12] : [0.1,0.2,0.17]
+        const colorFinal = (c.k === 'observacion' || c.k === 'estado') ? color : [0.1,0.2,0.17]
+        wraps[i].forEach((p, k) => txt(p, x + c.w/2, y - 14 - k * 10, 7.3, c.k === 'observacion' || c.k === 'estado', colorFinal, true))
+        x += c.w
+      })
+      linea(567, y, 567, y - altura)
+      y -= altura
     }
   }
-
+  if (info.materiales?.length) tabla('MATERIALES', info.materiales, columnasMat)
+  if (info.herramientas?.length) tabla('HERRAMIENTAS', info.herramientas, columnasHer)
+  if (info.equipos?.length) tabla('EQUIPOS', info.equipos, columnasEq)
+  if (!ops.length) nueva('AUDITORIA')
+  if (y < 125) nueva('FIRMAS', true)
+  const firmas = [
+    {x: 28, nom: 'AUDITOR', persona: info.auditor},
+    {x: 211, nom: 'TECNICO', persona: info.tecnico},
+    {x: 394, nom: 'SUPERVISOR', persona: ''},
+  ]
+  firmas.forEach(({x,nom,persona}) => {
+    linea(x + 8, y - 37, x + 168, y - 37)
+    txt(nom, x + 88, y - 54, 9, true, verde, true)
+    if (persona) ajustar(persona, 172, 7).forEach((t,i) => txt(t, x + 88, y - 68 - 9*i, 7, false, [0.15,0.15,0.15], true))
+  })
+  paginas.push(ops.join('\n') + '\n')
   const objetos = [null]
-  const objeto = (contenido) => { objetos.push(contenido); return objetos.length - 1 }
-  const catalogId = objeto('')
-  const pagesId = objeto('')
+  const objeto = (v) => { objetos.push(v); return objetos.length - 1 }
+  const catalogId = objeto(''), pagesId = objeto('')
   const regularId = objeto('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>')
   const boldId = objeto('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>')
-  const pageIds = []
-  for (let i = 0; i < paginas.length; i++) {
-    const p = paginas[i]
-    let contenido = '0.08 0.35 0.27 rg 42 818 511 2 re f\n0 0 0 rg\n'
-    for (const r of p) contenido += `BT /${r.negrita ? 'F2' : 'F1'} ${r.tam} Tf 42 ${r.y} Td (${escapar(r.texto)}) Tj ET\n`
-    contenido += `BT /F1 8 Tf 42 37 Td (QIORA CONECTA  |  Pagina ${i + 1} de ${paginas.length}) Tj ET\n`
-    const contenidoId = objeto('<< /Length ' + contenido.length + ' >>\nstream\n' + contenido + 'endstream')
-    const pageId = objeto('<< /Type /Page /Parent ' + pagesId + ' 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ' + regularId + ' 0 R /F2 ' + boldId + ' 0 R >> >> /Contents ' + contenidoId + ' 0 R >>')
-    pageIds.push(pageId)
-  }
-  objetos[catalogId] = '<< /Type /Catalog /Pages ' + pagesId + ' 0 R >>'
-  objetos[pagesId] = '<< /Type /Pages /Kids [' + pageIds.map((id) => id + ' 0 R').join(' ') + '] /Count ' + pageIds.length + ' >>'
-  let pdf = '%PDF-1.4\n'
-  const offsets = [0]
-  for (let id = 1; id < objetos.length; id++) {
-    offsets[id] = pdf.length
-    pdf += id + ' 0 obj\n' + objetos[id] + '\nendobj\n'
-  }
+  const ids = []
+  paginas.forEach((cmd, i) => {
+    const pie = `BT /F1 8 Tf 28 36 Td (QIORA CONECTA - Pagina ${i+1} de ${paginas.length}) Tj ET\n`
+    const stream = cmd + pie
+    const contentId = objeto(`<< /Length ${stream.length} >>\nstream\n${stream}endstream`)
+    ids.push(objeto(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ${regularId} 0 R /F2 ${boldId} 0 R >> >> /Contents ${contentId} 0 R >>`))
+  })
+  objetos[catalogId] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`
+  objetos[pagesId] = `<< /Type /Pages /Kids [${ids.map(id => `${id} 0 R`).join(' ')}] /Count ${ids.length} >>`
+  let pdf = '%PDF-1.4\n', offsets = [0]
+  for (let i=1; i<objetos.length; i++) { offsets[i] = pdf.length; pdf += `${i} 0 obj\n${objetos[i]}\nendobj\n` }
   const xref = pdf.length
-  pdf += 'xref\n0 ' + objetos.length + '\n0000000000 65535 f \n'
-  for (let id = 1; id < objetos.length; id++) pdf += String(offsets[id]).padStart(10, '0') + ' 00000 n \n'
-  pdf += 'trailer\n<< /Size ' + objetos.length + ' /Root ' + catalogId + ' 0 R >>\nstartxref\n' + xref + '\n%%EOF'
-  const bytes = Uint8Array.from(pdf, (c) => c.charCodeAt(0) & 255)
-  return new Blob([bytes], { type: 'application/pdf' })
+  pdf += `xref\n0 ${objetos.length}\n0000000000 65535 f \n`
+  for(let i=1; i<objetos.length; i++) pdf += `${String(offsets[i]).padStart(10,'0')} 00000 n \n`
+  pdf += `trailer\n<< /Size ${objetos.length} /Root ${catalogId} 0 R >>\nstartxref\n${xref}\n%%EOF`
+  return new Blob([Uint8Array.from(pdf, c => c.charCodeAt(0) & 255)], { type:'application/pdf' })
 }
 
 function descargarPdfAuditoria(info) {
