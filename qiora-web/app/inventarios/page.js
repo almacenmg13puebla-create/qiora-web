@@ -128,8 +128,8 @@ export default function InventariosPage() {
   }, [almacen, perfil, esMateriales, esEquipos])
 
   // La consulta de IQ09 usa una RPC que añade dias y estado calculados en el servidor.
-  const consultaRpc = tipo === 'IQ09_EQUIPOS' ? 'qiora_consultar_equipos_tiempo' : 'qiora_consultar_inventario_v2'
-  const preparar = filas => (filas||[]).map(f => esMateriales ? {...f, grupo:grupoSKU(f.sku)} : f)
+  const consultaRpc = tipo === 'IQ09_EQUIPOS' ? 'qiora_consultar_equipos_tiempo' : tipo === 'STOCK_TECNICOS' ? 'qiora_consultar_materiales_sin_usado' : 'qiora_consultar_inventario_v2'
+  const preparar = filas => (filas||[]).filter(f => !esMateriales || normalizar(f.lote) !== 'TPE USADO').map(f => esMateriales ? {...f, grupo:grupoSKU(f.sku)} : f)
   function coincide(f) {
     if (esMateriales && soloCoincidencias && buscador) {
       const b=normalizar(buscador)
@@ -258,7 +258,7 @@ export default function InventariosPage() {
           {esEquipos && <>{btn('Enviar por WhatsApp',compartirWhatsapp,true,!respuesta)}{btn('Descargar Excel',()=>exportar('Excel'),true,!respuesta||exportando)}</>}
           {!esEquipos && respuesta && <>{btn('Excel',()=>exportar('Excel'),true,exportando)}{btn('PDF',()=>exportar('PDF'),true,exportando)}</>}
         </div>
-        <p style={s.aviso}>Los filtros se aplican sobre la página consultada; Excel y WhatsApp recorren las páginas autorizadas. Los días se calculan únicamente si existe fecha de referencia registrada. Exactamente 15 días se identifica como límite sin clasificar. WhatsApp abre el mensaje para confirmar el envío.</p>
+        <p style={s.aviso}>En Técnicos - Materiales se excluye TPE USADO desde Supabase; Excel y PDF respetan la exclusión. Los filtros de búsqueda se aplican sobre la página consultada; Excel y WhatsApp recorren las páginas autorizadas. Los días se calculan únicamente si existe fecha de referencia registrada. Exactamente 15 días se identifica como límite sin clasificar. WhatsApp abre el mensaje para confirmar el envío.</p>
       </section>
       {error && <p role="alert" style={s.error}>{error}</p>}{advertencia && <p style={s.aviso}>{advertencia}</p>}
       <section style={s.panelOscuro}>
