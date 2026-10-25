@@ -431,6 +431,8 @@ export default function AuditoriasPage() {
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
   const [padreUsuario, setPadreUsuario] = useState('')
   const [padreClave, setPadreClave] = useState('')
+  const [padreAutorizado, setPadreAutorizado] = useState(false)
+  const [validandoPadre, setValidandoPadre] = useState(false)
   const [edicionComentario, setEdicionComentario] = useState('')
 
   useEffect(() => {
@@ -1067,15 +1069,55 @@ export default function AuditoriasPage() {
     setEdicionComentario(item?.materiales?.[0]?.comentario_general ?? item?.herramientas?.[0]?.comentario_general ?? item?.equipos?.[0]?.comentario_general ?? '')
     setPadreUsuario('')
     setPadreClave('')
+    setPadreAutorizado(false)
     setVista('EDITAR')
     window.scrollTo({ top: 0, behavior: 'instant' })
   }
+  async function autorizarUsuarioPadre() {
+    if (!edicion || validandoPadre) return
+    setError('')
+    setValidandoPadre(true)
+    let clienteTemporal = null
+    try {
+      const usuario = padreUsuario.trim().toLowerCase()
+      if (!usuario || !padreClave) throw new Error('Capture usuario y contraseña del Usuario Padre.')
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+      const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+      clienteTemporal = createClient(url, key, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      })
+      const { data: sesion, error: authError } = await clienteTemporal.auth.signInWithPassword({
+        email: `${usuario}@qiora.local`,
+        password: `QIORA#${padreClave}`,
+      })
+      if (authError || !sesion?.user) throw new Error('Usuario Padre o contraseña inválidos.')
+      // La membresía de Usuario Padre es validada de nuevo por el RPC
+      // qiora_editar_auditoria al GUARDAR. Aquí también se verifica antes
+      // de mostrar las cantidades, sin usar tablas sensibles directamente.
+      const { data: autorizado, error: permisoError } = await clienteTemporal.rpc(
+        'qiora_validar_padre_auditoria', { p_distrito: perfil?.distrito || '' }
+      )
+      if (permisoError) throw permisoError
+      if (autorizado !== true) throw new Error('La cuenta no tiene autorización de Usuario Padre para este distrito.')
+      setPadreAutorizado(true)
+    } catch (e) {
+      setPadreAutorizado(false)
+      setError(e?.message || 'No se pudo autorizar la edición.')
+    } finally {
+      if (clienteTemporal) await clienteTemporal.auth.signOut().catch(() => {})
+      setValidandoPadre(false)
+    }
+  }
+
   function cambiarFilaEdicion(grupo, indice, campo, valor) {
     setEdicion(actual => ({ ...actual, [grupo]: actual[grupo].map((item,i) =>
       i === indice ? { ...item, [campo]: valor } : item) }))
   }
   async function guardarEdicion() {
     if (!edicion || guardandoEdicion) return
+    if (!esHoyMexico(edicion.fecha) && !padreAutorizado) {
+      setError('Primero debe autorizar el Usuario Padre.'); return
+    }
     setGuardandoEdicion(true)
     setError('')
     setMensaje('')
@@ -1110,6 +1152,7 @@ export default function AuditoriasPage() {
       if (!data?.ok) throw new Error('Supabase no confirmó la edición.')
       setMensaje(`Folio ${edicion.folio} actualizado correctamente. Vuelva a buscar para consultar los cambios.`)
       setEdicion(null)
+      setPadreAutorizado(false)
       setPadreClave('')
       setVista('HISTORICO')
       setHistResultados([])
@@ -1314,9 +1357,9 @@ export default function AuditoriasPage() {
 
         {vista === 'EDITAR' && edicion && (
           <section style={styles.tarjeta}>
-            <h2>Editar folio: {edicion.folio}</h2>
-            <p>Auditoría: {fechaQiora(edicion.fecha)} · Almacén: {edicion.almacen} · Técnico: {edicion.tecnico}</p>
-            {!esHoyMexico(edicion.fecha) && (
+            <h2>{!esHoyMexico(edicion.fecha) && !padreAutorizado ? 'Autorización del Usuario Padre' : `Editar folio: ${edicion.folio}`}</h2>
+            {(esHoyMexico(edicion.fecha) || padreAutorizado) && <p>Auditoría: {fechaQiora(edicion.fecha)} · Almacén: {edicion.almacen} · Técnico: {edicion.tecnico}</p>}
+            {!esHoyMexico(edicion.fecha) && !padreAutorizado && (
               <div style={styles.usuario}>
                 <h3 style={{marginTop:0}}>Autorización del Usuario Padre</h3>
                 <p>La auditoría es de un día anterior. Se requiere una cuenta autorizada expresamente por el administrador.</p>
@@ -1324,8 +1367,13 @@ export default function AuditoriasPage() {
                   <label style={styles.campo}>Usuario Padre<input autoComplete="off" style={styles.input} value={padreUsuario} onChange={e=>setPadreUsuario(e.target.value)} /></label>
                   <label style={styles.campo}>Contraseña<input type="password" autoComplete="off" style={styles.input} value={padreClave} onChange={e=>setPadreClave(e.target.value)} /></label>
                 </div>
+                <div style={styles.botones}>
+                  <button type="button" style={styles.botonPrincipal} disabled={validandoPadre} onClick={autorizarUsuarioPadre}>{validandoPadre ? 'Validando autorización...' : 'Autorizar edición'}</button>
+                  <button type="button" style={styles.botonSecundario} onClick={() => { setEdicion(null); setPadreAutorizado(false); setPadreUsuario(''); setPadreClave(''); setError(''); setVista('HISTORICO') }}>Cancelar</button>
+                </div>
               </div>
             )}
+            {(esHoyMexico(edicion.fecha) || padreAutorizado) && <>
             <p style={{color:'#55675c'}}>Solo se modifican cantidades físicas, estados y observaciones. Se conserva el folio y la información de origen.</p>
             {[['materiales','MATERIALES'],['herramientas','HERRAMIENTAS'],['equipos','EQUIPOS']].map(([grupo,titulo]) => (
               <div key={grupo} style={{marginTop:18}}>
@@ -1347,8 +1395,9 @@ export default function AuditoriasPage() {
             <label style={{...styles.campo,marginTop:18}}>Observaciones generales<textarea rows={3} style={styles.textarea} value={edicionComentario} onChange={e=>setEdicionComentario(e.target.value)} /></label>
             <div style={styles.botones}>
               <button type="button" style={styles.botonPrincipal} disabled={guardandoEdicion} onClick={guardarEdicion}>{guardandoEdicion ? 'Guardando...' : 'Guardar cambios del mismo folio'}</button>
-              <button type="button" style={styles.botonSecundario} onClick={()=>{setEdicion(null);setPadreClave('');setVista('HISTORICO')}}>Cancelar</button>
+              <button type="button" style={styles.botonSecundario} onClick={()=>{setEdicion(null);setPadreAutorizado(false);setPadreUsuario('');setPadreClave('');setVista('HISTORICO')}}>Cancelar</button>
             </div>
+            </>}
           </section>
         )}
 
