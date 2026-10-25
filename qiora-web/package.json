@@ -1,8 +1,21 @@
+
 {
   "name": "qiora-web",
   "version": "0.1.0",
   "private": true,
-  "scripts": {"dev":"next dev","build":"next build","start":"next start"},
-  "dependencies": {"@supabase/supabase-js":"^2.76.1","next":"^15.5.4","react":"^19.1.1","react-dom":"^19.1.1"},
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.76.1",
+    "next": "^15.5.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "xlsx": "^0.18.5",
+    "jspdf": "^2.5.2",
+    "jspdf-autotable": "^3.8.4"
+  },
   "devDependencies": {}
 }
