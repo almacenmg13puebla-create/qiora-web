@@ -100,6 +100,133 @@ function resumenFaltantesHistoricos(resultados) {
   return r
 }
 
+
+// Generador PDF autonomo: sin dependencias ni servicios externos.
+// Emite PDF A4 multipagina con tipografia Helvetica (WinAnsi).
+function crearPdfAuditoria(info) {
+  const lineas = []
+  const agregar = (texto, negrita = false, tam = 9) => lineas.push({ texto: String(texto ?? ''), negrita, tam })
+  const limpio = (v) => String(v ?? '').replace(/[\\r\n\\t]+/g, ' ').trim()
+  const diferencia = (x) => numero(x.fisico) - numero(x.sistema)
+
+  agregar('QIORA CONECTA | REPORTE DE AUDITORIA', true, 16)
+  agregar('Folio: ' + limpio(info.folio), true, 12)
+  agregar('Fecha: ' + limpio(info.fecha) + ' | Distrito: ' + limpio(info.distrito))
+  agregar('Almacen: ' + limpio(info.almacen) + ' | Tecnico: ' + limpio(info.tecnico))
+  agregar('Auditor: ' + limpio(info.auditor) + ' | Usuario: ' + limpio(info.usuario))
+  agregar('Tipo: ' + limpio(info.tipo))
+  agregar('Materiales: ' + info.materiales.length + ' | Herramientas: ' + info.herramientas.length + ' | Equipos: ' + info.equipos.length, true)
+  agregar(' ')
+
+  if (info.materiales.length) {
+    agregar('MATERIALES / CONSUMIBLES', true, 12)
+    for (const x of info.materiales) {
+      agregar(limpio(x.sku) + ' | ' + limpio(x.material) + ' | Lote: ' + limpio(x.lote))
+      agregar('Sistema: ' + numero(x.sistema) + '  Fisico: ' + numero(x.fisico) + '  Diferencia: ' + diferencia(x) + '  ' + observacionDiferencia(x.fisico, x.sistema))
+    }
+    agregar(' ')
+  }
+  if (info.herramientas.length) {
+    agregar('HERRAMIENTAS', true, 12)
+    for (const x of info.herramientas) {
+      agregar(limpio(x.producto) + ' | Ubicacion: ' + limpio(x.ubicacion))
+      agregar('Sistema: ' + numero(x.sistema) + '  Fisico: ' + numero(x.fisico) + '  Diferencia: ' + diferencia(x) + '  ' + observacionDiferencia(x.fisico, x.sistema))
+    }
+    agregar(' ')
+  }
+  if (info.equipos.length) {
+    agregar('EQUIPOS / SERIES', true, 12)
+    for (const x of info.equipos) {
+      agregar('Serie: ' + limpio(x.serie) + ' | Material: ' + limpio(x.material) + ' | Lote: ' + limpio(x.lote))
+      agregar('Descripcion: ' + limpio(x.descripcion) + ' | Estado: ' + limpio(x.estado))
+    }
+    agregar(' ')
+  }
+  agregar('OBSERVACIONES GENERALES', true, 12)
+  agregar(limpio(info.comentario) || 'Sin observaciones')
+  agregar(' ')
+  agregar('Reporte generado desde QIORA CONECTA. Folio confirmado por Supabase.')
+
+  // PDF con Helvetica WinAnsi. Caracteres fuera del repertorio se transliteran.
+  const toWinAnsi = (s) => String(s)
+    .replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-').replace(/\u2022/g, '-')
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x20-\x7e\xa1-\xff]/g, '?')
+  const escapar = (s) => toWinAnsi(s).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')
+  const envolver = (s, max) => {
+    const words = toWinAnsi(s).split(/\s+/).filter(Boolean)
+    const out = []
+    let line = ''
+    for (const word of words) {
+      if (word.length > max) {
+        if (line) { out.push(line); line = '' }
+        for (let i = 0; i < word.length; i += max) out.push(word.slice(i, i + max))
+      } else if ((line + ' ' + word).trim().length > max) {
+        if (line) out.push(line)
+        line = word
+      } else line = line ? line + ' ' + word : word
+    }
+    if (line) out.push(line)
+    return out.length ? out : ['']
+  }
+  const paginas = [[]]
+  let y = 799
+  for (const linea of lineas) {
+    const chars = linea.tam >= 16 ? 55 : linea.tam >= 12 ? 76 : 104
+    for (const fragmento of envolver(linea.texto, chars)) {
+      const alto = linea.tam >= 16 ? 25 : linea.tam >= 12 ? 19 : 14
+      if (y < 66) { paginas.push([]); y = 799 }
+      paginas[paginas.length - 1].push({ y, texto: fragmento, tam: linea.tam, negrita: linea.negrita })
+      y -= alto
+    }
+  }
+
+  const objetos = [null]
+  const objeto = (contenido) => { objetos.push(contenido); return objetos.length - 1 }
+  const catalogId = objeto('')
+  const pagesId = objeto('')
+  const regularId = objeto('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>')
+  const boldId = objeto('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>')
+  const pageIds = []
+  for (let i = 0; i < paginas.length; i++) {
+    const p = paginas[i]
+    let contenido = '0.08 0.35 0.27 rg 42 818 511 2 re f\n0 0 0 rg\n'
+    for (const r of p) contenido += `BT /${r.negrita ? 'F2' : 'F1'} ${r.tam} Tf 42 ${r.y} Td (${escapar(r.texto)}) Tj ET\n`
+    contenido += `BT /F1 8 Tf 42 37 Td (QIORA CONECTA  |  Pagina ${i + 1} de ${paginas.length}) Tj ET\n`
+    const contenidoId = objeto('<< /Length ' + contenido.length + ' >>\nstream\n' + contenido + 'endstream')
+    const pageId = objeto('<< /Type /Page /Parent ' + pagesId + ' 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ' + regularId + ' 0 R /F2 ' + boldId + ' 0 R >> >> /Contents ' + contenidoId + ' 0 R >>')
+    pageIds.push(pageId)
+  }
+  objetos[catalogId] = '<< /Type /Catalog /Pages ' + pagesId + ' 0 R >>'
+  objetos[pagesId] = '<< /Type /Pages /Kids [' + pageIds.map((id) => id + ' 0 R').join(' ') + '] /Count ' + pageIds.length + ' >>'
+  let pdf = '%PDF-1.4\n'
+  const offsets = [0]
+  for (let id = 1; id < objetos.length; id++) {
+    offsets[id] = pdf.length
+    pdf += id + ' 0 obj\n' + objetos[id] + '\nendobj\n'
+  }
+  const xref = pdf.length
+  pdf += 'xref\n0 ' + objetos.length + '\n0000000000 65535 f \n'
+  for (let id = 1; id < objetos.length; id++) pdf += String(offsets[id]).padStart(10, '0') + ' 00000 n \n'
+  pdf += 'trailer\n<< /Size ' + objetos.length + ' /Root ' + catalogId + ' 0 R >>\nstartxref\n' + xref + '\n%%EOF'
+  const bytes = Uint8Array.from(pdf, (c) => c.charCodeAt(0) & 255)
+  return new Blob([bytes], { type: 'application/pdf' })
+}
+
+function descargarPdfAuditoria(info) {
+  const pdf = crearPdfAuditoria(info)
+  const url = URL.createObjectURL(pdf)
+  const enlace = document.createElement('a')
+  enlace.href = url
+  enlace.download = ('AUDITORIA_' + String(info.folio).replace(/[^A-Za-z0-9_-]/g, '_') + '.pdf')
+  document.body.appendChild(enlace)
+  enlace.click()
+  enlace.remove()
+  // Se revoca despues de permitir que el navegador procese la descarga.
+  setTimeout(() => URL.revokeObjectURL(url), 60000)
+}
+
 export default function AuditoriasPage() {
   const router = useRouter()
 
@@ -123,6 +250,7 @@ export default function AuditoriasPage() {
   const [soloFaltantes, setSoloFaltantes] = useState(false)
   const [comentarioGeneral, setComentarioGeneral] = useState('')
   const [guardando, setGuardando] = useState(false)
+  const [ultimoPdf, setUltimoPdf] = useState(null)
 
   // Consulta de auditorias realizadas / historicas
   const [histMes, setHistMes] = useState('')
@@ -626,12 +754,41 @@ export default function AuditoriasPage() {
       if (guardarError) throw guardarError
       if (!data?.ok) throw new Error('Supabase no confirmó el guardado de la auditoría.')
 
-      setMensaje(
-        `Auditoría guardada correctamente. Folio: ${data.folio}. ` +
-        `Materiales: ${data.materiales || 0}, ` +
-        `Herramientas: ${data.herramientas || 0}, ` +
-        `Equipos: ${data.equipos || 0}.`
-      )
+      // Copia exacta de los datos que Supabase acaba de confirmar.
+      const pdfInfo = {
+        folio: data.folio,
+        fecha: data.fecha || new Date().toLocaleString('es-MX'),
+        distrito: perfil?.distrito || '',
+        almacen: normalizarAlmacen(almacen),
+        tecnico: tecnico.nombre || '',
+        auditor: perfil?.nombre || '',
+        usuario: perfil?.usuario_almacen || '',
+        tipo,
+        materiales: payloadMateriales,
+        herramientas: payloadHerramientas,
+        equipos: payloadEquipos,
+        comentario: comentarioGeneral,
+      }
+      setUltimoPdf(pdfInfo)
+
+      // La auditoria YA esta guardada. Limpiar sin borrar el mensaje de confirmacion.
+      setAlmacen('')
+      setTecnico(null)
+      setMateriales([])
+      setHerramientas([])
+      setEquipos([])
+      setSerie('')
+      setSoloFaltantes(false)
+      setComentarioGeneral('')
+      setTipo(TIPOS.TODO)
+
+      try {
+        descargarPdfAuditoria(pdfInfo)
+        setMensaje(`Auditoría guardada correctamente. Folio: ${data.folio}. PDF generado y descarga iniciada. Formulario limpio.`)
+      } catch (pdfError) {
+        setMensaje(`Auditoría guardada correctamente. Folio: ${data.folio}. Formulario limpio.`)
+        setError('No se inició la descarga del PDF. Usa el botón «Descargar último PDF»; NO vuelvas a guardar la auditoría.')
+      }
     } catch (e) {
       setError(e?.message || 'No fue posible guardar la auditoría.')
     } finally {
@@ -912,6 +1069,14 @@ export default function AuditoriasPage() {
 
         {mensaje && ['CAPTURA', 'HISTORICO', 'FALTANTE_GLOBAL', 'PROGRAMACION'].includes(vista) && (
           <div style={styles.ok}>{mensaje}</div>
+        )}
+        {ultimoPdf && vista === 'CAPTURA' && (
+          <div style={{ marginBottom: 16 }}>
+            <button type="button" style={styles.botonPrincipal} onClick={() => {
+              try { descargarPdfAuditoria(ultimoPdf) }
+              catch (e) { setError('No se pudo descargar el PDF: ' + (e.message || e)) }
+            }}>Descargar último PDF: {ultimoPdf.folio}</button>
+          </div>
         )}
 
         {vista === 'HISTORICO' && (
