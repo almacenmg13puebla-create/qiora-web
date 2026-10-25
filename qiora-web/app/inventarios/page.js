@@ -20,7 +20,7 @@ const PUEDE = (p) => ['auditoria','dashboard','traspasos','solicitud_material'].
 const lim = 200
 const grupoSKU = (sku, catalogo) => catalogo[String(sku??'').trim()] || 'SIN CLASIFICAR'
 const etiquetaEstado = dias => dias == null ? 'SIN FECHA' : dias > 30 ? 'CRÍTICO' : dias >= 15 ? 'FUERA DE TIEMPO' : 'EN TIEMPO'
-const filtrarEstado = (dias, filtro) => !filtro || (dias != null && (filtro === 'EN_TIEMPO' ? dias < 15 : filtro === 'FUERA_TIEMPO' ? dias >= 15 : filtro === 'CRITICO' ? dias > 30 : false))
+const filtrarEstado = (dias, filtro) => !filtro || (dias != null && (filtro === 'EN_TIEMPO' ? dias < 15 : filtro === 'FUERA_TIEMPO' ? (dias >= 15 && dias <= 30) : filtro === 'CRITICO' ? dias > 30 : false))
 
 const mx = (x) => String(x??'').trim()
 const normalizar = x => mx(x).toLocaleUpperCase('es-MX')
@@ -268,7 +268,7 @@ export default function InventariosPage() {
         <div style={s.filtros}>
           <label style={s.campo}>Almacén (opcional)<input style={s.input} value={almacen} placeholder="Vacío = todos los autorizados" maxLength={10} onChange={e=>{setAlmacen(e.target.value.toUpperCase());setRespuesta(null);setPagina(1)}}/></label>
           {(esMateriales || esEquipos) && <label style={s.campo}>{esMateriales?'Técnico':'Técnico responsable'}<input style={s.input} readOnly value={almacen ? tecnicoResuelto : 'Todos los técnicos autorizados'} placeholder="Automático por almacén"/></label>}
-          {esEquipos && <label style={s.campo}>Estado<select style={s.input} value={estado} onChange={e=>{setEstado(e.target.value);setRespuesta(null);setPagina(1)}}><option value="">Todos</option><option value="EN_TIEMPO">Equipo en Tiempo (menos de 15 días)</option><option value="FUERA_TIEMPO">Equipos fuera de tiempo (desde 15 días)</option><option value="CRITICO">Equipo Crítico (más de 30 días)</option></select></label>}
+          {esEquipos && <label style={s.campo}>Estado<select style={s.input} value={estado} onChange={e=>{setEstado(e.target.value);setRespuesta(null);setPagina(1)}}><option value="">Todos</option><option value="EN_TIEMPO">Equipo en Tiempo (menos de 15 días)</option><option value="FUERA_TIEMPO">Equipos fuera de tiempo (15 a 30 días)</option><option value="CRITICO">Equipo Crítico (más de 30 días)</option></select></label>}
           {esMateriales && <label style={s.campo}>SKU, material o grupo<input style={s.input} value={buscador} placeholder="Escribe SKU, material o grupo" onChange={e=>setBuscador(e.target.value)}/></label>}
           {esEquipos && <label style={{...s.campo,gridColumn:'1 / -1'}}>Serie (opcional)<input style={s.input} value={serie} placeholder="Escanea o captura la serie" onChange={e=>{setSerie(e.target.value.toUpperCase());setRespuesta(null);setPagina(1)}}/></label>}
         </div>
@@ -277,7 +277,7 @@ export default function InventariosPage() {
           {esEquipos && <>{btn('Enviar por WhatsApp',compartirWhatsapp,true,!respuesta||cambiosEquiposPendientes||exportando)}{btn('Descargar Excel',()=>exportar('Excel'),true,!respuesta||cambiosEquiposPendientes||exportando)}</>}
           {!esEquipos && respuesta && <>{btn('Excel',()=>exportar('Excel'),true,exportando)}{btn('PDF',()=>exportar('PDF'),true,exportando)}</>}
         </div>
-        <p style={s.aviso}>Técnicos - Materiales excluye TPE USADO; la búsqueda de materiales se realiza sobre la página obtenida. Equipos filtra por estado y serie en Supabase antes de paginar; al cambiar un filtro se limpia la consulta anterior y debes presionar Buscar; Excel y WhatsApp respetan los filtros consultados. Desde 15 días se considera fuera de tiempo y más de 30 días crítico. WhatsApp abre el mensaje para confirmar el envío.</p>{cambiosEquiposPendientes && <p style={s.aviso}>Cambiaste los filtros. Pulsa Buscar para actualizar la consulta antes de exportar o enviar.</p>}
+        <p style={s.aviso}>Técnicos - Materiales excluye TPE USADO; la búsqueda de materiales se realiza sobre la página obtenida. Equipos filtra por estado y serie en Supabase antes de paginar; al cambiar un filtro se limpia la consulta anterior y debes presionar Buscar; Excel y WhatsApp respetan los filtros consultados. Los estados son excluyentes: 0 a 14 días en tiempo, 15 a 30 días fuera de tiempo y desde 31 días crítico. WhatsApp abre el mensaje para confirmar el envío.</p>{cambiosEquiposPendientes && <p style={s.aviso}>Cambiaste los filtros. Pulsa Buscar para actualizar la consulta antes de exportar o enviar.</p>}
       </section>
       {error && <p role="alert" style={s.error}>{error}</p>}{advertencia && <p style={s.aviso}>{advertencia}</p>}
       <section style={s.panelOscuro}>
