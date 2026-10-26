@@ -15,6 +15,7 @@ const MODULOS = [
   // sus propios permisos y Supabase protege las operaciones sobre datos.
   { permiso: null, nombre: 'Inventarios', descripcion: 'Consulta de materiales, equipos IQ09 y catálogos.', ruta: '/inventarios', disponible: true },
   { permiso: null, nombre: 'Configuración', descripcion: 'Usuarios, números de empleado y catálogos de costos.', ruta: '/configuracion', disponible: true },
+  { permiso: null, nombre: 'Bajas y Cobros', descripcion: 'Consultar documentos enviados por mes y almacén.', ruta: '/bajas-cobros', disponible: true },
   { permiso: 'ver_auditorias', nombre: 'Ver auditorías', descripcion: 'Consulta histórica de auditorías.', disponible: false },
   { permiso: 'recolecciones', nombre: 'Recolecciones', descripcion: 'Seguimiento de equipos recolectados.', disponible: false },
   { permiso: 'solicitud_material', nombre: 'Solicitud de material', descripcion: 'Solicitudes y seguimiento de materiales.', disponible: false },
