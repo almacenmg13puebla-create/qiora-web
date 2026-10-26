@@ -474,6 +474,8 @@ export default function AuditoriasPage() {
   const [costosCargando, setCostosCargando] = useState(false)
   const [fechaAsignacion, setFechaAsignacion] = useState('')
   const [fechaSiniestro, setFechaSiniestro] = useState('')
+  const [movimientoGuardando, setMovimientoGuardando] = useState(false)
+  const [costosGuardados, setCostosGuardados] = useState(false)
   const [edicion, setEdicion] = useState(null)
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
   const [padreUsuario, setPadreUsuario] = useState('')
@@ -1007,6 +1009,17 @@ export default function AuditoriasPage() {
       if (guardarError) throw guardarError
       if (!data?.ok) throw new Error('Supabase no confirmó el guardado de la auditoría.')
 
+      // El alcance (TODO/MATERIALES/...) y el tipo (MENSUAL/BAJA/...) son distintos.
+      // La auditoría original ya quedó guardada al llegar aquí.
+      const { error: tipoError } = await supabase.rpc('qiora_tipo_auditoria_guardar', {
+        p_folio: data.folio, p_almacen: normalizarAlmacen(almacen),
+        p_tipo: tipoAuditoriaPanel.toUpperCase(), p_alcance: tipo,
+      })
+      if (tipoError) {
+        setError('Auditoría guardada con folio ' + data.folio + ', pero no se registró el tipo: ' + tipoError.message + '. No vuelvas a guardar; corrige el tipo sobre el folio existente.')
+        // No se repite guardar_auditoria, evitando generar un folio duplicado.
+      }
+
       // Copia exacta de los datos que Supabase acaba de confirmar.
       const pdfInfo = {
         folio: data.folio,
@@ -1016,7 +1029,7 @@ export default function AuditoriasPage() {
         tecnico: tecnico.nombre || '',
         auditor: perfil?.nombre || '',
         usuario: perfil?.usuario_almacen || '',
-        tipo,
+        tipo: tipoAuditoriaPanel.toUpperCase(),
         materiales: payloadMateriales,
         herramientas: payloadHerramientas,
         equipos: payloadEquipos,
@@ -1035,6 +1048,7 @@ export default function AuditoriasPage() {
       setComentarioGeneral('')
       setAvisoOdoo('')
       setTipo(TIPOS.TODO)
+      setTipoAuditoriaPanel('Mensual')
 
       try {
         descargarPdfAuditoria(pdfInfo)
@@ -1108,6 +1122,17 @@ export default function AuditoriasPage() {
         }
       }
 
+      // Restaurar tipo de auditoría persistido en el registro separado.
+      const foliosBuscados = [...grupos.values()].map(g => g.folio)
+      if (foliosBuscados.length) {
+        const {data:tiposData,error:tiposError}=await supabase.rpc('qiora_tipos_auditoria_consultar',{p_folios:foliosBuscados})
+        if (tiposError) throw tiposError
+        const tiposMap=new Map((tiposData||[]).map(x=>[x.folio,x]))
+        for(const g of grupos.values()) {
+          const c=tiposMap.get(g.folio)
+          if(c) {g.tipoAuditoria=c.tipo_auditoria;g.alcance=c.alcance}
+        }
+      }
       let resultados = [...grupos.values()].sort((a,b) => String(b.fecha||'').localeCompare(String(a.fecha||'')))
       if (verFaltanteGlobal) {
         resultados = resultados.map(g => ({
@@ -1138,6 +1163,7 @@ export default function AuditoriasPage() {
     setCostosCargando(true)
     setFechaAsignacion('')
     setFechaSiniestro('')
+    setCostosGuardados(false)
     window.scrollTo({ top: 0, behavior: 'instant' })
     try {
       const m=(item.materiales||[]).filter(f=>faltanteCantidad(f)>0)
@@ -1213,6 +1239,56 @@ export default function AuditoriasPage() {
     const sumar=a=>a.reduce((s,x)=>s+(x.importe??0),0)
     return {mats,herr,eq,meses,totM:sumar(mats),totH:sumar(herr),totE:sumar(eq),sinCosto:[...mats,...herr,...eq].filter(x=>x.importe==null).length}
   },[histDetalle,costosFaltantes,inventarioOdooCostos,fechaAsignacion,fechaSiniestro])
+  function detalleParaGuardar() {
+    const r = detalleCosteado
+    return [
+      ...r.mats.map(x => ({ categoria:'MATERIAL', referencia:texto(x.sku), descripcion:texto(x.material), cantidad:x.qty, costo_unitario:x.costo, importe:x.importe == null ? null : Math.round(x.importe*100)/100 })),
+      ...r.herr.map(x => ({ categoria:'HERRAMIENTA', referencia:texto(x.sku), descripcion:nombreHerramienta(x.producto), cantidad:x.qty, costo_original:x.costo, vida_util_meses:x.vida, depreciacion_unitaria:x.depreciacion, costo_unitario:x.unitario, importe:x.importe == null ? null : Math.round(x.importe*100)/100 })),
+      ...r.eq.map(x => ({ categoria:'EQUIPO', referencia:texto(x.sku), descripcion:texto(x.descripcion), serie:texto(x.serie), cantidad:1, costo_unitario:x.costo, importe:x.importe == null ? null : Math.round(x.importe*100)/100 }))
+    ]
+  }
+
+  async function registrarMovimiento(accion) {
+    if (!histDetalle || movimientoGuardando || costosCargando) return
+    setError('')
+    setMensaje('')
+    const r = detalleCosteado
+    if (r.herr.length && (!fechaAsignacion || !fechaSiniestro || r.meses == null)) {
+      setError('Captura las fechas válidas de asignación y siniestro para calcular las herramientas.')
+      return
+    }
+    if (accion !== 'GUARDAR_COSTOS' && r.sinCosto > 0) {
+      setError('Hay '+r.sinCosto+' renglones sin costo. Completa los costos antes de enviar a cobro o baja.')
+      return
+    }
+    if (accion === 'BAJA' && String(histDetalle.tipoAuditoria || '').toUpperCase() !== 'BAJA') {
+      setError('El botón Baja se permite solamente para auditorías de tipo BAJA.')
+      return
+    }
+    if (accion !== 'GUARDAR_COSTOS' && !costosGuardados) {
+      setError('Primero presiona Guardar costos.')
+      return
+    }
+    setMovimientoGuardando(true)
+    try {
+      const {data,error:rpcError} = await supabase.rpc('qiora_movimiento_faltantes', {
+        p_folio:histDetalle.folio, p_accion:accion,
+        p_fecha_asignacion:fechaAsignacion || null,
+        p_fecha_siniestro:fechaSiniestro || null,
+        p_detalle:detalleParaGuardar()
+      })
+      if (rpcError) throw rpcError
+      if (!data?.ok) throw new Error('Supabase no confirmó la operación.')
+      if (accion === 'GUARDAR_COSTOS') {
+        setCostosGuardados(true)
+        setMensaje('Costos guardados para el folio '+histDetalle.folio)
+      } else {
+        setMensaje('Folio '+histDetalle.folio+' enviado a '+(accion==='BAJA'?'BAJAS':'COBROS')+'. Registro #'+data.id)
+      }
+    } catch(e) { setError(e?.message || 'No se pudo registrar el movimiento') }
+    finally { setMovimientoGuardando(false) }
+  }
+
   async function exportarFaltantesCosto(formato) {
     if(!histDetalle || costosCargando) return
     const r=detalleCosteado, d=histDetalle
@@ -1568,7 +1644,7 @@ export default function AuditoriasPage() {
           <div style={styles.error}>{error}</div>
         )}
 
-        {mensaje && ['CAPTURA', 'HISTORICO', 'FALTANTE_GLOBAL', 'PROGRAMACION'].includes(vista) && (
+        {mensaje && ['CAPTURA', 'HISTORICO', 'FALTANTE_GLOBAL', 'PROGRAMACION', 'DETALLE_COSTOS'].includes(vista) && (
           <div style={styles.ok}>{mensaje}</div>
         )}
         {avisoOdoo && vista === 'CAPTURA' && (
@@ -1700,7 +1776,7 @@ export default function AuditoriasPage() {
             <div style={styles.tarjeta}><h2>Faltantes con costo</h2>
               <p><b>Folio:</b> {d.folio}　 <b>Fecha:</b> {fechaQiora(d.fecha)}　 <b>Almacén:</b> {d.almacen}</p>
               <p><b>Técnico:</b> {d.tecnico||'-'}　 <b>Auditor:</b> {d.auditor||'-'}　 <b>Tipo de auditoría:</b> {d.tipoAuditoria||'NO REGISTRADO'}</p>
-              <p><b>Se auditó:</b> {d.materiales?.[0]?.tipo||'TODO'}</p>
+              <p><b>Se auditó:</b> {d.alcance||'TODO'}</p>
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10}}>
                 { [['Líneas materiales',r.mats.length],['Líneas herramientas',r.herr.length],['Líneas equipos',r.eq.length],['Total materiales',precioMoneda(r.totM)],['Total herramientas',precioMoneda(r.totH)],['Total equipos',precioMoneda(r.totE)],['Gran total parcial',precioMoneda(tot)]].map(([label,val])=><div key={label} style={{padding:14,background:'#0b8664',color:'white',borderRadius:12,textAlign:'center'}}>{label}<div style={{fontWeight:800,fontSize:21,marginTop:5}}>{val}</div></div>)}
               </div>
@@ -1711,7 +1787,12 @@ export default function AuditoriasPage() {
             </div>
             {tabla('Faltantes de materiales',['SKU','Material','Lote','Cantidad faltante','Costo unitario','Importe'],r.mats.map(x=>[x.sku,x.material,x.lote,x.qty,precioMoneda(x.costo),precioMoneda(x.importe)]))}
             <div style={styles.tarjeta}><h3>Faltantes de herramientas</h3>
-              <div style={{display:'flex',gap:12,flexWrap:'wrap'}}><label>Fecha de asignación <input style={styles.input} type="date" value={fechaAsignacion} onChange={e=>setFechaAsignacion(e.target.value)}/></label><label>Fecha de siniestro <input style={styles.input} type="date" min={fechaAsignacion||undefined} value={fechaSiniestro} onChange={e=>setFechaSiniestro(e.target.value)}/></label></div>
+              <div style={{display:'flex',gap:12,flexWrap:'wrap'}}><label>Fecha de asignación <input style={styles.input} type="date" value={fechaAsignacion} onChange={e=>{setFechaAsignacion(e.target.value);setCostosGuardados(false)}}/></label><label>Fecha de siniestro <input style={styles.input} type="date" min={fechaAsignacion||undefined} value={fechaSiniestro} onChange={e=>{setFechaSiniestro(e.target.value);setCostosGuardados(false)}}/></label></div>
+              <div style={{display:'flex',gap:9,flexWrap:'wrap',marginTop:12}}>
+                <button type="button" style={styles.botonPrincipal} disabled={movimientoGuardando || costosCargando} onClick={()=>registrarMovimiento('GUARDAR_COSTOS')}>Guardar costos</button>
+                <button type="button" style={styles.botonFaltantes} disabled={movimientoGuardando || !costosGuardados} onClick={()=>registrarMovimiento('COBRO')}>Mandar a cobro</button>
+                {String(d.tipoAuditoria||'').toUpperCase()==='BAJA' && <button type="button" style={styles.botonFaltantes} disabled={movimientoGuardando || !costosGuardados} onClick={()=>registrarMovimiento('BAJA')}>Enviar a Bajas</button>}
+              </div>
               <p>Meses de uso: {r.meses === null ? 'CAPTURA FECHAS VÁLIDAS' : r.meses.toFixed(2)}. Depreciación lineal por fechas (máximo 100% del costo original). Vida útil 0: sin depreciación. El importe es el valor residual por cantidad faltante.</p>
               <div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr>{['Referencia','Herramienta','Vida útil (meses)','Cant.','Compra unit.','Depreciación unit.','Residual unit.','Importe faltante'].map(x=><th style={styles.th} key={x}>{x}</th>)}</tr></thead><tbody>{r.herr.length?r.herr.map((x,i)=><tr key={i}>{[x.sku||x.producto,nombreHerramienta(x.producto),x.vida??'-',x.qty,precioMoneda(x.costo),precioMoneda(x.depreciacion),precioMoneda(x.unitario),precioMoneda(x.importe)].map((v,j)=><td key={j} style={styles.td}>{v}</td>)}</tr>):<tr><td colSpan={8} style={styles.td}>Sin faltantes de herramientas.</td></tr>}</tbody></table></div>
             </div>
@@ -1763,7 +1844,7 @@ export default function AuditoriasPage() {
             <label style={styles.campo}>Fecha<input style={styles.input} readOnly value={tecnico?new Intl.DateTimeFormat('es-MX',{timeZone:'America/Mexico_City',day:'2-digit',month:'2-digit',year:'numeric'}).format(new Date()):''} placeholder="Se cargará automáticamente"/></label>
             <label style={styles.campo}>Tipo de auditoría
               <select style={styles.input} value={tipoAuditoriaPanel} onChange={e=>setTipoAuditoriaPanel(e.target.value)}>
-                <option value="Mensual">Mensual</option><option value="Semanal">Semanal</option><option value="Extraordinaria">Extraordinaria</option>
+                <option value="Mensual">MENSUAL</option><option value="Vacaciones">VACACIONES</option><option value="Baja">BAJA</option><option value="Especial">ESPECIAL</option>
               </select>
             </label>
             <label style={styles.campo}>¿Qué se va a auditar?
