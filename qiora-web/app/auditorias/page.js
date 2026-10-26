@@ -476,6 +476,7 @@ export default function AuditoriasPage() {
   const [fechaSiniestro, setFechaSiniestro] = useState('')
   const [movimientoGuardando, setMovimientoGuardando] = useState(false)
   const [costosGuardados, setCostosGuardados] = useState(false)
+  const [documentosEnviados, setDocumentosEnviados] = useState({})
   const [edicion, setEdicion] = useState(null)
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
   const [padreUsuario, setPadreUsuario] = useState('')
@@ -1242,9 +1243,9 @@ export default function AuditoriasPage() {
   function detalleParaGuardar() {
     const r = detalleCosteado
     return [
-      ...r.mats.map(x => ({ categoria:'MATERIAL', referencia:texto(x.sku), descripcion:texto(x.material), cantidad:x.qty, costo_unitario:x.costo, importe:x.importe == null ? null : Math.round(x.importe*100)/100 })),
-      ...r.herr.map(x => ({ categoria:'HERRAMIENTA', referencia:texto(x.sku), descripcion:nombreHerramienta(x.producto), cantidad:x.qty, costo_original:x.costo, vida_util_meses:x.vida, depreciacion_unitaria:x.depreciacion, costo_unitario:x.unitario, importe:x.importe == null ? null : Math.round(x.importe*100)/100 })),
-      ...r.eq.map(x => ({ categoria:'EQUIPO', referencia:texto(x.sku), descripcion:texto(x.descripcion), serie:texto(x.serie), cantidad:1, costo_unitario:x.costo, importe:x.importe == null ? null : Math.round(x.importe*100)/100 }))
+      ...r.mats.map(x => ({ categoria:'MATERIAL', referencia:texto(x.sku), descripcion:texto(x.material), lote:texto(x.lote), cantidad:x.qty, costo_unitario:x.costo, importe:x.importe == null ? null : Math.round(x.importe*100)/100 })),
+      ...r.herr.map(x => ({ categoria:'HERRAMIENTA', referencia:texto(x.sku), descripcion:nombreHerramienta(x.producto), ubicacion:texto(x.ubicacion), fecha_asignacion:fechaAsignacion||null, fecha_siniestro:fechaSiniestro||null, cantidad:x.qty, costo_original:x.costo, vida_util_meses:x.vida, depreciacion_unitaria:x.depreciacion, costo_unitario:x.unitario, importe:x.importe == null ? null : Math.round(x.importe*100)/100 })),
+      ...r.eq.map(x => ({ categoria:'EQUIPO', referencia:texto(x.sku), descripcion:texto(x.descripcion), serie:texto(x.serie), lote:texto(x.lote), cantidad:1, costo_unitario:x.costo, importe:x.importe == null ? null : Math.round(x.importe*100)/100 }))
     ]
   }
 
@@ -1283,6 +1284,7 @@ export default function AuditoriasPage() {
         setCostosGuardados(true)
         setMensaje('Costos guardados para el folio '+histDetalle.folio)
       } else {
+        setDocumentosEnviados(actual => ({...actual,[histDetalle.folio+'|'+accion]:true}))
         setMensaje('Folio '+histDetalle.folio+' enviado a '+(accion==='BAJA'?'BAJAS':'COBROS')+'. Registro #'+data.id)
       }
     } catch(e) { setError(e?.message || 'No se pudo registrar el movimiento') }
@@ -1774,6 +1776,7 @@ export default function AuditoriasPage() {
           return <section>
             <button style={styles.botonSecundario} onClick={()=>{setVista('HISTORICO');setHistDetalle(null)}}>← Regresar al historial</button>
             <div style={styles.tarjeta}><h2>Faltantes con costo</h2>
+              {mensaje && <div style={styles.ok} role="status">{mensaje}</div>}
               <p><b>Folio:</b> {d.folio}　 <b>Fecha:</b> {fechaQiora(d.fecha)}　 <b>Almacén:</b> {d.almacen}</p>
               <p><b>Técnico:</b> {d.tecnico||'-'}　 <b>Auditor:</b> {d.auditor||'-'}　 <b>Tipo de auditoría:</b> {d.tipoAuditoria||'NO REGISTRADO'}</p>
               <p><b>Se auditó:</b> {d.alcance||'TODO'}</p>
@@ -1782,17 +1785,29 @@ export default function AuditoriasPage() {
               </div>
               <p style={{color:'#a62929',fontWeight:700}}>{costosCargando?'Consultando costos...':r.sinCosto>0?`Hay ${r.sinCosto} renglones sin importe calculable. El total mostrado es parcial.`:'Todos los renglones tienen costo calculable.'}</p>
               <p>Herramientas: costo original ODOO por unidad menos depreciación lineal según fechas y vida útil. VALOR ACTUAL no se vuelve a descontar. Vida útil 0: sin depreciación. Sin fechas válidas: importe pendiente. No se calcula IVA sin regla confirmada; no son costos históricos congelados.</p>
-              <button style={styles.botonPrincipal} disabled={costosCargando} onClick={()=>exportarFaltantesCosto('Excel').catch(e=>setError(e.message))}>Descargar Excel</button>{' '}
-              <button style={styles.botonPrincipal} disabled={costosCargando} onClick={()=>exportarFaltantesCosto('PDF').catch(e=>setError(e.message))}>Descargar PDF</button>
+              <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center',marginTop:16}}>
+                <button type="button" style={{...styles.botonPrincipal,background:'#087c5c',fontSize:15,padding:'13px 22px'}}
+                  disabled={movimientoGuardando || costosCargando || !costosGuardados || !!documentosEnviados[d.folio+'|COBRO'] || r.sinCosto>0 || (r.herr.length>0 && r.meses==null)}
+                  onClick={()=>registrarMovimiento('COBRO')}>
+                  {movimientoGuardando ? 'Procesando...' : 'MANDAR A COBRO'}
+                </button>
+                {String(d.tipoAuditoria||'').toUpperCase()==='BAJA' &&
+                  <button type="button" style={styles.botonFaltantes}
+                    disabled={movimientoGuardando || costosCargando || !costosGuardados || !!documentosEnviados[d.folio+'|BAJA'] || r.sinCosto>0}
+                    onClick={()=>registrarMovimiento('BAJA')}>ENVIAR A BAJAS</button>}
+                <button type="button" style={styles.botonPrincipal} disabled={movimientoGuardando || costosCargando}
+                  onClick={()=>registrarMovimiento('GUARDAR_COSTOS')}>
+                  {movimientoGuardando ? 'Guardando...' : 'GUARDAR COSTOS'}
+                </button>
+                <button type="button" style={styles.botonPrincipal} disabled={costosCargando} onClick={()=>exportarFaltantesCosto('Excel').catch(e=>setError(e.message))}>Descargar Excel</button>
+                <button type="button" style={styles.botonPrincipal} disabled={costosCargando} onClick={()=>exportarFaltantesCosto('PDF').catch(e=>setError(e.message))}>Descargar PDF</button>
+              </div>
+              <p style={{fontSize:12,color:'#54635d',marginBottom:0}}>El envío incluye los faltantes de Materiales, Herramientas y Equipos, con sus importes y folio. Primero guarda los costos. Las fechas se capturan abajo en Herramientas.</p>
             </div>
             {tabla('Faltantes de materiales',['SKU','Material','Lote','Cantidad faltante','Costo unitario','Importe'],r.mats.map(x=>[x.sku,x.material,x.lote,x.qty,precioMoneda(x.costo),precioMoneda(x.importe)]))}
             <div style={styles.tarjeta}><h3>Faltantes de herramientas</h3>
               <div style={{display:'flex',gap:12,flexWrap:'wrap'}}><label>Fecha de asignación <input style={styles.input} type="date" value={fechaAsignacion} onChange={e=>{setFechaAsignacion(e.target.value);setCostosGuardados(false)}}/></label><label>Fecha de siniestro <input style={styles.input} type="date" min={fechaAsignacion||undefined} value={fechaSiniestro} onChange={e=>{setFechaSiniestro(e.target.value);setCostosGuardados(false)}}/></label></div>
-              <div style={{display:'flex',gap:9,flexWrap:'wrap',marginTop:12}}>
-                <button type="button" style={styles.botonPrincipal} disabled={movimientoGuardando || costosCargando} onClick={()=>registrarMovimiento('GUARDAR_COSTOS')}>Guardar costos</button>
-                <button type="button" style={styles.botonFaltantes} disabled={movimientoGuardando || !costosGuardados} onClick={()=>registrarMovimiento('COBRO')}>Mandar a cobro</button>
-                {String(d.tipoAuditoria||'').toUpperCase()==='BAJA' && <button type="button" style={styles.botonFaltantes} disabled={movimientoGuardando || !costosGuardados} onClick={()=>registrarMovimiento('BAJA')}>Enviar a Bajas</button>}
-              </div>
+
               <p>Meses de uso: {r.meses === null ? 'CAPTURA FECHAS VÁLIDAS' : r.meses.toFixed(2)}. Depreciación lineal por fechas (máximo 100% del costo original). Vida útil 0: sin depreciación. El importe es el valor residual por cantidad faltante.</p>
               <div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr>{['Referencia','Herramienta','Vida útil (meses)','Cant.','Compra unit.','Depreciación unit.','Residual unit.','Importe faltante'].map(x=><th style={styles.th} key={x}>{x}</th>)}</tr></thead><tbody>{r.herr.length?r.herr.map((x,i)=><tr key={i}>{[x.sku||x.producto,nombreHerramienta(x.producto),x.vida??'-',x.qty,precioMoneda(x.costo),precioMoneda(x.depreciacion),precioMoneda(x.unitario),precioMoneda(x.importe)].map((v,j)=><td key={j} style={styles.td}>{v}</td>)}</tr>):<tr><td colSpan={8} style={styles.td}>Sin faltantes de herramientas.</td></tr>}</tbody></table></div>
             </div>
