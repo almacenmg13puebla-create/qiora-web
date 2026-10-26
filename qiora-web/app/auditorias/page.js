@@ -417,6 +417,7 @@ export default function AuditoriasPage() {
   const [cargandoInicio, setCargandoInicio] = useState(true)
   const [cargando, setCargando] = useState(false)
   const [mensaje, setMensaje] = useState('')
+  const [avisoOdoo, setAvisoOdoo] = useState('')
   const [error, setError] = useState('')
 
   const [perfil, setPerfil] = useState(null)
@@ -520,6 +521,7 @@ export default function AuditoriasPage() {
     setSerie('')
     setSoloFaltantes(false)
     setComentarioGeneral('')
+    setAvisoOdoo('')
     setTipoAuditoriaPanel('Mensual')
   }
 
@@ -592,6 +594,7 @@ export default function AuditoriasPage() {
 
   async function cargarAuditoria() {
     limpiarMensajes()
+    setAvisoOdoo('')
 
     const almacen4 = normalizarAlmacen(almacen)
 
@@ -629,7 +632,7 @@ export default function AuditoriasPage() {
         )
       }
 
-      setTecnico(usuarioTecnico)
+      // Se establece el técnico solamente después de cargar correctamente las categorías.
 
       // ================================================
       // MATERIALES
@@ -697,7 +700,9 @@ export default function AuditoriasPage() {
         if (herError) throw herError
         const filas = Array.isArray(data) ? data : (data?.filas || [])
         if (!filas.length) {
-          throw new Error(`Sin inventario ODOO asociado a ${texto(usuarioTecnico.nombre || usuarioTecnico.tecnico)}. Revisa la coincidencia de colaborador o número de empleado; no se creará una auditoría vacía de herramientas.`)
+          // La ausencia de inventario ODOO NO bloquea Materiales ni Equipos.
+          // No se crean filas de herramientas ficticias.
+          setAvisoOdoo(`Sin herramientas ODOO asignadas a ${texto(usuarioTecnico.nombre || usuarioTecnico.tecnico)}. Se puede continuar con Materiales y Equipos. Verifica la asignación del colaborador en ODOO.`)
         }
         nuevasHerramientas = filas.map(x => ({
           sku: texto(x.referencia),
@@ -832,9 +837,15 @@ export default function AuditoriasPage() {
         setEquipos([])
       }
 
+      // Solo impedir auditorías completamente vacías; no exigir herramientas ODOO.
+      if (!nuevosMateriales.length && !nuevasHerramientas.length && !nuevosEquipos.length) {
+        setTecnico(null)
+        throw new Error(`No existen materiales, herramientas ODOO ni equipos para auditar en el almacén ${almacen4}. No se creará una auditoría vacía.`)
+      }
+      setTecnico(usuarioTecnico)
       setSoloFaltantes(false)
       setMensaje(
-        `Auditoría cargada para ${usuarioTecnico.nombre || almacen4}.`
+        `Auditoría cargada para ${usuarioTecnico.nombre || almacen4}. Materiales: ${nuevosMateriales.length}; Herramientas ODOO: ${nuevasHerramientas.length}; Equipos: ${nuevosEquipos.length}.`
       )
     } catch (e) {
       setError(
@@ -905,6 +916,14 @@ export default function AuditoriasPage() {
     }
 
     if (guardando) return
+
+    const tieneMateriales = (tipo === TIPOS.TODO || tipo === TIPOS.MATERIALES) && materiales.length > 0
+    const tieneHerramientas = (tipo === TIPOS.TODO || tipo === TIPOS.HERRAMIENTAS) && herramientas.length > 0
+    const tieneEquipos = (tipo === TIPOS.TODO || tipo === TIPOS.EQUIPOS) && equipos.length > 0
+    if (!tieneMateriales && !tieneHerramientas && !tieneEquipos) {
+      setError('No hay materiales, herramientas ODOO ni equipos en la selección actual. No se guardará una auditoría vacía.')
+      return
+    }
 
     setGuardando(true)
 
@@ -982,6 +1001,7 @@ export default function AuditoriasPage() {
       setSerie('')
       setSoloFaltantes(false)
       setComentarioGeneral('')
+      setAvisoOdoo('')
       setTipo(TIPOS.TODO)
 
       try {
@@ -1505,6 +1525,9 @@ export default function AuditoriasPage() {
 
         {mensaje && ['CAPTURA', 'HISTORICO', 'FALTANTE_GLOBAL', 'PROGRAMACION'].includes(vista) && (
           <div style={styles.ok}>{mensaje}</div>
+        )}
+        {avisoOdoo && vista === 'CAPTURA' && (
+          <div role="status" style={{...styles.usuario, background:'#fff5db', border:'1px solid #e1bd67', color:'#664800'}}>{avisoOdoo}</div>
         )}
         {ultimoPdf && vista === 'CAPTURA' && (
           <div style={{ marginBottom: 16 }}>
