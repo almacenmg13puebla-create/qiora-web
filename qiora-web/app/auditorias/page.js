@@ -446,6 +446,7 @@ export default function AuditoriasPage() {
   const [histDetalle, setHistDetalle] = useState(null)
   const [histFaltanteGlobal, setHistFaltanteGlobal] = useState(false)
   const [costosFaltantes, setCostosFaltantes] = useState({sap:{},odoo:{}})
+  const [inventarioOdooCostos, setInventarioOdooCostos] = useState([])
   const [costosCargando, setCostosCargando] = useState(false)
   const [fechaAsignacion, setFechaAsignacion] = useState('')
   const [fechaSiniestro, setFechaSiniestro] = useState('')
@@ -687,30 +688,28 @@ export default function AuditoriasPage() {
         tipo === TIPOS.TODO ||
         tipo === TIPOS.HERRAMIENTAS
       ) {
-        const ubicacionOdoo = texto(usuarioTecnico.odoo)
-
-        if (ubicacionOdoo) {
-          const { data, error: herError } = await supabase
-            .from('herramienta_odoo')
-            .select('producto,ubicacion,cantidad')
-            .eq('ubicacion', ubicacionOdoo)
-            .gt('cantidad', 0)
-            .order('producto')
-
-          if (herError) throw herError
-
-          nuevasHerramientas = (data || []).map((x) => ({
-            producto: texto(x.producto),
-            ubicacion: texto(x.ubicacion),
-            sistema: numero(x.cantidad),
-            fisico: 0,
-            capturado: false,
-            observacion: '',
-          }))
-
-          nuevasHerramientas =
-            conservarHerramientas(nuevasHerramientas)
+        // Nueva fuente: inventario ODOO POR COLABORADOR (no la tabla obsoleta).
+        // El RPC verifica distrito y permisos en Supabase; nunca lista datos de otros distritos.
+        const { data, error: herError } = await supabase.rpc('qiora_herramientas_auditoria', {
+          p_colaborador: texto(usuarioTecnico.nombre || usuarioTecnico.tecnico),
+          p_identificador: texto(usuarioTecnico.numero_empleado || usuarioTecnico.empleado || usuarioTecnico.odoo),
+        })
+        if (herError) throw herError
+        const filas = Array.isArray(data) ? data : (data?.filas || [])
+        if (!filas.length) {
+          throw new Error(`Sin inventario ODOO asociado a ${texto(usuarioTecnico.nombre || usuarioTecnico.tecnico)}. Revisa la coincidencia de colaborador o número de empleado; no se creará una auditoría vacía de herramientas.`)
         }
+        nuevasHerramientas = filas.map(x => ({
+          sku: texto(x.referencia),
+          // La referencia viaja en PRODUCTO para persistirla sin modificar guardar_auditoria.
+          producto: `${texto(x.referencia)} | ${texto(x.producto)}`,
+          ubicacion: texto(x.colaborador),
+          sistema: numero(x.cantidad),
+          fisico: 0,
+          capturado: false,
+          observacion: '',
+        }))
+        nuevasHerramientas = conservarHerramientas(nuevasHerramientas)
       }
 
       // ================================================
@@ -1083,6 +1082,7 @@ export default function AuditoriasPage() {
     setHistDetalle(item)
     setVista('DETALLE_COSTOS')
     setCostosFaltantes({sap:{},odoo:{}})
+    setInventarioOdooCostos([])
     setCostosCargando(true)
     setFechaAsignacion('')
     setFechaSiniestro('')
@@ -1092,16 +1092,30 @@ export default function AuditoriasPage() {
       const h=(item.herramientas||[]).filter(f=>faltanteCantidad(f)>0)
       const e=(item.equipos||[]).filter(f=>String(f.estado||'').toUpperCase().includes('FALTANTE'))
       const skusSAP=[...new Set([...m.map(x=>String(x.sku||'')),...e.map(x=>String(x.material||x.sku||''))].filter(Boolean))]
-      const skusODOO=[...new Set(h.map(x=>String(x.sku||x.producto||'')).filter(Boolean))]
+      const skusODOO=[...new Set(h.map(x=>texto(x.sku || String(x.producto||'').split(' | ')[0])).filter(Boolean))]
       const {data,error:err}=await supabase.rpc('qiora_costos_para_faltantes',{p_skus_sap:skusSAP,p_skus_odoo:skusODOO})
       if(err) throw err
       setCostosFaltantes({sap:data?.sap||{},odoo:data?.odoo||{}})
+      // Inventario real por colaborador, para valorar existencias sin suponer que
+      // los precios del catálogo ODOO equivalen al valor actual inventariado.
+      const {data:filasInv,error:errInv}=await supabase.rpc('qiora_herramientas_auditoria',{
+        p_colaborador:texto(item.tecnico),p_identificador:'',
+      })
+      if(errInv) throw errInv
+      setInventarioOdooCostos(Array.isArray(filasInv)?filasInv:(filasInv?.filas||[]))
     } catch(e) {setError('Costos: '+(e.message||e))}
     finally {setCostosCargando(false)}
   }
   const detalleCosteado = useMemo(() => {
     const d=histDetalle||{}
     const sap=costosFaltantes.sap||{}, odoo=costosFaltantes.odoo||{}
+    const invPorRef = new Map(inventarioOdooCostos.map(x => [texto(x.referencia).toUpperCase(),x]))
+    const invPorNombre = new Map()
+    for(const x of inventarioOdooCostos) {
+      const k=texto(x.producto).toUpperCase()
+      if(!invPorNombre.has(k)) invPorNombre.set(k,x)
+      else if(invPorNombre.get(k)?.referencia !== x.referencia) invPorNombre.set(k,null)
+    }
     const mats=(d.materiales||[]).filter(x=>faltanteCantidad(x)>0).map(x=>{
       const qty=faltanteCantidad(x), item=sap[String(x.sku||'')]
       const costo=item?.costo==null?null:Number(item.costo)
@@ -1109,10 +1123,23 @@ export default function AuditoriasPage() {
     })
     const meses=mesesEntre(fechaAsignacion,fechaSiniestro)
     const herr=(d.herramientas||[]).filter(x=>faltanteCantidad(x)>0).map(x=>{
-      const qty=faltanteCantidad(x), item=odoo[String(x.sku||x.producto||'')]
-      const costo=item?.costo==null?null:Number(item.costo), vida=Number(item?.vida_util_meses||0)
-      const depreciacion=costo==null||!vida||!fechaAsignacion||!fechaSiniestro?null:Math.min(costo,costo*Math.min(meses/vida,1))
-      return {...x,qty,costo,vida,depreciacion,importe:depreciacion==null?null:qty*Math.max(0,costo-depreciacion)}
+      const qty=faltanteCantidad(x)
+      const parts=texto(x.producto).split(' | ')
+      const ref=texto(x.sku || (parts.length>1?parts[0]:'' )).toUpperCase()
+      const nombre=texto(parts.length>1?parts.slice(1).join(' | '):x.producto).toUpperCase()
+      const inv=ref?invPorRef.get(ref):invPorNombre.get(nombre)
+      const clave=ref||texto(inv?.referencia)
+      const item=odoo[clave]
+      const vida=item?.vida_util_meses==null?null:Number(item.vida_util_meses)
+      const baseCompra=inv && Number(inv.cantidad)>0 ? Number(inv.valor_compra)/Number(inv.cantidad) : null
+      const valorActual=inv && Number(inv.cantidad)>0 ? Number(inv.valor_actual)/Number(inv.cantidad) : null
+      // El inventario trae valor actual y valor compra por línea. Dividir por cantidad.
+      // No depreciar una segunda vez el valor actual ya reportado por ODOO.
+      const costo=baseCompra!=null && Number.isFinite(baseCompra)?baseCompra:null
+      const unitario=valorActual!=null && Number.isFinite(valorActual)?valorActual:null
+      const depreciacion=costo!=null && unitario!=null?Math.max(0,costo-unitario):null
+      return {...x,sku:clave,qty,costo,vida,depreciacion,importe:unitario==null?null:qty*unitario,
+        observacionCosto:inv?'Valor actual ODOO por colaborador':'Sin coincidencia única de referencia o colaborador'}
     })
     const eq=(d.equipos||[]).filter(x=>String(x.estado||'').toUpperCase().includes('FALTANTE')).map(x=>{
       const sku=String(x.material||x.sku||''),item=sap[sku],costo=item?.costo==null?null:Number(item.costo)
@@ -1120,7 +1147,7 @@ export default function AuditoriasPage() {
     })
     const sumar=a=>a.reduce((s,x)=>s+(x.importe??0),0)
     return {mats,herr,eq,meses,totM:sumar(mats),totH:sumar(herr),totE:sumar(eq),sinCosto:[...mats,...herr,...eq].filter(x=>x.importe==null).length}
-  },[histDetalle,costosFaltantes,fechaAsignacion,fechaSiniestro])
+  },[histDetalle,costosFaltantes,inventarioOdooCostos,fechaAsignacion,fechaSiniestro])
   async function exportarFaltantesCosto(formato) {
     if(!histDetalle || costosCargando) return
     const r=detalleCosteado, d=histDetalle
@@ -1610,7 +1637,7 @@ export default function AuditoriasPage() {
                 { [['Líneas materiales',r.mats.length],['Líneas herramientas',r.herr.length],['Líneas equipos',r.eq.length],['Total materiales',precioMoneda(r.totM)],['Total herramientas',precioMoneda(r.totH)],['Total equipos',precioMoneda(r.totE)],['Gran total parcial',precioMoneda(tot)]].map(([label,val])=><div key={label} style={{padding:14,background:'#0b8664',color:'white',borderRadius:12,textAlign:'center'}}>{label}<div style={{fontWeight:800,fontSize:21,marginTop:5}}>{val}</div></div>)}
               </div>
               <p style={{color:'#a62929',fontWeight:700}}>{costosCargando?'Consultando costos...':r.sinCosto>0?`Hay ${r.sinCosto} renglones sin importe calculable. El total mostrado es parcial.`:'Todos los renglones tienen costo calculable.'}</p>
-              <p>Los costos son los vigentes en Configuración; no se presentan como costos históricos ni se calcula IVA sin una regla registrada.</p>
+              <p>Herramientas: valor actual del inventario ODOO por colaborador, dividido entre cantidad. No se aplica doble depreciación ni IVA sin una regla confirmada. Los importes no son históricos congelados.</p>
               <button style={styles.botonPrincipal} disabled={costosCargando} onClick={()=>exportarFaltantesCosto('Excel').catch(e=>setError(e.message))}>Descargar Excel</button>{' '}
               <button style={styles.botonPrincipal} disabled={costosCargando} onClick={()=>exportarFaltantesCosto('PDF').catch(e=>setError(e.message))}>Descargar PDF</button>
             </div>
@@ -1618,7 +1645,7 @@ export default function AuditoriasPage() {
             <div style={styles.tarjeta}><h3>Faltantes de herramientas</h3>
               <div style={{display:'flex',gap:12,flexWrap:'wrap'}}><label>Fecha de asignación <input style={styles.input} type="date" value={fechaAsignacion} onChange={e=>setFechaAsignacion(e.target.value)}/></label><label>Fecha de siniestro <input style={styles.input} type="date" min={fechaAsignacion||undefined} value={fechaSiniestro} onChange={e=>setFechaSiniestro(e.target.value)}/></label></div>
               <p>Meses de uso: {r.meses.toFixed(2)}. Depreciación lineal limitada al costo original. El importe es el valor residual.</p>
-              <div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr>{['SKU','Herramienta','Vida útil (meses)','Cant.','Costo','Depreciación por unidad','Total'].map(x=><th style={styles.th} key={x}>{x}</th>)}</tr></thead><tbody>{r.herr.length?r.herr.map((x,i)=><tr key={i}>{[x.sku||x.producto,x.producto,x.vida||'-',x.qty,precioMoneda(x.costo),precioMoneda(x.depreciacion),precioMoneda(x.importe)].map((v,j)=><td key={j} style={styles.td}>{v}</td>)}</tr>):<tr><td colSpan={7} style={styles.td}>Sin faltantes de herramientas.</td></tr>}</tbody></table></div>
+              <div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr>{['Referencia','Herramienta','Vida útil (meses)','Cant.','Compra unit.','Diferencia compra-actual','Total actual'].map(x=><th style={styles.th} key={x}>{x}</th>)}</tr></thead><tbody>{r.herr.length?r.herr.map((x,i)=><tr key={i}>{[x.sku||x.producto,x.producto,x.vida||'-',x.qty,precioMoneda(x.costo),precioMoneda(x.depreciacion),precioMoneda(x.importe)].map((v,j)=><td key={j} style={styles.td}>{v}</td>)}</tr>):<tr><td colSpan={7} style={styles.td}>Sin faltantes de herramientas.</td></tr>}</tbody></table></div>
             </div>
             {tabla('Faltantes de equipos',['Serie','SKU','Descripción','Lote','Cantidad faltante','Costo unitario','Importe'],r.eq.map(x=>[x.serie,x.sku,x.descripcion,x.lote,1,precioMoneda(x.costo),precioMoneda(x.importe)]))}
           </section>
