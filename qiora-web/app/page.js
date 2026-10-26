@@ -11,6 +11,10 @@ function passwordSupabase(clave) {
 
 const MODULOS = [
   { permiso: 'auditoria', nombre: 'Auditorías', descripcion: 'Captura y seguimiento de auditorías.', ruta: '/auditorias', disponible: true },
+  // La navegacion es visible para usuarios autenticados; cada ruta valida
+  // sus propios permisos y Supabase protege las operaciones sobre datos.
+  { permiso: null, nombre: 'Inventarios', descripcion: 'Consulta de materiales, equipos IQ09 y catálogos.', ruta: '/inventarios', disponible: true },
+  { permiso: null, nombre: 'Configuración', descripcion: 'Usuarios, números de empleado y catálogos de costos.', ruta: '/configuracion', disponible: true },
   { permiso: 'ver_auditorias', nombre: 'Ver auditorías', descripcion: 'Consulta histórica de auditorías.', disponible: false },
   { permiso: 'recolecciones', nombre: 'Recolecciones', descripcion: 'Seguimiento de equipos recolectados.', disponible: false },
   { permiso: 'solicitud_material', nombre: 'Solicitud de material', descripcion: 'Solicitudes y seguimiento de materiales.', disponible: false },
@@ -25,7 +29,7 @@ export default function Home() {
   const [usuario, setUsuario] = useState('')
   const [clave, setClave] = useState('')
   const [perfil, setPerfil] = useState(null)
-  const [numeroEmpleadoOdoo, setNumeroEmpleadoOdoo] = useState('')
+  const [numeroEmpleado, setNumeroEmpleado] = useState('')
   const [msg, setMsg] = useState('')
   const [loading, setLoading] = useState(true)
   const [menuAbierto, setMenuAbierto] = useState(false)
@@ -62,13 +66,13 @@ export default function Home() {
         }
         return false
       }
-      // Consultar el identificador ODOO asociado a la sesion autenticada.
-      // No usar perfil.odoo: ese campo contiene un nombre/ubicacion anterior.
-      const { data: empleadoOdoo, error: empleadoError } = await supabase.rpc('qiora_mi_numero_empleado')
+      // Consultar el numero de empleado asociado a la sesion autenticada.
+      // No usar perfil.odoo: ese campo corresponde al identificador antiguo.
+      const { data: empleadoNumero, error: empleadoError } = await supabase.rpc('qiora_mi_numero_empleado')
       if (empleadoError) console.error('ERROR NUMERO EMPLEADO:', empleadoError)
       if (sigueActivo()) {
         setPerfil(data)
-        setNumeroEmpleadoOdoo(empleadoError ? '' : String(empleadoOdoo ?? '').trim())
+        setNumeroEmpleado(empleadoError ? '' : String(empleadoNumero ?? '').trim())
         setMsg('')
       }
       return true
@@ -118,7 +122,7 @@ export default function Home() {
       const { error } = await supabase.auth.signOut()
       if (error) throw error
       setPerfil(null)
-      setNumeroEmpleadoOdoo('')
+      setNumeroEmpleado('')
       setUsuario('')
       setClave('')
       setMsg('')
@@ -151,7 +155,8 @@ export default function Home() {
     )
   }
 
-  const modulos = MODULOS.filter((modulo) => perfil[modulo.permiso] === true)
+  const modulos = MODULOS.filter((modulo) => modulo.permiso === null || perfil[modulo.permiso] === true)
+  const modulosAutorizados = MODULOS.filter((modulo) => modulo.permiso !== null && perfil[modulo.permiso] === true)
   const disponibles = modulos.filter((modulo) => modulo.disponible)
 
   return (
@@ -179,8 +184,8 @@ export default function Home() {
           <section className="qiora-stats" aria-label="Información del usuario">
             <div className="qiora-stat"><span>Usuario / Almacén</span><strong>{perfil.usuario_almacen}</strong></div>
             <div className="qiora-stat"><span>Puesto</span><strong>{perfil.puesto || '-'}</strong></div>
-            <div className="qiora-stat"><span>Número de empleado</span><strong>{numeroEmpleadoOdoo || 'NO REGISTRADO'}</strong></div>
-            <div className="qiora-stat"><span>Módulos autorizados</span><strong>{modulos.length}</strong></div>
+            <div className="qiora-stat"><span>Número de empleado</span><strong>{numeroEmpleado || 'NO REGISTRADO'}</strong></div>
+            <div className="qiora-stat"><span>Módulos autorizados</span><strong>{modulosAutorizados.length}</strong></div>
           </section>
           {msg && <div className="error" role="alert">{msg}</div>}
           <div className="qiora-section-heading"><div><h2>Mis módulos</h2><p>Las funciones disponibles respetan los permisos de tu perfil.</p></div><span>{disponibles.length} disponible(s)</span></div>
