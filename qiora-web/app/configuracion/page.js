@@ -90,7 +90,7 @@ export default function ConfiguracionPage(){
         <label>SKU<input required style={s.input} value={form.sku} onChange={e=>setForm({...form,sku:e.target.value})}/></label>
         <label>{seccion==='costos_sap'?'Material':'Herramienta'}<input style={s.input} value={seccion==='costos_sap'?form.material:form.herramienta} onChange={e=>setForm({...form,[seccion==='costos_sap'?'material':'herramienta']:e.target.value})}/></label>
         <label>Costo<input required min="0" step="0.0001" type="number" style={s.input} value={form.costo} onChange={e=>setForm({...form,costo:e.target.value})}/></label>
-        {seccion==='costos_odoo'&&<label>Vida útil en meses<input required min="1" type="number" style={s.input} value={form.vida_util_meses} onChange={e=>setForm({...form,vida_util_meses:e.target.value})}/></label>}
+        {seccion==='costos_odoo'&&<label>Vida útil en meses<input required min="0" type="number" style={s.input} value={form.vida_util_meses} onChange={e=>setForm({...form,vida_util_meses:e.target.value})}/></label>}
         <label style={{alignSelf:'center'}}>Activo <input type="checkbox" checked={form.activo} onChange={e=>setForm({...form,activo:e.target.checked})}/></label>
         <button disabled={cargando} type="submit" style={s.boton}>{cargando?'Guardando...':'Guardar costo'}</button>
         <button type="button" style={s.boton} onClick={()=>setForm(nuevo())}>Nuevo</button>
