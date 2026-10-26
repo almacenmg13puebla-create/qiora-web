@@ -1270,6 +1270,9 @@ export default function AuditoriasPage() {
       setError('Primero presiona Guardar costos.')
       return
     }
+    if (accion === 'BAJA' && !window.confirm(
+      'ATENCIÓN: Se enviará el folio '+histDetalle.folio+' a COBROS y BAJAS, y se desactivará al técnico del almacén '+histDetalle.almacen+'.\n\n¿Confirmas esta baja?'
+    )) return
     setMovimientoGuardando(true)
     try {
       const {data,error:rpcError} = await supabase.rpc('qiora_movimiento_faltantes', {
@@ -1285,7 +1288,7 @@ export default function AuditoriasPage() {
         setMensaje('Costos guardados para el folio '+histDetalle.folio)
       } else {
         setDocumentosEnviados(actual => ({...actual,[histDetalle.folio+'|'+accion]:true}))
-        setMensaje('Folio '+histDetalle.folio+' enviado a '+(accion==='BAJA'?'BAJAS':'COBROS')+'. Registro #'+data.id)
+        setMensaje(accion==='BAJA' ? 'BAJA Y COBRO registrados. Técnico desactivado en Usuarios. Folio '+histDetalle.folio : 'Cobro registrado. Folio '+histDetalle.folio+' · Registro #'+data.id)
       }
     } catch(e) { setError(e?.message || 'No se pudo registrar el movimiento') }
     finally { setMovimientoGuardando(false) }
@@ -1778,7 +1781,7 @@ export default function AuditoriasPage() {
             <div style={styles.tarjeta}><h2>Faltantes con costo</h2>
               {mensaje && <div style={styles.ok} role="status">{mensaje}</div>}
               <p><b>Folio:</b> {d.folio}　 <b>Fecha:</b> {fechaQiora(d.fecha)}　 <b>Almacén:</b> {d.almacen}</p>
-              <p><b>Técnico:</b> {d.tecnico||'-'}　 <b>Auditor:</b> {d.auditor||'-'}　 <b>Tipo de auditoría:</b> {d.tipoAuditoria||'NO REGISTRADO'}</p>
+              <p><b>Técnico:</b> {d.tecnico||'-'}　 <b>Auditor:</b> {d.auditor||'-'}　 <b>Tipo de auditoría:</b> <strong style={String(d.tipoAuditoria||'').toUpperCase()==='BAJA'?{color:'#b91c1c',background:'#fee2e2',padding:'6px 12px',borderRadius:8}:undefined}>{d.tipoAuditoria||'NO REGISTRADO'}</strong></p>
               <p><b>Se auditó:</b> {d.alcance||'TODO'}</p>
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10}}>
                 { [['Líneas materiales',r.mats.length],['Líneas herramientas',r.herr.length],['Líneas equipos',r.eq.length],['Total materiales',precioMoneda(r.totM)],['Total herramientas',precioMoneda(r.totH)],['Total equipos',precioMoneda(r.totE)],['Gran total parcial',precioMoneda(tot)]].map(([label,val])=><div key={label} style={{padding:14,background:'#0b8664',color:'white',borderRadius:12,textAlign:'center'}}>{label}<div style={{fontWeight:800,fontSize:21,marginTop:5}}>{val}</div></div>)}
@@ -1786,15 +1789,19 @@ export default function AuditoriasPage() {
               <p style={{color:'#a62929',fontWeight:700}}>{costosCargando?'Consultando costos...':r.sinCosto>0?`Hay ${r.sinCosto} renglones sin importe calculable. El total mostrado es parcial.`:'Todos los renglones tienen costo calculable.'}</p>
               <p>Herramientas: costo original ODOO por unidad menos depreciación lineal según fechas y vida útil. VALOR ACTUAL no se vuelve a descontar. Vida útil 0: sin depreciación. Sin fechas válidas: importe pendiente. No se calcula IVA sin regla confirmada; no son costos históricos congelados.</p>
               <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center',marginTop:16}}>
-                <button type="button" style={{...styles.botonPrincipal,background:'#087c5c',fontSize:15,padding:'13px 22px'}}
-                  disabled={movimientoGuardando || costosCargando || !costosGuardados || !!documentosEnviados[d.folio+'|COBRO'] || r.sinCosto>0 || (r.herr.length>0 && r.meses==null)}
-                  onClick={()=>registrarMovimiento('COBRO')}>
-                  {movimientoGuardando ? 'Procesando...' : 'MANDAR A COBRO'}
-                </button>
-                {String(d.tipoAuditoria||'').toUpperCase()==='BAJA' &&
-                  <button type="button" style={styles.botonFaltantes}
-                    disabled={movimientoGuardando || costosCargando || !costosGuardados || !!documentosEnviados[d.folio+'|BAJA'] || r.sinCosto>0}
-                    onClick={()=>registrarMovimiento('BAJA')}>ENVIAR A BAJAS</button>}
+                {String(d.tipoAuditoria||'').toUpperCase()==='BAJA' ? (
+                  <button type="button" style={{...styles.botonPrincipal,background:'#b91c1c',fontSize:15,padding:'13px 22px'}}
+                    disabled={movimientoGuardando || costosCargando || !costosGuardados || !!documentosEnviados[d.folio+'|BAJA'] || r.sinCosto>0 || (r.herr.length>0 && r.meses==null)}
+                    onClick={()=>registrarMovimiento('BAJA')}>
+                    {movimientoGuardando ? 'Procesando...' : 'MANDAR A COBRO Y BAJA · DESACTIVAR TÉCNICO'}
+                  </button>
+                ) : (
+                  <button type="button" style={{...styles.botonPrincipal,background:'#087c5c',fontSize:15,padding:'13px 22px'}}
+                    disabled={movimientoGuardando || costosCargando || !costosGuardados || !!documentosEnviados[d.folio+'|COBRO'] || r.sinCosto>0 || (r.herr.length>0 && r.meses==null)}
+                    onClick={()=>registrarMovimiento('COBRO')}>
+                    {movimientoGuardando ? 'Procesando...' : 'MANDAR A COBRO'}
+                  </button>
+                )}
                 <button type="button" style={styles.botonPrincipal} disabled={movimientoGuardando || costosCargando}
                   onClick={()=>registrarMovimiento('GUARDAR_COSTOS')}>
                   {movimientoGuardando ? 'Guardando...' : 'GUARDAR COSTOS'}
