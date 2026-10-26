@@ -394,6 +394,23 @@ function gruposEdicion(g) {
   }
 }
 
+
+// Solo se agregan faltantes; los sobrantes y coincidencias no tienen costo de faltante.
+function faltanteCantidad(f) {
+  const diferencia = Number(f?.diferencia)
+  if (Number.isFinite(diferencia) && diferencia < 0) return Math.abs(diferencia)
+  if (String(f?.observacion || '').toUpperCase().trim() === 'FALTANTE') {
+    const sis = Number(f?.sistema), fis = Number(f?.fisico)
+    if (Number.isFinite(sis) && Number.isFinite(fis)) return Math.max(0,sis-fis)
+  }
+  return 0
+}
+function mesesEntre(a,b) {
+  if (!a || !b || b<a) return 0
+  return Math.max(0,(Date.parse(b+'T12:00:00')-Date.parse(a+'T12:00:00'))/(86400000*30))
+}
+function precioMoneda(x) { return x==null ? 'SIN COSTO REGISTRADO' : '$'+Number(x).toFixed(2) }
+
 export default function AuditoriasPage() {
   const router = useRouter()
 
@@ -428,6 +445,10 @@ export default function AuditoriasPage() {
   const [histResultados, setHistResultados] = useState([])
   const [histDetalle, setHistDetalle] = useState(null)
   const [histFaltanteGlobal, setHistFaltanteGlobal] = useState(false)
+  const [costosFaltantes, setCostosFaltantes] = useState({sap:{},odoo:{}})
+  const [costosCargando, setCostosCargando] = useState(false)
+  const [fechaAsignacion, setFechaAsignacion] = useState('')
+  const [fechaSiniestro, setFechaSiniestro] = useState('')
   const [edicion, setEdicion] = useState(null)
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
   const [padreUsuario, setPadreUsuario] = useState('')
@@ -1058,10 +1079,71 @@ export default function AuditoriasPage() {
     }
   }
 
-  function abrirDetalleHistorico(item) {
+  async function abrirDetalleHistorico(item) {
     setHistDetalle(item)
-    setVista(vista === 'FALTANTE_GLOBAL' ? 'DETALLE_FALTANTE' : 'DETALLE_HISTORICO')
+    setVista('DETALLE_COSTOS')
+    setCostosFaltantes({sap:{},odoo:{}})
+    setCostosCargando(true)
+    setFechaAsignacion('')
+    setFechaSiniestro('')
     window.scrollTo({ top: 0, behavior: 'instant' })
+    try {
+      const m=(item.materiales||[]).filter(f=>faltanteCantidad(f)>0)
+      const h=(item.herramientas||[]).filter(f=>faltanteCantidad(f)>0)
+      const e=(item.equipos||[]).filter(f=>String(f.estado||'').toUpperCase().includes('FALTANTE'))
+      const skusSAP=[...new Set([...m.map(x=>String(x.sku||'')),...e.map(x=>String(x.material||x.sku||''))].filter(Boolean))]
+      const skusODOO=[...new Set(h.map(x=>String(x.sku||x.producto||'')).filter(Boolean))]
+      const {data,error:err}=await supabase.rpc('qiora_costos_para_faltantes',{p_skus_sap:skusSAP,p_skus_odoo:skusODOO})
+      if(err) throw err
+      setCostosFaltantes({sap:data?.sap||{},odoo:data?.odoo||{}})
+    } catch(e) {setError('Costos: '+(e.message||e))}
+    finally {setCostosCargando(false)}
+  }
+  const detalleCosteado = useMemo(() => {
+    const d=histDetalle||{}
+    const sap=costosFaltantes.sap||{}, odoo=costosFaltantes.odoo||{}
+    const mats=(d.materiales||[]).filter(x=>faltanteCantidad(x)>0).map(x=>{
+      const qty=faltanteCantidad(x), item=sap[String(x.sku||'')]
+      const costo=item?.costo==null?null:Number(item.costo)
+      return {...x,qty,costo,importe:costo==null?null:qty*costo}
+    })
+    const meses=mesesEntre(fechaAsignacion,fechaSiniestro)
+    const herr=(d.herramientas||[]).filter(x=>faltanteCantidad(x)>0).map(x=>{
+      const qty=faltanteCantidad(x), item=odoo[String(x.sku||x.producto||'')]
+      const costo=item?.costo==null?null:Number(item.costo), vida=Number(item?.vida_util_meses||0)
+      const depreciacion=costo==null||!vida||!fechaAsignacion||!fechaSiniestro?null:Math.min(costo,costo*Math.min(meses/vida,1))
+      return {...x,qty,costo,vida,depreciacion,importe:depreciacion==null?null:qty*Math.max(0,costo-depreciacion)}
+    })
+    const eq=(d.equipos||[]).filter(x=>String(x.estado||'').toUpperCase().includes('FALTANTE')).map(x=>{
+      const sku=String(x.material||x.sku||''),item=sap[sku],costo=item?.costo==null?null:Number(item.costo)
+      return {...x,sku,qty:1,costo,importe:costo}
+    })
+    const sumar=a=>a.reduce((s,x)=>s+(x.importe??0),0)
+    return {mats,herr,eq,meses,totM:sumar(mats),totH:sumar(herr),totE:sumar(eq),sinCosto:[...mats,...herr,...eq].filter(x=>x.importe==null).length}
+  },[histDetalle,costosFaltantes,fechaAsignacion,fechaSiniestro])
+  async function exportarFaltantesCosto(formato) {
+    if(!histDetalle || costosCargando) return
+    const r=detalleCosteado, d=histDetalle
+    const filas=[...r.mats.map(x=>['MATERIAL',x.sku,x.material,x.lote,x.qty,x.costo??'SIN COSTO',x.importe??'SIN COSTO']),
+      ...r.herr.map(x=>['HERRAMIENTA',x.sku||x.producto,x.producto,x.ubicacion,x.qty,x.costo??'SIN COSTO',x.importe??'SIN COSTO']),
+      ...r.eq.map(x=>['EQUIPO',x.sku,x.descripcion,x.serie,x.qty,x.costo??'SIN COSTO',x.importe??'SIN COSTO'])]
+    const cab=['Tipo','SKU','Descripción','Lote / Serie / Ubicación','Cantidad faltante','Costo unitario','Importe']
+    const nombre='QIORA_FALTANTES_'+String(d.folio||'AUDITORIA').replace(/[^a-zA-Z0-9_-]/g,'_')
+    if(formato==='Excel') {
+      const XLSX=await import('xlsx')
+      const wb=XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['QIORA CONECTA - FALTANTES CON COSTO'],['Folio',d.folio],['Almacén',d.almacen],['Tipo auditoría',d.tipoAuditoria||'NO REGISTRADO'],['Nota','Costos vigentes, no valores historicos congelados'],['Faltantes sin costo',r.sinCosto],[],cab,...filas]),'FALTANTES')
+      XLSX.writeFile(wb,nombre+'.xlsx')
+    } else {
+      const {jsPDF}=await import('jspdf')
+      const {default:autoTable}=await import('jspdf-autotable')
+      const pdf=new jsPDF({orientation:'landscape'})
+      pdf.setFontSize(16);pdf.text('QIORA CONECTA | FALTANTES CON COSTO',14,16)
+      pdf.setFontSize(9);pdf.text('Folio: '+String(d.folio||'')+' | Almacen: '+String(d.almacen||''),14,24)
+      pdf.text('Costos vigentes. Sin costo: '+r.sinCosto,14,30)
+      autoTable(pdf,{startY:37,head:[cab],body:filas,styles:{fontSize:7},headStyles:{fillColor:[12,105,78]}})
+      pdf.save(nombre+'.pdf')
+    }
   }
 
   function regresarDesdeFaltante() {
@@ -1514,6 +1596,33 @@ export default function AuditoriasPage() {
           </section>
         )}
 
+        {vista === 'DETALLE_COSTOS' && histDetalle && (()=>{
+          const r=detalleCosteado,d=histDetalle
+          const tot=r.totM+r.totH+r.totE
+          const tabla=(tit,cabs,rows)=> <div style={styles.tarjeta} key={tit}><h3>{tit}</h3><div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr>{cabs.map(c=><th key={c} style={styles.th}>{c}</th>)}</tr></thead><tbody>{rows.length?rows.map((row,i)=><tr key={i}>{row.map((cell,j)=><td style={styles.td} key={j}>{cell}</td>)}</tr>):<tr><td colSpan={cabs.length} style={styles.td}>Sin faltantes.</td></tr>}</tbody></table></div></div>
+          return <section>
+            <button style={styles.botonSecundario} onClick={()=>{setVista('HISTORICO');setHistDetalle(null)}}>← Regresar al historial</button>
+            <div style={styles.tarjeta}><h2>Faltantes con costo</h2>
+              <p><b>Folio:</b> {d.folio}　 <b>Fecha:</b> {fechaQiora(d.fecha)}　 <b>Almacén:</b> {d.almacen}</p>
+              <p><b>Técnico:</b> {d.tecnico||'-'}　 <b>Auditor:</b> {d.auditor||'-'}　 <b>Tipo de auditoría:</b> {d.tipoAuditoria||'NO REGISTRADO'}</p>
+              <p><b>Se auditó:</b> {d.materiales?.[0]?.tipo||'TODO'}</p>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10}}>
+                { [['Líneas materiales',r.mats.length],['Líneas herramientas',r.herr.length],['Líneas equipos',r.eq.length],['Total materiales',precioMoneda(r.totM)],['Total herramientas',precioMoneda(r.totH)],['Total equipos',precioMoneda(r.totE)],['Gran total parcial',precioMoneda(tot)]].map(([label,val])=><div key={label} style={{padding:14,background:'#0b8664',color:'white',borderRadius:12,textAlign:'center'}}>{label}<div style={{fontWeight:800,fontSize:21,marginTop:5}}>{val}</div></div>)}
+              </div>
+              <p style={{color:'#a62929',fontWeight:700}}>{costosCargando?'Consultando costos...':r.sinCosto>0?`Hay ${r.sinCosto} renglones sin importe calculable. El total mostrado es parcial.`:'Todos los renglones tienen costo calculable.'}</p>
+              <p>Los costos son los vigentes en Configuración; no se presentan como costos históricos ni se calcula IVA sin una regla registrada.</p>
+              <button style={styles.botonPrincipal} disabled={costosCargando} onClick={()=>exportarFaltantesCosto('Excel').catch(e=>setError(e.message))}>Descargar Excel</button>{' '}
+              <button style={styles.botonPrincipal} disabled={costosCargando} onClick={()=>exportarFaltantesCosto('PDF').catch(e=>setError(e.message))}>Descargar PDF</button>
+            </div>
+            {tabla('Faltantes de materiales',['SKU','Material','Lote','Cantidad faltante','Costo unitario','Importe'],r.mats.map(x=>[x.sku,x.material,x.lote,x.qty,precioMoneda(x.costo),precioMoneda(x.importe)]))}
+            <div style={styles.tarjeta}><h3>Faltantes de herramientas</h3>
+              <div style={{display:'flex',gap:12,flexWrap:'wrap'}}><label>Fecha de asignación <input style={styles.input} type="date" value={fechaAsignacion} onChange={e=>setFechaAsignacion(e.target.value)}/></label><label>Fecha de siniestro <input style={styles.input} type="date" min={fechaAsignacion||undefined} value={fechaSiniestro} onChange={e=>setFechaSiniestro(e.target.value)}/></label></div>
+              <p>Meses de uso: {r.meses.toFixed(2)}. Depreciación lineal limitada al costo original. El importe es el valor residual.</p>
+              <div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr>{['SKU','Herramienta','Vida útil (meses)','Cant.','Costo','Depreciación por unidad','Total'].map(x=><th style={styles.th} key={x}>{x}</th>)}</tr></thead><tbody>{r.herr.length?r.herr.map((x,i)=><tr key={i}>{[x.sku||x.producto,x.producto,x.vida||'-',x.qty,precioMoneda(x.costo),precioMoneda(x.depreciacion),precioMoneda(x.importe)].map((v,j)=><td key={j} style={styles.td}>{v}</td>)}</tr>):<tr><td colSpan={7} style={styles.td}>Sin faltantes de herramientas.</td></tr>}</tbody></table></div>
+            </div>
+            {tabla('Faltantes de equipos',['Serie','SKU','Descripción','Lote','Cantidad faltante','Costo unitario','Importe'],r.eq.map(x=>[x.serie,x.sku,x.descripcion,x.lote,1,precioMoneda(x.costo),precioMoneda(x.importe)]))}
+          </section>
+        })()}
         {(vista === 'DETALLE_FALTANTE' || vista === 'DETALLE_HISTORICO') && (
           <section style={styles.tarjeta}>
             <button type="button" style={styles.botonSecundario} onClick={() => { setVista(vista === 'DETALLE_FALTANTE' ? 'FALTANTE_GLOBAL' : 'HISTORICO'); window.scrollTo({top:0,behavior:'instant'}) }}>
