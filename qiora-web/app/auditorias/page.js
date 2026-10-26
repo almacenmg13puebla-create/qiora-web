@@ -407,6 +407,7 @@ export default function AuditoriasPage() {
 
   const [almacen, setAlmacen] = useState('')
   const [tipo, setTipo] = useState(TIPOS.TODO)
+  const [tipoAuditoriaPanel, setTipoAuditoriaPanel] = useState('Mensual')
   const [tecnico, setTecnico] = useState(null)
 
   const [materiales, setMateriales] = useState([])
@@ -497,6 +498,7 @@ export default function AuditoriasPage() {
     setSerie('')
     setSoloFaltantes(false)
     setComentarioGeneral('')
+    setTipoAuditoriaPanel('Mensual')
   }
 
   function conservarMateriales(nuevos) {
@@ -514,6 +516,7 @@ export default function AuditoriasPage() {
       return {
         ...x,
         fisico: anterior ? anterior.fisico : x.fisico,
+        capturado: anterior ? anterior.capturado === true : false,
         observacion: anterior
           ? anterior.observacion
           : x.observacion,
@@ -538,6 +541,7 @@ export default function AuditoriasPage() {
       return {
         ...x,
         fisico: anterior ? anterior.fisico : x.fisico,
+        capturado: anterior ? anterior.capturado === true : false,
         observacion: anterior
           ? anterior.observacion
           : x.observacion,
@@ -643,6 +647,7 @@ export default function AuditoriasPage() {
             lote: texto(x.lote),
             sistema,
             fisico: 0,
+            capturado: false,
             observacion: '',
           }
         })
@@ -678,6 +683,7 @@ export default function AuditoriasPage() {
             ubicacion: texto(x.ubicacion),
             sistema: numero(x.cantidad),
             fisico: 0,
+            capturado: false,
             observacion: '',
           }))
 
@@ -827,6 +833,7 @@ export default function AuditoriasPage() {
           ? {
               ...x,
               fisico: numero(valor),
+              capturado: true,
               observacion: observacionDiferencia(valor, x.sistema),
             }
           : x
@@ -842,6 +849,7 @@ export default function AuditoriasPage() {
           ? {
               ...x,
               fisico: numero(valor),
+              capturado: true,
               observacion: observacionDiferencia(valor, x.sistema),
             }
           : x
@@ -1292,6 +1300,49 @@ export default function AuditoriasPage() {
     )
   }, [equipos, soloFaltantes])
 
+  const estadisticasPanel = useMemo(() => {
+    const totalMat = materiales.length
+    const totalHer = herramientas.length
+    const eqSistema = equipos.filter(x => x.existeSistema !== false)
+    const escaneados = equipos.filter(x => x.escaneado === true).length
+    const matHechos = materiales.filter(x => x.capturado === true).length
+    const herHechos = herramientas.filter(x => x.capturado === true).length
+    const eqHechos = equipos.filter(x => x.escaneado === true || ['ENTREGADO','ENTRADA PENDIENTE','VALIDACION BRM'].includes(x.estado)).length
+    const faltantes = materiales.filter(x => x.capturado && numero(x.fisico)<numero(x.sistema)).length
+      + herramientas.filter(x => x.capturado && numero(x.fisico)<numero(x.sistema)).length
+      + equipos.filter(x => x.estado === 'FALTANTE').length
+    const diferencias = materiales.filter(x => x.capturado && numero(x.fisico)!==numero(x.sistema)).length
+      + herramientas.filter(x => x.capturado && numero(x.fisico)!==numero(x.sistema)).length
+      + equipos.filter(x => x.escaneado && x.estado === 'NO EXISTE EN SISTEMA').length
+    const coinciden = materiales.filter(x => x.capturado && numero(x.fisico)===numero(x.sistema)).length
+      + herramientas.filter(x => x.capturado && numero(x.fisico)===numero(x.sistema)).length
+      + equipos.filter(x => x.estado === 'COINCIDE').length
+    const entregados = equipos.filter(x=>x.estado === 'ENTREGADO').length
+    const pendientes = equipos.filter(x=>x.estado === 'ENTRADA PENDIENTE').length
+    const total = totalMat + totalHer + equipos.length
+    const hechos = matHechos + herHechos + eqHechos
+    return {totalMat,totalHer,eqSistema:eqSistema.length,escaneados,matHechos,herHechos,eqHechos,
+      faltantes,diferencias,coinciden,entregados,pendientes,total,hechos,
+      porcentaje:total ? Math.round(100*hechos/total) : 0}
+  },[materiales,herramientas,equipos])
+
+  const indicadorAuditoria = (nombre,valor) => (
+    <div key={nombre} style={{background:'linear-gradient(120deg,#08644e,#159a77)',padding:15,borderRadius:12,textAlign:'center',color:'white'}}>
+      <div style={{fontSize:12,fontWeight:600}}>{nombre}</div>
+      <strong style={{fontSize:25,display:'block',marginTop:5}}>{valor}</strong>
+    </div>
+  )
+  const barraAuditoria = (nombre,hechos,total) => (
+    <div key={nombre} style={{marginBottom:13,flex:1,minWidth:180}}>
+      <div style={{display:'flex',justifyContent:'space-between',gap:8,fontSize:12,fontWeight:600}}>
+        <span>{nombre}</span><span>{total?Math.round(hechos*100/total):0}% ({hechos}/{total})</span>
+      </div>
+      <div style={{height:9,marginTop:5,background:'#345b51',borderRadius:10,overflow:'hidden'}}>
+        <div style={{width:`${total?Math.min(100,hechos*100/total):0}%`,height:'100%',background:'#19b68c'}} />
+      </div>
+    </div>
+  )
+
   if (cargandoInicio) {
     return (
       <main style={styles.centrado}>
@@ -1492,97 +1543,57 @@ export default function AuditoriasPage() {
         )}
 
         {vista === 'CAPTURA' && (<>
-        <section style={styles.tarjeta}>
-          <div style={styles.formulario}>
-            <label style={styles.campo}>
-              <span>Almacén del técnico</span>
-              <input
-                style={styles.input}
-                value={almacen}
-                maxLength={10}
-                onChange={(e) =>
-                  setAlmacen(e.target.value.toUpperCase())
-                }
-                placeholder="Ej. 0008"
-              />
+        <section style={{...styles.tarjeta,background:'linear-gradient(#0b3e32,#071f1b)',color:'#fff',border:'1px solid #397d68'}}>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(230px,1fr))',gap:12}}>
+            <label style={styles.campo}>Almacén
+              <input style={styles.input} value={almacen} maxLength={10} placeholder="0000" onChange={e=>setAlmacen(e.target.value.toUpperCase())}/>
             </label>
-
-            <label style={styles.campo}>
-              <span>¿Qué se va a auditar?</span>
-
-              <select
-                style={styles.input}
-                value={tipo}
-                onChange={(e) => {
-                  setTipo(e.target.value)
-                  setSoloFaltantes(false)
-                }}
-              >
-                <option value={TIPOS.MATERIALES}>
-                  Auditoría de materiales
-                </option>
-
-                <option value={TIPOS.HERRAMIENTAS}>
-                  Auditoría de herramientas
-                </option>
-
-                <option value={TIPOS.EQUIPOS}>
-                  Escaneo de equipos
-                </option>
-
-                <option value={TIPOS.TODO}>
-                  Todo
-                </option>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:8,marginTop:12}}>
+            <button type="button" style={styles.botonPrincipal} disabled={cargando} onClick={cargarAuditoria}>{cargando?'Cargando...':'Cargar auditoría'}</button>
+            <button type="button" style={{...styles.botonSecundario,background:'#087ba8',color:'#fff'}} disabled={cargando||!tecnico} onClick={cargarAuditoria}>Actualizar información sin borrar</button>
+            <button type="button" style={styles.botonFaltantes} disabled={!tecnico} onClick={()=>setSoloFaltantes(v=>!v)}>{soloFaltantes?'Ver auditoría completa':'Ver faltantes'}</button>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:10,marginTop:14}}>
+            <label style={styles.campo}>Técnico<input style={styles.input} readOnly value={tecnico?.nombre||''} placeholder="Se cargará automáticamente"/></label>
+            <label style={styles.campo}>Fecha<input style={styles.input} readOnly value={tecnico?new Intl.DateTimeFormat('es-MX',{timeZone:'America/Mexico_City',day:'2-digit',month:'2-digit',year:'numeric'}).format(new Date()):''} placeholder="Se cargará automáticamente"/></label>
+            <label style={styles.campo}>Tipo de auditoría
+              <select style={styles.input} value={tipoAuditoriaPanel} onChange={e=>setTipoAuditoriaPanel(e.target.value)}>
+                <option value="Mensual">Mensual</option><option value="Semanal">Semanal</option><option value="Extraordinaria">Extraordinaria</option>
+              </select>
+            </label>
+            <label style={styles.campo}>¿Qué se va a auditar?
+              <select style={styles.input} value={tipo} onChange={e=>{setTipo(e.target.value);setSoloFaltantes(false)}}>
+                <option value={TIPOS.TODO}>Todo</option><option value={TIPOS.MATERIALES}>Materiales</option>
+                <option value={TIPOS.HERRAMIENTAS}>Herramientas</option><option value={TIPOS.EQUIPOS}>Equipos</option>
               </select>
             </label>
           </div>
-
-          {tecnico && (
-            <div style={styles.tecnico}>
-              <strong>Técnico:</strong>{' '}
-              {tecnico.nombre || '-'}
-              {' · '}
-              <strong>Almacén:</strong>{' '}
-              {normalizarAlmacen(
-                tecnico.usuario_almacen
-              )}
-              {' · '}
-              <strong>ODoo:</strong>{' '}
-              {tecnico.odoo || '-'}
+          {tecnico && <p style={{fontSize:12,marginBottom:0}}>Almacén: {normalizarAlmacen(tecnico.usuario_almacen)} · ODOO: {tecnico.odoo||'-'}</p>}
+          <button type="button" style={{...styles.botonSecundario,marginTop:12}} onClick={limpiarAuditoria}>Limpiar captura</button>
+        </section>
+        <section style={{marginBottom:15}}>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:10}}>
+            {[
+              ['Materiales sistema',estadisticasPanel.totalMat],['Equipos sistema',estadisticasPanel.eqSistema],
+              ['Series escaneadas',estadisticasPanel.escaneados],['Diferencias encontradas',estadisticasPanel.diferencias],
+              ['Faltantes encontrados',estadisticasPanel.faltantes],['Coinciden',estadisticasPanel.coinciden],
+              ['Entregados a almacén',estadisticasPanel.entregados],['Entradas pendientes',estadisticasPanel.pendientes]
+            ].map(([nombre,valor])=>indicadorAuditoria(nombre,valor))}
+          </div>
+          <div style={{marginTop:14,padding:18,background:'linear-gradient(#0b3e32,#071f1b)',color:'#fff',borderRadius:14,border:'1px solid #397d68'}}>
+            <strong>Avance general de la auditoría</strong>
+            <div style={{display:'flex',gap:22,alignItems:'center',flexWrap:'wrap',marginTop:14}}>
+              <div style={{width:95,height:95,borderRadius:'50%',border:'10px solid #2e5c4e',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <strong style={{fontSize:25}}>{estadisticasPanel.porcentaje}%</strong>
+                <small>{estadisticasPanel.hechos} de {estadisticasPanel.total}</small>
+              </div>
+              <div style={{flex:1,minWidth:210}}>
+                {barraAuditoria('Materiales',estadisticasPanel.matHechos,estadisticasPanel.totalMat)}
+                {barraAuditoria('Herramientas',estadisticasPanel.herHechos,estadisticasPanel.totalHer)}
+                {barraAuditoria('Equipos',estadisticasPanel.eqHechos,equipos.length)}
+              </div>
             </div>
-          )}
-
-          <div style={styles.botones}>
-            <button
-              style={styles.botonPrincipal}
-              disabled={cargando}
-              onClick={cargarAuditoria}
-            >
-              {cargando
-                ? 'Cargando...'
-                : tecnico
-                  ? 'Actualizar sin borrar'
-                  : 'Cargar auditoría'}
-            </button>
-
-            <button
-              style={styles.botonFaltantes}
-              onClick={() =>
-                setSoloFaltantes((v) => !v)
-              }
-              disabled={!tecnico}
-            >
-              {soloFaltantes
-                ? 'Ver auditoría completa'
-                : 'Ver faltantes'}
-            </button>
-
-            <button
-              style={styles.botonSecundario}
-              onClick={limpiarAuditoria}
-            >
-              Limpiar
-            </button>
           </div>
         </section>
 
