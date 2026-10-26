@@ -693,16 +693,25 @@ export default function AuditoriasPage() {
       ) {
         // Nueva fuente: inventario ODOO POR COLABORADOR (no la tabla obsoleta).
         // El RPC verifica distrito y permisos en Supabase; nunca lista datos de otros distritos.
+        // Número de empleado ODOO administrado desde Configuración > Usuarios.
+        // Este RPC valida sesión, distrito y permisos en el servidor.
+        const { data: numeroOdoo, error: numeroError } = await supabase.rpc(
+          'qiora_numero_empleado_odoo', { p_almacen: almacen4 }
+        )
+        if (numeroError) throw numeroError
+        const identificadorOdoo = texto(numeroOdoo)
+        // Si existe número, buscar exclusivamente por él; el nombre no debe
+        // unir inventarios de colaboradores distintos.
         const { data, error: herError } = await supabase.rpc('qiora_herramientas_auditoria', {
-          p_colaborador: texto(usuarioTecnico.nombre || usuarioTecnico.tecnico),
-          p_identificador: texto(usuarioTecnico.numero_empleado || usuarioTecnico.empleado || usuarioTecnico.odoo),
+          p_colaborador: identificadorOdoo ? '' : texto(usuarioTecnico.nombre || usuarioTecnico.tecnico),
+          p_identificador: identificadorOdoo,
         })
         if (herError) throw herError
         const filas = Array.isArray(data) ? data : (data?.filas || [])
         if (!filas.length) {
           // La ausencia de inventario ODOO NO bloquea Materiales ni Equipos.
           // No se crean filas de herramientas ficticias.
-          setAvisoOdoo(`Sin herramientas ODOO asignadas a ${texto(usuarioTecnico.nombre || usuarioTecnico.tecnico)}. Se puede continuar con Materiales y Equipos. Verifica la asignación del colaborador en ODOO.`)
+          setAvisoOdoo(`Sin herramientas ODOO asignadas a ${texto(usuarioTecnico.nombre || usuarioTecnico.tecnico)}. ${identificadorOdoo ? 'Número ODOO: ' + identificadorOdoo + '.' : 'Configura el número de empleado ODOO en Usuarios.'} Puedes continuar con Materiales y Equipos.`)
         }
         nuevasHerramientas = filas.map(x => ({
           sku: texto(x.referencia),
