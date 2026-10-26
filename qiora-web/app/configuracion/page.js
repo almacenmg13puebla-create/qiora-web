@@ -7,28 +7,34 @@ import { supabase } from '../../lib/supabase'
 const MENU = [
   ['Accesos especiales',null],['WhatsApp destino',null],['Actualizar máximos','catalogos'],
   ['Materiales','materiales'],['Distritos',null],['Horarios',null],
-  ['Costos SAP','costos_sap'],['Costos ODOO','costos_odoo'],['Exportar fechas',null],
-  ['Recarga UTP',null],['Ver cargas UTP',null],['Usuarios',null],['Permisos',null],
+  ['Costos SAP','costos_sap'],['Costos ODOO','costos_odoo'],['Herramienta ODOO','herramienta_odoo_inventario'],['Exportar fechas',null],
+  ['Recarga UTP',null],['Ver cargas UTP',null],['Usuarios','usuarios'],['Permisos',null],
   ['Ver justificaciones UTP',null],['PDF equipos admin',null],['Visibilidad BRM',null],
   ['RECUS TP',null],['Actualizar macro Excel',null],['Grupos de materiales','grupos_materiales']
 ]
 const CAMPOS = {
   costos_sap: [['sku','SKU'],['material','Material'],['costo_unitario','Costo unitario'],['activo','Activo']],
+  herramienta_odoo_inventario: [['no_empleado','No. empleado'],['colaborador','Colaborador'],['referencia','Referencia'],['producto','Producto'],['cantidad','Cantidad'],['valor_compra','Valor compra (total)'],['valor_actual','Valor actual (total)'],['estado','Estado']],
   costos_odoo: [['sku','SKU'],['herramienta','Herramienta'],['costo','Costo'],['vida_util_meses','Vida útil (meses)'],['activo','Activo']],
   materiales: [['sku','SKU'],['material','Material'],['tipo','Tipo'],['grupo','Grupo'],['maximo','Máximo'],['activo','Activo']],
   grupos_materiales: [['grupo','Grupo'],['tipo','Tipo'],['maximo','Máximo'],['activo','Activo']]
 }
-const nombres = {costos_sap:'Costos SAP',costos_odoo:'Costos ODOO',materiales:'Materiales',grupos_materiales:'Grupos de materiales'}
+const nombres = {usuarios:'Usuarios / Número empleado ODOO',costos_sap:'Costos SAP',costos_odoo:'Costos ODOO',herramienta_odoo_inventario:'Herramienta ODOO por colaborador',materiales:'Materiales',grupos_materiales:'Grupos de materiales'}
 const normal = x=>String(x??'').toLocaleUpperCase('es-MX')
+const textoNumero = x=>String(x??'').trim()
 const nuevo = ()=>({sku:'',material:'',herramienta:'',costo:'',vida_util_meses:'12',activo:true})
 
 export default function ConfiguracionPage(){
   const router=useRouter()
   const [validando,setValidando]=useState(true)
+  const [usuarios,setUsuarios]=useState([])
+  const [guardandoUsuario,setGuardandoUsuario]=useState('')
   const [permitido,setPermitido]=useState(false)
   const [seccion,setSeccion]=useState('')
   const [filas,setFilas]=useState([])
   const [busqueda,setBusqueda]=useState('')
+  const [pagina,setPagina]=useState(1)
+  const [total,setTotal]=useState(0)
   const [form,setForm]=useState(nuevo())
   const [cargando,setCargando]=useState(false)
   const [error,setError]=useState('')
@@ -49,16 +55,41 @@ export default function ConfiguracionPage(){
     if(!tipo)return
     setCargando(true);setError('');setAviso('')
     try{
-      const {data,error:e}=await supabase.rpc('qiora_config_listar',{p_catalogo:tipo})
+      const inventario=tipo==='herramienta_odoo_inventario'
+      const {data,error:e}=inventario?await supabase.rpc('qiora_herramienta_odoo_listar',{p_buscar:busqueda,p_pagina:pagina,p_limite:100}):await supabase.rpc('qiora_config_listar',{p_catalogo:tipo})
       if(e)throw e
       setFilas(Array.isArray(data?.filas)?data.filas:[])
+      setTotal(Number(data?.total||0))
     }catch(e){setError(e.message||'Error al cargar');setFilas([])}
     finally{setCargando(false)}
-  },[])
+  },[busqueda,pagina])
 
+  async function cargarUsuarios(){
+    setCargando(true);setError('');setAviso('')
+    try {
+      const {data,error:e}=await supabase.rpc('qiora_config_usuarios_odoo_listar')
+      if(e)throw e
+      setUsuarios((data||[]).map(x=>({...x,numero_empleado_odoo:x.numero_empleado_odoo||''})))
+    } catch(e){setError(e.message||'No se pudieron cargar usuarios')}
+    finally{setCargando(false)}
+  }
+  async function guardarNumeroOdoo(u){
+    setGuardandoUsuario(String(u.id));setError('');setAviso('')
+    try {
+      const {error:e}=await supabase.rpc('qiora_config_usuario_odoo_guardar',{
+        p_usuario_id:u.id,p_numero:textoNumero(u.numero_empleado_odoo)
+      })
+      if(e)throw e
+      await cargarUsuarios()
+      setAviso('Número de empleado ODOO actualizado correctamente')
+    } catch(e){setError(e.message||'No se pudo guardar número ODOO')}
+    finally{setGuardandoUsuario('')}
+  }
   function abrir(tipo){
     if(tipo==='catalogos'){router.push('/inventarios/catalogos');return}
-    setSeccion(tipo);setForm(nuevo());setBusqueda('');cargar(tipo)
+    setSeccion(tipo);setForm(nuevo());setBusqueda('');setPagina(1)
+    if(tipo==='usuarios')cargarUsuarios()
+    else if(tipo!=='herramienta_odoo_inventario')cargar(tipo)
   }
   function editar(f){setForm({sku:f.sku||'',material:f.material||'',herramienta:f.herramienta||'',costo:String(f.costo_unitario??f.costo??''),vida_util_meses:String(f.vida_util_meses??12),activo:f.activo!==false})}
   async function guardar(e){
@@ -74,6 +105,7 @@ export default function ConfiguracionPage(){
     }catch(x){setError(x.message||'No se pudo guardar')}
     finally{setCargando(false)}
   }
+  useEffect(()=>{if(seccion==='herramienta_odoo_inventario')cargar(seccion)},[seccion,cargar])
   const disponibles=filas.filter(f=>Object.values(f).some(v=>normal(v).includes(normal(busqueda))))
   const editable=seccion==='costos_sap'||seccion==='costos_odoo'
   return <main style={s.base}><div style={s.marco}>
@@ -83,14 +115,30 @@ export default function ConfiguracionPage(){
     {aviso&&<p role="status" style={s.exito}>{aviso}</p>}
     {validando?<p>Validando permisos...</p>:!permitido?<p>No tienes permisos administrativos para Configuración.</p>:!seccion?
     <section style={s.panel}><h3>Menú configuración</h3><div style={s.menu}>{MENU.map(([label,tipo])=><button key={label} style={{...s.opcion,opacity:tipo?1:.68}} onClick={()=>tipo?abrir(tipo):setAviso('El módulo «'+label+'» todavía no está implementado en esta versión web.')} type="button">{label}</button>)}</div></section>:
-    <section style={s.panel}>
-      <div style={s.herramientas}><input style={s.input} value={busqueda} onChange={e=>setBusqueda(e.target.value)} placeholder="Buscar SKU, descripción o grupo"/><button style={s.boton} disabled={cargando} onClick={()=>cargar(seccion)}>Actualizar</button></div>
-      <p style={s.nota}>{filas.length} registros del catálogo. {editable?'Los cambios se guardan en Supabase.':'Para editar este catálogo utiliza la pantalla de Materiales y Grupos ya instalada.'}</p>
+    seccion==='usuarios' ? <section style={s.panel}>
+      <h3>Usuarios - Identificador ODOO</h3>
+      <p style={s.nota}>El almacén SAP y el número de empleado ODOO son identificadores independientes. Guarda el número exactamente como aparece en el inventario por colaborador.</p>
+      <div style={s.herramientas}>
+        <input style={s.input} placeholder="Buscar usuario, nombre o almacén" value={busqueda} onChange={e=>setBusqueda(e.target.value)} />
+        <button type="button" style={s.boton} disabled={cargando} onClick={cargarUsuarios}>Actualizar</button>
+      </div>
+      <div style={{overflowX:'auto'}}><table style={s.tabla}><thead><tr>
+        <th style={s.th}>Almacén SAP</th><th style={s.th}>Usuario</th><th style={s.th}>Nombre</th><th style={s.th}>Número empleado ODOO</th><th style={s.th}>Acción</th>
+      </tr></thead><tbody>
+      {usuarios.filter(u=>normal([u.almacen,u.usuario,u.nombre,u.numero_empleado_odoo].join(' ')).includes(normal(busqueda))).map(u=><tr key={u.id}>
+        <td style={s.td}>{u.almacen}</td><td style={s.td}>{u.usuario}</td><td style={s.td}>{u.nombre}</td>
+        <td style={s.td}><input style={s.input} aria-label={'Número ODOO para '+u.nombre} value={u.numero_empleado_odoo} onChange={e=>setUsuarios(xs=>xs.map(x=>x.id===u.id?{...x,numero_empleado_odoo:e.target.value}:x))} placeholder="Ej. 48159936193" /></td>
+        <td style={s.td}><button type="button" style={s.boton} disabled={guardandoUsuario===String(u.id)} onClick={()=>guardarNumeroOdoo(u)}>{guardandoUsuario===String(u.id)?'Guardando...':'Guardar'}</button></td>
+      </tr>)}
+      </tbody></table></div>
+    </section> : <section style={s.panel}>
+      <div style={s.herramientas}><input style={s.input} value={busqueda} onChange={e=>{setBusqueda(e.target.value);setPagina(1)}} placeholder="Buscar SKU, descripción o grupo"/><button style={s.boton} disabled={cargando} onClick={()=>cargar(seccion)}>Actualizar</button></div>
+      <p style={s.nota}>{seccion==='herramienta_odoo_inventario'?`${total} registros del inventario. Página ${pagina}. Valores de compra y actual corresponden al renglón, no al costo unitario.`:`${filas.length} registros del catálogo.`} {editable?'Los cambios se guardan en Supabase.':seccion==='herramienta_odoo_inventario'?'Inventario de consulta, importado desde Excel.':'Para editar este catálogo utiliza la pantalla de Materiales y Grupos ya instalada.'}</p>
       {editable&&<form onSubmit={guardar} style={s.formulario}>
         <label>SKU<input required style={s.input} value={form.sku} onChange={e=>setForm({...form,sku:e.target.value})}/></label>
         <label>{seccion==='costos_sap'?'Material':'Herramienta'}<input style={s.input} value={seccion==='costos_sap'?form.material:form.herramienta} onChange={e=>setForm({...form,[seccion==='costos_sap'?'material':'herramienta']:e.target.value})}/></label>
         <label>Costo<input required min="0" step="0.0001" type="number" style={s.input} value={form.costo} onChange={e=>setForm({...form,costo:e.target.value})}/></label>
-        {seccion==='costos_odoo'&&<label>Vida útil en meses<input required min="0" type="number" style={s.input} value={form.vida_util_meses} onChange={e=>setForm({...form,vida_util_meses:e.target.value})}/></label>}
+        {seccion==='costos_odoo'&&<label>Vida útil en meses<input required min="1" type="number" style={s.input} value={form.vida_util_meses} onChange={e=>setForm({...form,vida_util_meses:e.target.value})}/></label>}
         <label style={{alignSelf:'center'}}>Activo <input type="checkbox" checked={form.activo} onChange={e=>setForm({...form,activo:e.target.checked})}/></label>
         <button disabled={cargando} type="submit" style={s.boton}>{cargando?'Guardando...':'Guardar costo'}</button>
         <button type="button" style={s.boton} onClick={()=>setForm(nuevo())}>Nuevo</button>
@@ -99,7 +147,8 @@ export default function ConfiguracionPage(){
       {disponibles.map((f,i)=><tr key={(f.sku||f.grupo||'')+i}>{(CAMPOS[seccion]||[]).map(([key])=><td style={s.td} key={key}>{key==='activo'?(f.activo?'Sí':'No'):String(f[key]??'')}</td>)}{editable&&<td style={s.td}><button style={s.boton} onClick={()=>editar(f)}>Editar</button></td>}</tr>)}
       {disponibles.length===0&&<tr><td style={s.td} colSpan={(CAMPOS[seccion]||[]).length+1}>No hay registros.</td></tr>}
       </tbody></table></div>
-      {!editable&&<button style={s.boton} onClick={()=>router.push('/inventarios/catalogos')}>Abrir administración de materiales y grupos</button>}
+      {seccion==='herramienta_odoo_inventario'&&<div style={s.herramientas}><button style={s.boton} disabled={pagina<=1} onClick={()=>setPagina(x=>x-1)}>Anterior</button><span>Página {pagina} de {Math.max(1,Math.ceil(total/100))}</span><button style={s.boton} disabled={pagina>=Math.ceil(total/100)} onClick={()=>setPagina(x=>x+1)}>Siguiente</button></div>}
+      {!editable&&seccion!=='herramienta_odoo_inventario'&&<button style={s.boton} onClick={()=>router.push('/inventarios/catalogos')}>Abrir administración de materiales y grupos</button>}
     </section>}
   </div></main>
 }
