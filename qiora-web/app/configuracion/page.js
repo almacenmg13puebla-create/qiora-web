@@ -64,27 +64,59 @@ export default function ConfiguracionPage(){
     finally{setCargando(false)}
   },[busqueda,pagina])
 
+  const [permisosDisponibles,setPermisosDisponibles]=useState([])
+  const [usuarioEditando,setUsuarioEditando]=useState(null)
+  const [filtroActivos,setFiltroActivos]=useState('TODOS')
+  const [guardandoFicha,setGuardandoFicha]=useState(false)
   async function cargarUsuarios(){
     setCargando(true);setError('');setAviso('')
     try {
-      const {data,error:e}=await supabase.rpc('qiora_config_usuarios_numero_listar')
+      const {data,error:e}=await supabase.rpc('qiora_usuarios_administracion_listar')
       if(e)throw e
-      setUsuarios((data||[]).map(x=>({...x,numero_empleado:x.numero_empleado||''})))
+      setUsuarios(Array.isArray(data?.usuarios)?data.usuarios:[])
+      setPermisosDisponibles(Array.isArray(data?.permisos)?data.permisos:[])
     } catch(e){setError(e.message||'No se pudieron cargar usuarios')}
     finally{setCargando(false)}
   }
-  async function guardarNumeroEmpleado(u){
-    setGuardandoUsuario(String(u.id));setError('');setAviso('')
+  function editarUsuario(u){
+    setUsuarioEditando({...u, permisos:{...(u.permisos||{})}})
+    setError('');setAviso('')
+    window.scrollTo({top:0,behavior:'smooth'})
+  }
+  async function guardarFichaUsuario(){
+    if(!usuarioEditando||guardandoFicha)return
+    setGuardandoFicha(true);setError('');setAviso('')
     try {
-      const {error:e}=await supabase.rpc('qiora_config_usuario_numero_guardar',{
-        p_usuario_id:u.id,p_numero:textoNumero(u.numero_empleado)
+      const {data,error:e}=await supabase.rpc('qiora_usuarios_administracion_guardar',{
+        p_id:String(usuarioEditando.id),
+        p_datos:{nombre:usuarioEditando.nombre,telefono:usuarioEditando.telefono,
+          puesto:usuarioEditando.puesto,correo:usuarioEditando.correo,
+          coordinador:usuarioEditando.coordinador,numero_empleado:usuarioEditando.numero_empleado,
+          activo:usuarioEditando.activo,permisos:usuarioEditando.permisos}
+      })
+      if(e)throw e
+      if(data!==true)throw new Error('No se confirmó el guardado')
+      setUsuarioEditando(null)
+      await cargarUsuarios()
+      setAviso('Usuario y permisos actualizados correctamente.')
+    }catch(e){setError(e.message||'No se pudo guardar el usuario')}
+    finally{setGuardandoFicha(false)}
+  }
+  async function cambiarEstadoUsuario(u){
+    if(!window.confirm(`¿${u.activo?'Desactivar':'Activar'} a ${u.nombre}?`))return
+    setGuardandoFicha(true);setError('')
+    try{
+      const {error:e}=await supabase.rpc('qiora_usuarios_administracion_guardar',{
+        p_id:String(u.id),p_datos:{activo:!u.activo}
       })
       if(e)throw e
       await cargarUsuarios()
-      setAviso('Número de empleado actualizado correctamente')
-    } catch(e){setError(e.message||'No se pudo guardar número ODOO')}
-    finally{setGuardandoUsuario('')}
+      setAviso('Estado de usuario actualizado.')
+    }catch(e){setError(e.message||'No se pudo actualizar el estado')}
+    finally{setGuardandoFicha(false)}
   }
+  const editarCampoUsuario=(campo,valor)=>setUsuarioEditando(u=>({...u,[campo]:valor}))
+  const permisosActivos=usuarioEditando?Object.values(usuarioEditando.permisos||{}).filter(Boolean).length:0
   function abrir(tipo){
     if(tipo==='catalogos'){router.push('/inventarios/catalogos');return}
     setSeccion(tipo);setForm(nuevo());setBusqueda('');setPagina(1)
@@ -116,21 +148,38 @@ export default function ConfiguracionPage(){
     {validando?<p>Validando permisos...</p>:!permitido?<p>No tienes permisos administrativos para Configuración.</p>:!seccion?
     <section style={s.panel}><h3>Menú configuración</h3><div style={s.menu}>{MENU.map(([label,tipo])=><button key={label} style={{...s.opcion,opacity:tipo?1:.68}} onClick={()=>tipo?abrir(tipo):setAviso('El módulo «'+label+'» todavía no está implementado en esta versión web.')} type="button">{label}</button>)}</div></section>:
     seccion==='usuarios' ? <section style={s.panel}>
-      <h3>Usuarios - Número de empleado</h3>
-      <p style={s.nota}>El almacén SAP y el número de empleado son identificadores independientes. Guarda el número exactamente como aparece en el inventario por colaborador.</p>
+      <h2>Gestión de Usuarios</h2>
+      <p style={s.nota}>Consulta, edita y administra los permisos por módulo. Se conservan los usuarios y el inventario existente. Los usuarios dados de baja permanecen visibles.</p>
+      {usuarioEditando&&<div style={{...s.panel,marginBottom:18}}>
+        <h3>Editar usuario: {usuarioEditando.usuario_almacen}</h3>
+        <div style={s.cuadriculaUsuarios}>
+          <label>Usuario / Almacén<input style={s.input} value={usuarioEditando.usuario_almacen||''} readOnly /></label>
+          <label>Activo<select style={s.input} value={usuarioEditando.activo?'SI':'NO'} onChange={e=>editarCampoUsuario('activo',e.target.value==='SI')}><option value="SI">SI</option><option value="NO">NO</option></select></label>
+          {[['nombre','Nombre'],['telefono','Teléfono'],['puesto','Puesto'],['numero_empleado','Número de empleado'],['correo','Correo'],['coordinador','Coordinador']].map(([campo,nombre])=><label key={campo}>{nombre}<input style={{...s.input,width:'100%',boxSizing:'border-box'}} value={usuarioEditando[campo]||''} onChange={e=>editarCampoUsuario(campo,e.target.value)}/></label>)}
+          <label>Distrito<input readOnly style={s.input} value={usuarioEditando.distrito||''}/></label>
+        </div>
+        <h3>Permisos por botón / columnas ALMACEN_USUARIOS</h3>
+        <p style={s.nota}>Permisos seleccionados: {permisosActivos} de {permisosDisponibles.length}. Solo se muestran permisos existentes en tu base de datos.</p>
+        <div style={s.permisosGrid}>{permisosDisponibles.map(p=><label key={p.campo} style={s.permiso}><input type="checkbox" checked={usuarioEditando.permisos?.[p.campo]===true} onChange={e=>setUsuarioEditando(u=>({...u,permisos:{...u.permisos,[p.campo]:e.target.checked}}))}/>{p.nombre}</label>)}</div>
+        <div style={s.herramientas}><button type="button" style={s.boton} disabled={guardandoFicha} onClick={guardarFichaUsuario}>{guardandoFicha?'Guardando...':'Guardar usuario y permisos'}</button><button type="button" style={s.regresar} onClick={()=>setUsuarioEditando(null)}>Cancelar</button></div>
+      </div>}
       <div style={s.herramientas}>
-        <input style={s.input} placeholder="Buscar usuario, nombre o almacén" value={busqueda} onChange={e=>setBusqueda(e.target.value)} />
-        <button type="button" style={s.boton} disabled={cargando} onClick={cargarUsuarios}>Actualizar</button>
+        <input style={s.input} placeholder="Buscar usuario, número de empleado, nombre o almacén" value={busqueda} onChange={e=>setBusqueda(e.target.value)} />
+        <select style={s.input} value={filtroActivos} onChange={e=>setFiltroActivos(e.target.value)}><option value="TODOS">Todos los usuarios</option><option value="SI">Activos</option><option value="NO">No activos</option></select>
+        <button type="button" style={s.boton} disabled={cargando} onClick={cargarUsuarios}>Buscar / Actualizar</button>
       </div>
+      <p style={s.nota}>{usuarios.filter(u=>(filtroActivos==='TODOS'||(u.activo?'SI':'NO')===filtroActivos)&&normal([u.usuario_almacen,u.nombre,u.numero_empleado,u.telefono,u.puesto].join(' ')).includes(normal(busqueda))).length} usuario(s) encontrados.</p>
       <div style={{overflowX:'auto'}}><table style={s.tabla}><thead><tr>
-        <th style={s.th}>Almacén SAP</th><th style={s.th}>Usuario</th><th style={s.th}>Nombre</th><th style={s.th}>Número de empleado</th><th style={s.th}>Acción</th>
+        {['Usuario / Almacén','Nombre','Teléfono','Puesto','Distrito','Número de empleado','Correo','Activo','Permisos','Acción'].map(h=><th key={h} style={s.th}>{h}</th>)}
       </tr></thead><tbody>
-      {usuarios.filter(u=>normal([u.almacen,u.usuario,u.nombre,u.numero_empleado].join(' ')).includes(normal(busqueda))).map(u=><tr key={u.id}>
-        <td style={s.td}>{u.almacen}</td><td style={s.td}>{u.usuario}</td><td style={s.td}>{u.nombre}</td>
-        <td style={s.td}><input style={s.input} aria-label={'Número de empleado para '+u.nombre} value={u.numero_empleado} onChange={e=>setUsuarios(xs=>xs.map(x=>x.id===u.id?{...x,numero_empleado:e.target.value}:x))} placeholder="Ej. 48159936193" /></td>
-        <td style={s.td}><button type="button" style={s.boton} disabled={guardandoUsuario===String(u.id)} onClick={()=>guardarNumeroEmpleado(u)}>{guardandoUsuario===String(u.id)?'Guardando...':'Guardar'}</button></td>
+      {usuarios.filter(u=>(filtroActivos==='TODOS'||(u.activo?'SI':'NO')===filtroActivos)&&normal([u.usuario_almacen,u.nombre,u.numero_empleado,u.telefono,u.puesto].join(' ')).includes(normal(busqueda))).map(u=><tr key={u.id}>
+        {[u.usuario_almacen,u.nombre,u.telefono,u.puesto,u.distrito,u.numero_empleado,u.correo].map((v,i)=><td style={s.td} key={i}>{v||'-'}</td>)}
+        <td style={s.td}><strong style={{color:u.activo?'#087e55':'#b91c1c'}}>{u.activo?'SI':'NO ACTIVO'}</strong></td>
+        <td style={s.td}>{Object.values(u.permisos||{}).filter(Boolean).length} permisos</td>
+        <td style={s.td}><div style={{display:'flex',gap:6}}><button type="button" style={s.boton} onClick={()=>editarUsuario(u)}>Editar</button><button type="button" disabled={guardandoFicha} style={{...s.boton,background:u.activo?'#b91c1c':'#176b4d'}} onClick={()=>cambiarEstadoUsuario(u)}>{u.activo?'Desactivar':'Activar'}</button></div></td>
       </tr>)}
       </tbody></table></div>
+      <p style={s.nota}>Crear cuentas nuevas y restablecer contraseñas requiere provisionar Supabase Auth mediante un servicio administrativo; no se crean cuentas únicamente con un INSERT. La desactivación preserva auditorías e historial.</p>
     </section> : <section style={s.panel}>
       <div style={s.herramientas}><input style={s.input} value={busqueda} onChange={e=>{setBusqueda(e.target.value);setPagina(1)}} placeholder="Buscar SKU, descripción o grupo"/><button style={s.boton} disabled={cargando} onClick={()=>cargar(seccion)}>Actualizar</button></div>
       <p style={s.nota}>{seccion==='herramienta_odoo_inventario'?`${total} registros del inventario. Página ${pagina}. Valores de compra y actual corresponden al renglón, no al costo unitario.`:`${filas.length} registros del catálogo.`} {editable?'Los cambios se guardan en Supabase.':seccion==='herramienta_odoo_inventario'?'Inventario de consulta, importado desde Excel.':'Para editar este catálogo utiliza la pantalla de Materiales y Grupos ya instalada.'}</p>
@@ -138,7 +187,7 @@ export default function ConfiguracionPage(){
         <label>SKU<input required style={s.input} value={form.sku} onChange={e=>setForm({...form,sku:e.target.value})}/></label>
         <label>{seccion==='costos_sap'?'Material':'Herramienta'}<input style={s.input} value={seccion==='costos_sap'?form.material:form.herramienta} onChange={e=>setForm({...form,[seccion==='costos_sap'?'material':'herramienta']:e.target.value})}/></label>
         <label>Costo<input required min="0" step="0.0001" type="number" style={s.input} value={form.costo} onChange={e=>setForm({...form,costo:e.target.value})}/></label>
-        {seccion==='costos_odoo'&&<label>Vida útil en meses<input required min="1" type="number" style={s.input} value={form.vida_util_meses} onChange={e=>setForm({...form,vida_util_meses:e.target.value})}/></label>}
+        {seccion==='costos_odoo'&&<label>Vida útil en meses<input required min="0" type="number" style={s.input} value={form.vida_util_meses} onChange={e=>setForm({...form,vida_util_meses:e.target.value})}/></label>}
         <label style={{alignSelf:'center'}}>Activo <input type="checkbox" checked={form.activo} onChange={e=>setForm({...form,activo:e.target.checked})}/></label>
         <button disabled={cargando} type="submit" style={s.boton}>{cargando?'Guardando...':'Guardar costo'}</button>
         <button type="button" style={s.boton} onClick={()=>setForm(nuevo())}>Nuevo</button>
@@ -168,5 +217,8 @@ const s={
  th:{padding:9,background:'#0d7659',color:'#fff',border:'1px solid #add0c1'},
  td:{padding:9,border:'1px solid #c8ded4'},
  nota:{color:'#cce5dc',fontSize:13},error:{background:'#ffe1e1',color:'#822',padding:12,borderRadius:8},
- exito:{background:'#dbffdf',color:'#174a25',padding:12,borderRadius:8}
+ exito:{background:'#dbffdf',color:'#174a25',padding:12,borderRadius:8},
+ cuadriculaUsuarios:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))',gap:14,marginBottom:22},
+ permisosGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))',gap:9,marginBottom:20},
+ permiso:{display:'flex',alignItems:'center',gap:8,background:'#07291f',border:'1px solid #42685b',padding:9,borderRadius:7}
 }
