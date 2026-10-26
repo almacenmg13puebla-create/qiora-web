@@ -5,16 +5,12 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
 
 const OPCIONES = [
-  { id: 'STOCK_ALMACEN', titulo: 'Stock Almacén (MB52)', descripcion: 'Existencias, materiales y lotes de almacén' },
   { id: 'STOCK_TECNICOS', titulo: 'Stock Técnicos', descripcion: 'Existencias asignadas a técnicos' },
   { id: 'IQ09_EQUIPOS', titulo: 'Equipos IQ09', descripcion: 'Series, materiales y estados SAP' },
-  { id: 'HERRAMIENTA_ODOO', titulo: 'Herramientas ODOO', descripcion: 'Productos, ubicaciones y cantidades' },
 ]
 const CAMPOS = {
   STOCK_TECNICOS: [['almacen','Almacén'],['sku','SKU'],['material','Material'],['lote','Lote'],['tecnico','Técnico'],['cantidad','Cantidad'],['disponible','Cantidad disponible']],
   IQ09_EQUIPOS: [['almacen','Almacén'],['serie','Serie'],['material','Material'],['descripcion','Descripción'],['lote','Lote'],['estatus_sap','Estatus SAP'],['denom_status','Denominación'],['tipo_stock','Tipo de stock']],
-  STOCK_ALMACEN: [['almacen','Almacén'],['sku','SKU'],['material','Material'],['lote','Lote'],['cantidad','Cantidad'],['disponible','Disponible']],
-  HERRAMIENTA_ODOO: [['producto','Producto'],['ubicacion','Ubicación'],['cantidad','Cantidad'],['almacen','Almacén']],
 }
 const PUEDE = (p) => ['auditoria','dashboard','traspasos','solicitud_material'].some(k=>p?.[k]===true)
 const lim = 200
@@ -260,7 +256,7 @@ export default function InventariosPage() {
   return <main style={s.pagina}><div style={s.marco}>
     <button type="button" style={s.regresar} onClick={regresar}>← {tipo ? 'Regresar a Inventarios' : 'Regresar al menú principal'}</button>
     <header style={s.hero}><h1 style={{margin:0,fontSize:29}}>{tipo ? (esMateriales ? 'Técnicos - Materiales' : esEquipos ? 'Equipos' : OPCIONES.find(o=>o.id===tipo)?.titulo) : 'INVENTARIOS'}</h1><p style={{margin:'8px 0 0'}}>{!tipo ? 'Seleccione una opción de inventarios' : esMateriales ? 'Consulta de materiales cargados por técnico y almacén.' : esEquipos ? 'Consulta general de equipos por almacén o todos los almacenes.' : 'Consulta de existencias del distrito ' + perfil.distrito}</p></header>
-    {!tipo ? <section style={s.menu}>{adminCatalogos && <button type="button" style={s.opcion} onClick={()=>router.push('/inventarios/catalogos')}><strong>Administrar Materiales y Grupos</strong><small style={{display:'block',marginTop:9}}>Catálogos editables de Supabase</small></button>}{OPCIONES.map(o => <button type="button" key={o.id} style={s.opcion} onClick={() => abrir(o.id)}><strong>{o.id==='STOCK_TECNICOS'?'Técnicos - Materiales':o.id==='IQ09_EQUIPOS'?'Equipos':o.titulo}</strong><small style={{display:'block',marginTop:9}}>{o.descripcion}</small></button>)}</section> : <>
+    {!tipo ? <section style={s.menu}>{adminCatalogos && <><button type="button" style={s.opcion} onClick={()=>router.push('/inventarios/catalogos?tab=materiales')}><strong>Administrar Materiales</strong><small style={{display:'block',marginTop:9}}>Agregar, editar, activar y desactivar materiales</small></button><button type="button" style={s.opcion} onClick={()=>router.push('/inventarios/catalogos?tab=grupos')}><strong>Administrar Grupos</strong><small style={{display:'block',marginTop:9}}>Agregar, editar, activar y desactivar grupos</small></button></>}{OPCIONES.map(o => <button type="button" key={o.id} style={s.opcion} onClick={() => abrir(o.id)}><strong>{o.id==='STOCK_TECNICOS'?'Técnicos - Materiales':o.id==='IQ09_EQUIPOS'?'Equipos':o.titulo}</strong><small style={{display:'block',marginTop:9}}>{o.descripcion}</small></button>)}</section> : <>
       <section style={s.panelOscuro}>
         <div style={s.filtros}>
           <label style={s.campo}>Almacén (opcional)<input style={s.input} value={almacen} placeholder="Vacío = todos los autorizados" maxLength={10} onChange={e=>{setAlmacen(e.target.value.toUpperCase());setRespuesta(null);setPagina(1)}}/></label>
