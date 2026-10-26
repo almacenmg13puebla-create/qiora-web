@@ -405,11 +405,34 @@ function faltanteCantidad(f) {
   }
   return 0
 }
-function mesesEntre(a,b) {
-  if (!a || !b || b<a) return 0
-  return Math.max(0,(Date.parse(b+'T12:00:00')-Date.parse(a+'T12:00:00'))/(86400000*30))
+function mesesEntre(a, b) {
+  if (!a || !b || b < a) return null
+  const inicio = new Date(`${a}T12:00:00`)
+  const fin = new Date(`${b}T12:00:00`)
+  if (Number.isNaN(inicio.getTime()) || Number.isNaN(fin.getTime())) return null
+  // Años exactos = múltiplos exactos de 12 meses (no aproximar por 30 días).
+  let meses = (fin.getFullYear() - inicio.getFullYear()) * 12 + fin.getMonth() - inicio.getMonth()
+  if (fin.getDate() < inicio.getDate()) meses -= 1
+  const ancla = new Date(inicio)
+  const diaInicial = inicio.getDate()
+  ancla.setDate(1)
+  ancla.setMonth(ancla.getMonth() + meses)
+  ancla.setDate(Math.min(diaInicial, new Date(ancla.getFullYear(), ancla.getMonth() + 1, 0).getDate()))
+  const siguiente = new Date(ancla)
+  siguiente.setDate(1)
+  siguiente.setMonth(siguiente.getMonth() + 1)
+  siguiente.setDate(Math.min(diaInicial, new Date(siguiente.getFullYear(), siguiente.getMonth() + 1, 0).getDate()))
+  const fraccion = (fin - ancla) / (siguiente - ancla)
+  return Math.max(0, meses + Math.max(0, Math.min(1, fraccion)))
 }
 function precioMoneda(x) { return x==null ? 'SIN COSTO REGISTRADO' : '$'+Number(x).toFixed(2) }
+
+// Mostrar solamente el nombre; conservar la referencia en los datos para el guardado y los costos.
+function nombreHerramienta(valor) {
+  const nombre = texto(valor)
+  const separador = nombre.indexOf(' | ')
+  return separador >= 0 ? nombre.slice(separador + 3).trim() : nombre
+}
 
 export default function AuditoriasPage() {
   const router = useRouter()
@@ -693,25 +716,25 @@ export default function AuditoriasPage() {
       ) {
         // Nueva fuente: inventario ODOO POR COLABORADOR (no la tabla obsoleta).
         // El RPC verifica distrito y permisos en Supabase; nunca lista datos de otros distritos.
-        // Número de empleado ODOO administrado desde Configuración > Usuarios.
+        // Número de empleado administrado desde Configuración > Usuarios.
         // Este RPC valida sesión, distrito y permisos en el servidor.
-        const { data: numeroOdoo, error: numeroError } = await supabase.rpc(
-          'qiora_numero_empleado_odoo', { p_almacen: almacen4 }
+        const { data: numeroEmpleado, error: numeroError } = await supabase.rpc(
+          'qiora_numero_empleado', { p_almacen: almacen4 }
         )
         if (numeroError) throw numeroError
-        const identificadorOdoo = texto(numeroOdoo)
+        const identificadorEmpleado = texto(numeroEmpleado)
         // Si existe número, buscar exclusivamente por él; el nombre no debe
         // unir inventarios de colaboradores distintos.
         const { data, error: herError } = await supabase.rpc('qiora_herramientas_auditoria', {
-          p_colaborador: identificadorOdoo ? '' : texto(usuarioTecnico.nombre || usuarioTecnico.tecnico),
-          p_identificador: identificadorOdoo,
+          p_colaborador: identificadorEmpleado ? '' : texto(usuarioTecnico.nombre || usuarioTecnico.tecnico),
+          p_identificador: identificadorEmpleado,
         })
         if (herError) throw herError
         const filas = Array.isArray(data) ? data : (data?.filas || [])
         if (!filas.length) {
           // La ausencia de inventario ODOO NO bloquea Materiales ni Equipos.
           // No se crean filas de herramientas ficticias.
-          setAvisoOdoo(`Sin herramientas ODOO asignadas a ${texto(usuarioTecnico.nombre || usuarioTecnico.tecnico)}. ${identificadorOdoo ? 'Número ODOO: ' + identificadorOdoo + '.' : 'Configura el número de empleado ODOO en Usuarios.'} Puedes continuar con Materiales y Equipos.`)
+          setAvisoOdoo(`Sin herramientas ODOO asignadas a ${texto(usuarioTecnico.nombre || usuarioTecnico.tecnico)}. ${identificadorEmpleado ? 'Número de empleado: ' + identificadorEmpleado + '.' : 'Configura el número de empleado en Usuarios.'} Puedes continuar con Materiales y Equipos.`)
         }
         nuevasHerramientas = filas.map(x => ({
           sku: texto(x.referencia),
@@ -1160,15 +1183,28 @@ export default function AuditoriasPage() {
       const clave=ref||texto(inv?.referencia)
       const item=odoo[clave]
       const vida=item?.vida_util_meses==null?null:Number(item.vida_util_meses)
-      const baseCompra=inv && Number(inv.cantidad)>0 ? Number(inv.valor_compra)/Number(inv.cantidad) : null
-      const valorActual=inv && Number(inv.cantidad)>0 ? Number(inv.valor_actual)/Number(inv.cantidad) : null
-      // El inventario trae valor actual y valor compra por línea. Dividir por cantidad.
-      // No depreciar una segunda vez el valor actual ya reportado por ODOO.
-      const costo=baseCompra!=null && Number.isFinite(baseCompra)?baseCompra:null
-      const unitario=valorActual!=null && Number.isFinite(valorActual)?valorActual:null
-      const depreciacion=costo!=null && unitario!=null?Math.max(0,costo-unitario):null
-      return {...x,sku:clave,qty,costo,vida,depreciacion,importe:unitario==null?null:qty*unitario,
-        observacionCosto:inv?'Valor actual ODOO por colaborador':'Sin coincidencia única de referencia o colaborador'}
+      // COSTO ORIGINAL del inventario por colaborador; valor_actual NO entra
+      // en la fórmula porque la depreciación se calcula desde las fechas.
+      const cantidadInv = Number(inv?.cantidad)
+      const compraInv = Number(inv?.valor_compra)
+      const costoInv = inv && Number.isFinite(cantidadInv) && cantidadInv > 0 &&
+        inv.valor_compra != null && Number.isFinite(compraInv) && compraInv >= 0
+          ? compraInv / cantidadInv : null
+      const costoCatalogo = item?.costo == null ? null : Number(item.costo)
+      const costo = costoInv != null ? costoInv :
+        (costoCatalogo != null && Number.isFinite(costoCatalogo) && costoCatalogo >= 0 ? costoCatalogo : null)
+      // Vida útil 0 o vacía: no hay pauta de depreciación, por lo que se
+      // conserva el costo original y se informa el motivo.
+      const fechasValidas = meses !== null
+      const vidaValida = vida !== null && Number.isFinite(vida) && vida > 0
+      const depreciacion = costo == null || !fechasValidas ? null :
+        vidaValida ? Math.min(costo, Math.max(0, costo * meses / vida)) : 0
+      const unitario = costo == null || depreciacion == null ? null : Math.max(0, costo - depreciacion)
+      return {...x,sku:clave,qty,costo,vida,depreciacion,unitario,
+        importe:unitario==null?null:qty*unitario,
+        observacionCosto:costo==null?'Sin costo de compra original':
+          !fechasValidas?'Captura fechas válidas':
+          !vidaValida?'Sin vida útil positiva: sin depreciación':'Depreciación lineal según fechas'}
     })
     const eq=(d.equipos||[]).filter(x=>String(x.estado||'').toUpperCase().includes('FALTANTE')).map(x=>{
       const sku=String(x.material||x.sku||''),item=sap[sku],costo=item?.costo==null?null:Number(item.costo)
@@ -1181,14 +1217,14 @@ export default function AuditoriasPage() {
     if(!histDetalle || costosCargando) return
     const r=detalleCosteado, d=histDetalle
     const filas=[...r.mats.map(x=>['MATERIAL',x.sku,x.material,x.lote,x.qty,x.costo??'SIN COSTO',x.importe??'SIN COSTO']),
-      ...r.herr.map(x=>['HERRAMIENTA',x.sku||x.producto,x.producto,x.ubicacion,x.qty,x.costo??'SIN COSTO',x.importe??'SIN COSTO']),
+      ...r.herr.map(x=>['HERRAMIENTA',x.sku||x.producto,nombreHerramienta(x.producto),x.ubicacion,x.qty,x.unitario??'SIN COSTO',x.importe??'SIN COSTO']),
       ...r.eq.map(x=>['EQUIPO',x.sku,x.descripcion,x.serie,x.qty,x.costo??'SIN COSTO',x.importe??'SIN COSTO'])]
     const cab=['Tipo','SKU','Descripción','Lote / Serie / Ubicación','Cantidad faltante','Costo unitario','Importe']
     const nombre='QIORA_FALTANTES_'+String(d.folio||'AUDITORIA').replace(/[^a-zA-Z0-9_-]/g,'_')
     if(formato==='Excel') {
       const XLSX=await import('xlsx')
       const wb=XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['QIORA CONECTA - FALTANTES CON COSTO'],['Folio',d.folio],['Almacén',d.almacen],['Tipo auditoría',d.tipoAuditoria||'NO REGISTRADO'],['Nota','Costos vigentes, no valores historicos congelados'],['Faltantes sin costo',r.sinCosto],[],cab,...filas]),'FALTANTES')
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['QIORA CONECTA - FALTANTES CON COSTO'],['Folio',d.folio],['Almacén',d.almacen],['Tipo auditoría',d.tipoAuditoria||'NO REGISTRADO'],['Nota','Herramientas: depreciacion lineal por fechas; costos vigentes no congelados'],['Fecha asignacion',fechaAsignacion||'PENDIENTE'],['Fecha siniestro',fechaSiniestro||'PENDIENTE'],['Meses de uso',r.meses??'PENDIENTE'],['Faltantes sin costo',r.sinCosto],[],cab,...filas]),'FALTANTES')
       XLSX.writeFile(wb,nombre+'.xlsx')
     } else {
       const {jsPDF}=await import('jspdf')
@@ -1196,7 +1232,7 @@ export default function AuditoriasPage() {
       const pdf=new jsPDF({orientation:'landscape'})
       pdf.setFontSize(16);pdf.text('QIORA CONECTA | FALTANTES CON COSTO',14,16)
       pdf.setFontSize(9);pdf.text('Folio: '+String(d.folio||'')+' | Almacen: '+String(d.almacen||''),14,24)
-      pdf.text('Costos vigentes. Sin costo: '+r.sinCosto,14,30)
+      pdf.text('Herramientas: depreciacion lineal segun fechas. Sin importe: '+r.sinCosto,14,30)
       autoTable(pdf,{startY:37,head:[cab],body:filas,styles:{fontSize:7},headStyles:{fillColor:[12,105,78]}})
       pdf.save(nombre+'.pdf')
     }
@@ -1669,15 +1705,15 @@ export default function AuditoriasPage() {
                 { [['Líneas materiales',r.mats.length],['Líneas herramientas',r.herr.length],['Líneas equipos',r.eq.length],['Total materiales',precioMoneda(r.totM)],['Total herramientas',precioMoneda(r.totH)],['Total equipos',precioMoneda(r.totE)],['Gran total parcial',precioMoneda(tot)]].map(([label,val])=><div key={label} style={{padding:14,background:'#0b8664',color:'white',borderRadius:12,textAlign:'center'}}>{label}<div style={{fontWeight:800,fontSize:21,marginTop:5}}>{val}</div></div>)}
               </div>
               <p style={{color:'#a62929',fontWeight:700}}>{costosCargando?'Consultando costos...':r.sinCosto>0?`Hay ${r.sinCosto} renglones sin importe calculable. El total mostrado es parcial.`:'Todos los renglones tienen costo calculable.'}</p>
-              <p>Herramientas: valor actual del inventario ODOO por colaborador, dividido entre cantidad. No se aplica doble depreciación ni IVA sin una regla confirmada. Los importes no son históricos congelados.</p>
+              <p>Herramientas: costo original ODOO por unidad menos depreciación lineal según fechas y vida útil. VALOR ACTUAL no se vuelve a descontar. Vida útil 0: sin depreciación. Sin fechas válidas: importe pendiente. No se calcula IVA sin regla confirmada; no son costos históricos congelados.</p>
               <button style={styles.botonPrincipal} disabled={costosCargando} onClick={()=>exportarFaltantesCosto('Excel').catch(e=>setError(e.message))}>Descargar Excel</button>{' '}
               <button style={styles.botonPrincipal} disabled={costosCargando} onClick={()=>exportarFaltantesCosto('PDF').catch(e=>setError(e.message))}>Descargar PDF</button>
             </div>
             {tabla('Faltantes de materiales',['SKU','Material','Lote','Cantidad faltante','Costo unitario','Importe'],r.mats.map(x=>[x.sku,x.material,x.lote,x.qty,precioMoneda(x.costo),precioMoneda(x.importe)]))}
             <div style={styles.tarjeta}><h3>Faltantes de herramientas</h3>
               <div style={{display:'flex',gap:12,flexWrap:'wrap'}}><label>Fecha de asignación <input style={styles.input} type="date" value={fechaAsignacion} onChange={e=>setFechaAsignacion(e.target.value)}/></label><label>Fecha de siniestro <input style={styles.input} type="date" min={fechaAsignacion||undefined} value={fechaSiniestro} onChange={e=>setFechaSiniestro(e.target.value)}/></label></div>
-              <p>Meses de uso: {r.meses.toFixed(2)}. Depreciación lineal limitada al costo original. El importe es el valor residual.</p>
-              <div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr>{['Referencia','Herramienta','Vida útil (meses)','Cant.','Compra unit.','Diferencia compra-actual','Total actual'].map(x=><th style={styles.th} key={x}>{x}</th>)}</tr></thead><tbody>{r.herr.length?r.herr.map((x,i)=><tr key={i}>{[x.sku||x.producto,x.producto,x.vida||'-',x.qty,precioMoneda(x.costo),precioMoneda(x.depreciacion),precioMoneda(x.importe)].map((v,j)=><td key={j} style={styles.td}>{v}</td>)}</tr>):<tr><td colSpan={7} style={styles.td}>Sin faltantes de herramientas.</td></tr>}</tbody></table></div>
+              <p>Meses de uso: {r.meses === null ? 'CAPTURA FECHAS VÁLIDAS' : r.meses.toFixed(2)}. Depreciación lineal por fechas (máximo 100% del costo original). Vida útil 0: sin depreciación. El importe es el valor residual por cantidad faltante.</p>
+              <div style={styles.tablaWrap}><table style={styles.tabla}><thead><tr>{['Referencia','Herramienta','Vida útil (meses)','Cant.','Compra unit.','Depreciación unit.','Residual unit.','Importe faltante'].map(x=><th style={styles.th} key={x}>{x}</th>)}</tr></thead><tbody>{r.herr.length?r.herr.map((x,i)=><tr key={i}>{[x.sku||x.producto,nombreHerramienta(x.producto),x.vida??'-',x.qty,precioMoneda(x.costo),precioMoneda(x.depreciacion),precioMoneda(x.unitario),precioMoneda(x.importe)].map((v,j)=><td key={j} style={styles.td}>{v}</td>)}</tr>):<tr><td colSpan={8} style={styles.td}>Sin faltantes de herramientas.</td></tr>}</tbody></table></div>
             </div>
             {tabla('Faltantes de equipos',['Serie','SKU','Descripción','Lote','Cantidad faltante','Costo unitario','Importe'],r.eq.map(x=>[x.serie,x.sku,x.descripcion,x.lote,1,precioMoneda(x.costo),precioMoneda(x.importe)]))}
           </section>
