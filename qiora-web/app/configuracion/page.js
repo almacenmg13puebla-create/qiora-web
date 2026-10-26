@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
 
@@ -26,6 +26,8 @@ const nuevo = ()=>({sku:'',material:'',herramienta:'',costo:'',vida_util_meses:'
 
 export default function ConfiguracionPage(){
   const router=useRouter()
+  const desplazamientoArriba=useRef(null)
+  const desplazamientoTabla=useRef(null)
   const [validando,setValidando]=useState(true)
   const [usuarios,setUsuarios]=useState([])
   const [guardandoUsuario,setGuardandoUsuario]=useState('')
@@ -67,6 +69,8 @@ export default function ConfiguracionPage(){
   const [permisosDisponibles,setPermisosDisponibles]=useState([])
   const [usuarioEditando,setUsuarioEditando]=useState(null)
   const [filtroActivos,setFiltroActivos]=useState('TODOS')
+  const [creandoUsuario,setCreandoUsuario]=useState(false)
+  const [nuevoUsuario,setNuevoUsuario]=useState({usuario_almacen:'',clave:'',nombre:'',telefono:'',puesto:'TECNICO',numero_empleado:'',correo:'',coordinador:'',usuario_ffm:'',fecha_nacimiento:'',fecha_alta:'',fecha_baja:'',activo:true,permisos:{}})
   const [guardandoFicha,setGuardandoFicha]=useState(false)
   async function cargarUsuarios(){
     setCargando(true);setError('');setAviso('')
@@ -78,6 +82,27 @@ export default function ConfiguracionPage(){
     } catch(e){setError(e.message||'No se pudieron cargar usuarios')}
     finally{setCargando(false)}
   }
+  async function crearCuentaUsuario(){
+    if(guardandoFicha)return
+    setGuardandoFicha(true);setError('');setAviso('')
+    try{
+      if(!textoNumero(nuevoUsuario.usuario_almacen)||!nuevoUsuario.clave||!textoNumero(nuevoUsuario.nombre))throw new Error('Usuario, clave y nombre son obligatorios.')
+      const {data:{session},error:sessionError}=await supabase.auth.getSession()
+      if(sessionError||!session?.access_token)throw new Error('La sesión expiró. Inicia sesión nuevamente.')
+      const response=await fetch('/api/usuarios/crear',{
+        method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},
+        body:JSON.stringify(nuevoUsuario)
+      })
+      const resultado=await response.json().catch(()=>({}))
+      if(!response.ok||!resultado.ok)throw new Error(resultado.error||'No se pudo crear el usuario')
+      setCreandoUsuario(false)
+      setNuevoUsuario({usuario_almacen:'',clave:'',nombre:'',telefono:'',puesto:'TECNICO',numero_empleado:'',correo:'',coordinador:'',usuario_ffm:'',fecha_nacimiento:'',fecha_alta:'',fecha_baja:'',activo:true,permisos:{}})
+      await cargarUsuarios()
+      setAviso('Cuenta creada en Supabase Auth y Usuarios.')
+    }catch(e){setError(e.message||'No se pudo crear el usuario')}
+    finally{setGuardandoFicha(false)}
+  }
+  const cambiarNuevo=(campo,valor)=>setNuevoUsuario(u=>({...u,[campo]:valor}))
   function editarUsuario(u){
     setUsuarioEditando({...u, permisos:{...(u.permisos||{})}})
     setError('');setAviso('')
@@ -143,8 +168,8 @@ export default function ConfiguracionPage(){
   const disponibles=filas.filter(f=>Object.values(f).some(v=>normal(v).includes(normal(busqueda))))
   const editable=seccion==='costos_sap'||seccion==='costos_odoo'
   return <main style={s.base}><div style={s.marco}>
-    <button style={s.regresar} onClick={()=>seccion?setSeccion(''):router.push('/')}>← {seccion?'Regresar a Configuración':'Regresar a Acceso Almacén'}</button>
-    <header style={s.hero}><h1 style={{margin:0}}>{seccion?nombres[seccion]:'⚙ Configuración'}</h1><p style={{margin:'6px 0 0'}}> {seccion?'Administración de catálogos en Supabase':'Configuración del módulo Acceso Almacén'}</p></header>
+    <div style={s.cabeceraFija}><button style={s.regresar} onClick={()=>seccion?setSeccion(''):router.push('/')}>← {seccion?'Regresar a Configuración':'Regresar a Acceso Almacén'}</button>
+    <header style={s.hero}><h1 style={{margin:0}}>{seccion?nombres[seccion]:'⚙ Configuración'}</h1><p style={{margin:'6px 0 0'}}> {seccion?'Administración de catálogos en Supabase':'Configuración del módulo Acceso Almacén'}</p></header></div>
     {error&&<p role="alert" style={s.error}>{error}</p>}
     {aviso&&<p role="status" style={s.exito}>{aviso}</p>}
     {validando?<p>Validando permisos...</p>:!permitido?<p>No tienes permisos administrativos para Configuración.</p>:!seccion?
@@ -152,6 +177,19 @@ export default function ConfiguracionPage(){
     seccion==='usuarios' ? <section style={s.panel}>
       <h2>Gestión de Usuarios</h2>
       <p style={s.nota}>Consulta, edita y administra los permisos por módulo. Se conservan los usuarios y el inventario existente. Los usuarios dados de baja permanecen visibles.</p>
+      <div style={s.herramientas}><button type="button" style={s.boton} onClick={()=>{setCreandoUsuario(x=>!x);setUsuarioEditando(null)}}>{creandoUsuario?'Cancelar creación':'＋ Crear usuario'}</button></div>
+      {creandoUsuario&&<div style={{...s.panel,marginBottom:18}}>
+        <h3>Crear nuevo usuario</h3>
+        <p style={s.nota}>El usuario se crea en Supabase Auth y en ALMACEN_USUARIOS. El distrito se asigna desde la sesión del administrador.</p>
+        <div style={s.cuadriculaUsuarios}>
+          {[['usuario_almacen','Usuario / Almacén'],['clave','Clave de acceso'],['nombre','Nombre completo'],['telefono','Teléfono'],['puesto','Puesto'],['numero_empleado','Número de empleado'],['correo','Correo de contacto'],['coordinador','Coordinador'],['usuario_ffm','Usuario FFM']].map(([campo,label])=><label key={campo}>{label}<input style={{...s.input,width:'100%',boxSizing:'border-box'}} type={campo==='clave'?'password':'text'} autoComplete={campo==='clave'?'new-password':'off'} value={nuevoUsuario[campo]} onChange={e=>cambiarNuevo(campo,e.target.value)}/></label>)}
+          {[['fecha_nacimiento','Fecha de nacimiento'],['fecha_alta','Fecha de alta'],['fecha_baja','Fecha de baja']].map(([campo,label])=><label key={campo}>{label}<input type="date" style={{...s.input,width:'100%',boxSizing:'border-box'}} value={nuevoUsuario[campo]} onChange={e=>cambiarNuevo(campo,e.target.value)}/></label>)}
+          <label>Activo<select style={s.input} value={nuevoUsuario.activo?'SI':'NO'} onChange={e=>cambiarNuevo('activo',e.target.value==='SI')}><option value="SI">SI</option><option value="NO">NO</option></select></label>
+        </div>
+        <h3>Permisos del nuevo usuario</h3>
+        <div style={s.permisosGrid}>{permisosDisponibles.map(p=><label key={p.campo} style={s.permiso}><input type="checkbox" checked={nuevoUsuario.permisos?.[p.campo]===true} onChange={e=>setNuevoUsuario(u=>({...u,permisos:{...u.permisos,[p.campo]:e.target.checked}}))}/>{p.nombre}</label>)}</div>
+        <div style={s.herramientas}><button type="button" style={s.boton} disabled={guardandoFicha} onClick={crearCuentaUsuario}>{guardandoFicha?'Creando cuenta...':'Guardar nuevo usuario'}</button><button type="button" style={s.regresar} onClick={()=>setCreandoUsuario(false)}>Cancelar</button></div>
+      </div>}
       {usuarioEditando&&<div style={{...s.panel,marginBottom:18}}>
         <h3>Editar usuario: {usuarioEditando.usuario_almacen}</h3>
         <div style={s.cuadriculaUsuarios}>
@@ -172,7 +210,8 @@ export default function ConfiguracionPage(){
         <button type="button" style={s.boton} disabled={cargando} onClick={cargarUsuarios}>Buscar / Actualizar</button>
       </div>
       <p style={s.nota}>{usuarios.filter(u=>(filtroActivos==='TODOS'||(u.activo?'SI':'NO')===filtroActivos)&&normal([u.usuario_almacen,u.nombre,u.numero_empleado,u.usuario_ffm,u.telefono,u.puesto].join(' ')).includes(normal(busqueda))).length} usuario(s) encontrados.</p>
-      <div style={{overflowX:'auto'}}><table style={s.tabla}><thead><tr>
+      <div ref={desplazamientoArriba} style={s.barraSuperior} onScroll={e=>{if(desplazamientoTabla.current)desplazamientoTabla.current.scrollLeft=e.currentTarget.scrollLeft}}><div style={{width:2100,height:1}}/></div>
+      <div ref={desplazamientoTabla} style={s.tablaDesplazable} onScroll={e=>{if(desplazamientoArriba.current)desplazamientoArriba.current.scrollLeft=e.currentTarget.scrollLeft}}><table style={s.tabla}><thead><tr>
         {['Usuario / Almacén','Nombre','Teléfono','Puesto','Distrito','Número de empleado','Usuario FFM','Nacimiento','Fecha alta','Fecha baja','Correo','Activo','Permisos','Acción'].map(h=><th key={h} style={s.th}>{h}</th>)}
       </tr></thead><tbody>
       {usuarios.filter(u=>(filtroActivos==='TODOS'||(u.activo?'SI':'NO')===filtroActivos)&&normal([u.usuario_almacen,u.nombre,u.numero_empleado,u.usuario_ffm,u.telefono,u.puesto].join(' ')).includes(normal(busqueda))).map(u=><tr key={u.id}>
@@ -182,7 +221,7 @@ export default function ConfiguracionPage(){
         <td style={s.td}><div style={{display:'flex',gap:6}}><button type="button" style={s.boton} onClick={()=>editarUsuario(u)}>Editar</button><button type="button" disabled={guardandoFicha} style={{...s.boton,background:u.activo?'#b91c1c':'#176b4d'}} onClick={()=>cambiarEstadoUsuario(u)}>{u.activo?'Desactivar':'Activar'}</button></div></td>
       </tr>)}
       </tbody></table></div>
-      <p style={s.nota}>Crear cuentas nuevas y restablecer contraseñas requiere provisionar Supabase Auth mediante un servicio administrativo; no se crean cuentas únicamente con un INSERT. La desactivación preserva auditorías e historial.</p>
+      <p style={s.nota}>Las cuentas nuevas requieren la variable SUPABASE_SERVICE_ROLE_KEY exclusivamente en Vercel. No se exponen claves administrativas al navegador. La desactivación conserva el historial.</p>
     </section> : <section style={s.panel}>
       <div style={s.herramientas}><input style={s.input} value={busqueda} onChange={e=>{setBusqueda(e.target.value);setPagina(1)}} placeholder="Buscar SKU, descripción o grupo"/><button style={s.boton} disabled={cargando} onClick={()=>cargar(seccion)}>Actualizar</button></div>
       <p style={s.nota}>{seccion==='herramienta_odoo_inventario'?`${total} registros del inventario. Página ${pagina}. Valores de compra y actual corresponden al renglón, no al costo unitario.`:`${filas.length} registros del catálogo.`} {editable?'Los cambios se guardan en Supabase.':seccion==='herramienta_odoo_inventario'?'Inventario de consulta, importado desde Excel.':'Para editar este catálogo utiliza la pantalla de Materiales y Grupos ya instalada.'}</p>
@@ -206,7 +245,10 @@ export default function ConfiguracionPage(){
 }
 const s={
  base:{minHeight:'100vh',background:'#062d23',color:'#fff',padding:16,fontFamily:'Arial,sans-serif'},
- marco:{maxWidth:1200,margin:'auto',border:'1px solid #487d6c',borderRadius:16,padding:20,background:'#06271f'},
+ marco:{maxWidth:1400,margin:'auto',border:'1px solid #487d6c',borderRadius:16,padding:20,background:'#06271f',minWidth:0},
+ cabeceraFija:{position:'sticky',top:0,zIndex:30,background:'#06271f',paddingTop:8,paddingBottom:8,borderBottom:'1px solid #487d6c',marginBottom:18},
+ barraSuperior:{overflowX:'auto',overflowY:'hidden',height:18,marginBottom:3},
+ tablaDesplazable:{overflowX:'auto',overflowY:'auto',maxHeight:'65vh',position:'relative',scrollbarGutter:'stable',border:'1px solid #427466',borderRadius:9},
  regresar:{border:0,borderRadius:30,padding:'10px 15px',background:'#118366',color:'#fff',fontWeight:700,cursor:'pointer',marginBottom:12},
  hero:{background:'linear-gradient(120deg,#10533f,#18a67b)',padding:25,textAlign:'center',borderRadius:14,marginBottom:18},
  panel:{border:'1px solid #406f62',padding:16,borderRadius:14,background:'#0b3028'},
@@ -216,8 +258,8 @@ const s={
  formulario:{display:'flex',flexWrap:'wrap',alignItems:'end',gap:12,margin:'18px 0'},
  input:{display:'block',padding:10,minWidth:160,background:'#fff',color:'#142f24',borderRadius:7,border:'1px solid #bdd4ca',marginTop:5},
  boton:{padding:'10px 14px',background:'#118e6d',color:'#fff',border:0,borderRadius:8,fontWeight:700,cursor:'pointer'},
- tabla:{borderCollapse:'collapse',width:'100%',background:'#f8fdfa',color:'#143126',marginBottom:12},
- th:{padding:9,background:'#0d7659',color:'#fff',border:'1px solid #add0c1'},
+ tabla:{borderCollapse:'collapse',width:'100%',minWidth:2100,background:'#f8fdfa',color:'#143126',marginBottom:12},
+ th:{padding:9,background:'#0d7659',color:'#fff',border:'1px solid #add0c1',position:'sticky',top:0,zIndex:2,whiteSpace:'nowrap'},
  td:{padding:9,border:'1px solid #c8ded4'},
  nota:{color:'#cce5dc',fontSize:13},error:{background:'#ffe1e1',color:'#822',padding:12,borderRadius:8},
  exito:{background:'#dbffdf',color:'#174a25',padding:12,borderRadius:8},
