@@ -47,6 +47,9 @@ export async function POST(request) {
   const uid = authCreated.user.id
   const datos = { ...payload, usuario_almacen: identificador, nombre, numero_empleado: empleado }
   delete datos.clave
+  // Las fechas laborales son asignadas exclusivamente por Supabase.
+  delete datos.fecha_alta
+  delete datos.fecha_baja
   try {
     const { data, error } = await admin.rpc('qiora_usuarios_crear_servidor', { p_auth_id: uid, p_datos: datos, p_distrito: caller.distrito })
     if (error || !data) throw new Error(error?.message || 'No se pudo guardar el perfil')
