@@ -92,6 +92,8 @@ export default function ConfiguracionPage(){
         p_datos:{nombre:usuarioEditando.nombre,telefono:usuarioEditando.telefono,
           puesto:usuarioEditando.puesto,correo:usuarioEditando.correo,
           coordinador:usuarioEditando.coordinador,numero_empleado:usuarioEditando.numero_empleado,
+          usuario_ffm:usuarioEditando.usuario_ffm,fecha_nacimiento:usuarioEditando.fecha_nacimiento,
+          fecha_alta:usuarioEditando.fecha_alta,fecha_baja:usuarioEditando.fecha_baja,
           activo:usuarioEditando.activo,permisos:usuarioEditando.permisos}
       })
       if(e)throw e
@@ -155,8 +157,9 @@ export default function ConfiguracionPage(){
         <div style={s.cuadriculaUsuarios}>
           <label>Usuario / Almacén<input style={s.input} value={usuarioEditando.usuario_almacen||''} readOnly /></label>
           <label>Activo<select style={s.input} value={usuarioEditando.activo?'SI':'NO'} onChange={e=>editarCampoUsuario('activo',e.target.value==='SI')}><option value="SI">SI</option><option value="NO">NO</option></select></label>
-          {[['nombre','Nombre'],['telefono','Teléfono'],['puesto','Puesto'],['numero_empleado','Número de empleado'],['correo','Correo'],['coordinador','Coordinador']].map(([campo,nombre])=><label key={campo}>{nombre}<input style={{...s.input,width:'100%',boxSizing:'border-box'}} value={usuarioEditando[campo]||''} onChange={e=>editarCampoUsuario(campo,e.target.value)}/></label>)}
+          {[['nombre','Nombre'],['telefono','Teléfono'],['puesto','Puesto'],['numero_empleado','Número de empleado'],['correo','Correo'],['coordinador','Coordinador'],['usuario_ffm','Usuario FFM']].map(([campo,nombre])=><label key={campo}>{nombre}<input style={{...s.input,width:'100%',boxSizing:'border-box'}} value={usuarioEditando[campo]||''} onChange={e=>editarCampoUsuario(campo,e.target.value)}/></label>)}
           <label>Distrito<input readOnly style={s.input} value={usuarioEditando.distrito||''}/></label>
+          {[['fecha_nacimiento','Fecha de nacimiento'],['fecha_alta','Fecha de alta'],['fecha_baja','Fecha de baja']].map(([campo,nombre])=><label key={campo}>{nombre}<input type="date" style={{...s.input,width:'100%',boxSizing:'border-box'}} value={usuarioEditando[campo]||''} onChange={e=>editarCampoUsuario(campo,e.target.value)}/></label>)}
         </div>
         <h3>Permisos por botón / columnas ALMACEN_USUARIOS</h3>
         <p style={s.nota}>Permisos seleccionados: {permisosActivos} de {permisosDisponibles.length}. Solo se muestran permisos existentes en tu base de datos.</p>
@@ -168,12 +171,12 @@ export default function ConfiguracionPage(){
         <select style={s.input} value={filtroActivos} onChange={e=>setFiltroActivos(e.target.value)}><option value="TODOS">Todos los usuarios</option><option value="SI">Activos</option><option value="NO">No activos</option></select>
         <button type="button" style={s.boton} disabled={cargando} onClick={cargarUsuarios}>Buscar / Actualizar</button>
       </div>
-      <p style={s.nota}>{usuarios.filter(u=>(filtroActivos==='TODOS'||(u.activo?'SI':'NO')===filtroActivos)&&normal([u.usuario_almacen,u.nombre,u.numero_empleado,u.telefono,u.puesto].join(' ')).includes(normal(busqueda))).length} usuario(s) encontrados.</p>
+      <p style={s.nota}>{usuarios.filter(u=>(filtroActivos==='TODOS'||(u.activo?'SI':'NO')===filtroActivos)&&normal([u.usuario_almacen,u.nombre,u.numero_empleado,u.usuario_ffm,u.telefono,u.puesto].join(' ')).includes(normal(busqueda))).length} usuario(s) encontrados.</p>
       <div style={{overflowX:'auto'}}><table style={s.tabla}><thead><tr>
-        {['Usuario / Almacén','Nombre','Teléfono','Puesto','Distrito','Número de empleado','Correo','Activo','Permisos','Acción'].map(h=><th key={h} style={s.th}>{h}</th>)}
+        {['Usuario / Almacén','Nombre','Teléfono','Puesto','Distrito','Número de empleado','Usuario FFM','Nacimiento','Fecha alta','Fecha baja','Correo','Activo','Permisos','Acción'].map(h=><th key={h} style={s.th}>{h}</th>)}
       </tr></thead><tbody>
-      {usuarios.filter(u=>(filtroActivos==='TODOS'||(u.activo?'SI':'NO')===filtroActivos)&&normal([u.usuario_almacen,u.nombre,u.numero_empleado,u.telefono,u.puesto].join(' ')).includes(normal(busqueda))).map(u=><tr key={u.id}>
-        {[u.usuario_almacen,u.nombre,u.telefono,u.puesto,u.distrito,u.numero_empleado,u.correo].map((v,i)=><td style={s.td} key={i}>{v||'-'}</td>)}
+      {usuarios.filter(u=>(filtroActivos==='TODOS'||(u.activo?'SI':'NO')===filtroActivos)&&normal([u.usuario_almacen,u.nombre,u.numero_empleado,u.usuario_ffm,u.telefono,u.puesto].join(' ')).includes(normal(busqueda))).map(u=><tr key={u.id}>
+        {[u.usuario_almacen,u.nombre,u.telefono,u.puesto,u.distrito,u.numero_empleado,u.usuario_ffm,u.fecha_nacimiento,u.fecha_alta,u.fecha_baja,u.correo].map((v,i)=><td style={s.td} key={i}>{v||'-'}</td>)}
         <td style={s.td}><strong style={{color:u.activo?'#087e55':'#b91c1c'}}>{u.activo?'SI':'NO ACTIVO'}</strong></td>
         <td style={s.td}>{Object.values(u.permisos||{}).filter(Boolean).length} permisos</td>
         <td style={s.td}><div style={{display:'flex',gap:6}}><button type="button" style={s.boton} onClick={()=>editarUsuario(u)}>Editar</button><button type="button" disabled={guardandoFicha} style={{...s.boton,background:u.activo?'#b91c1c':'#176b4d'}} onClick={()=>cambiarEstadoUsuario(u)}>{u.activo?'Desactivar':'Activar'}</button></div></td>
