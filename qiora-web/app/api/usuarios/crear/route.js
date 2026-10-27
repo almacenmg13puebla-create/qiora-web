@@ -20,11 +20,17 @@ export async function POST(request) {
   if (authError || !user) return responder('Sesión no válida.', 401)
   const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const { data: caller, error: callerError } = await admin.from('almacen_usuarios')
-    .select('distrito,activo,administrar_permisos').eq('auth_user_id', user.id).eq('activo', true).maybeSingle()
-  if (callerError || !caller || caller.administrar_permisos !== true) return responder('No autorizado para crear usuarios.', 403)
+    .select('distrito,activo,puesto,administrar_permisos').eq('auth_user_id', user.id).eq('activo', true).maybeSingle()
+  if (callerError || !caller || (caller.administrar_permisos !== true && String(caller.puesto||'').toUpperCase() !== 'ADMIN_'+String(caller.distrito||'').toUpperCase() && String(caller.puesto||'').toUpperCase() !== 'ADMIN_PADRE')) return responder('No autorizado para crear usuarios.', 403)
 
   let payload
   try { payload = await request.json() } catch { return responder('Datos JSON inválidos.') }
+  if (String(payload.puesto||'').toUpperCase().startsWith('ADMIN_') || String(payload.puesto||'').toUpperCase()==='ADMIN_PADRE') return responder('Los roles administrativos solo pueden asignarse mediante el procedimiento de alta de distrito.',403)
+  delete payload.distrito
+  delete payload.auth_user_id
+  delete payload.fecha_alta
+  delete payload.fecha_baja
+  if (payload.permisos && typeof payload.permisos === 'object') { for (const k of ['administrar_distritos','administrar_permisos']) delete payload.permisos[k] }
   const nombre = String(payload.nombre || '').trim()
   const identificador = String(payload.usuario_almacen || '').trim()
   const clave = String(payload.clave || '')
