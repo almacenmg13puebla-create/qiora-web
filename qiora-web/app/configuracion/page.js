@@ -77,6 +77,7 @@ export default function ConfiguracionPage(){
   const [distritoEditando,setDistritoEditando]=useState('')
   const [distritoForm,setDistritoForm]=useState({centro:'',nombre_region:'',token_excel:'',activo:true})
   const [guardandoDistrito,setGuardandoDistrito]=useState(false)
+  const [creandoAdminDistrito,setCreandoAdminDistrito]=useState('')
   async function cargarDistritos(){
     setCargando(true);setError('')
     try{
@@ -116,6 +117,24 @@ export default function ConfiguracionPage(){
       await cargarDistritos()
     }catch(e){setError(e.message||'No se pudo guardar el distrito')}
     finally{setGuardandoDistrito(false)}
+  }
+  async function crearAdminExistente(centro){
+    if(creandoAdminDistrito)return
+    if(!window.confirm('¿Crear '+ 'ADMIN_'+centro +' para el distrito '+centro+'? La contraseña temporal se mostrará solo una vez.'))return
+    setCreandoAdminDistrito(centro);setError('');setAviso('')
+    try{
+      const {data:{session}}=await supabase.auth.getSession()
+      if(!session?.access_token)throw new Error('Sesión caducada. Vuelve a iniciar sesión.')
+      const response=await fetch('/api/distritos/crear-administrador',{
+        method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},
+        body:JSON.stringify({centro})
+      })
+      const result=await response.json()
+      if(!response.ok)throw new Error(result.error||'No se pudo crear administrador')
+      setAviso('Administrador creado: '+result.usuario+'. CLAVE TEMPORAL (cópiala ahora): '+result.clave_temporal+'. No volverá a mostrarse.')
+      await cargarDistritos()
+    }catch(e){setError(e.message||'No fue posible crear el administrador')}
+    finally{setCreandoAdminDistrito('')}
   }
   function editarDistrito(d){
     setDistritoEditando(d.centro)
@@ -227,7 +246,7 @@ export default function ConfiguracionPage(){
     seccion==='distritos' ? <section style={s.panel}>
       <h2>Administrar Distritos</h2>
       {!esPadre?<p style={s.error}>Acceso restringido. Solo ADMIN_PADRE puede consultar y configurar distritos.</p>:<>
-        <p style={s.nota}>Al crear distrito se genera ADMIN_CENTRO (ej. ADMIN_MG13), con una clave temporal única. Copia la clave al guardar: no se mostrará de nuevo. No modifica usuarios existentes ni revela TOKEN_EXCEL.</p>
+        <p style={s.nota}>Al crear distrito se genera ADMIN_CENTRO (ej. ADMIN_MG13), con una clave temporal única. Copia la clave al guardar: no se mostrará de nuevo. Para distritos existentes usa «Crear administrador». No modifica usuarios existentes ni revela TOKEN_EXCEL.</p>
         <div style={s.cuadriculaUsuarios}>
           <label>Centro<input style={{...s.input,width:'100%',boxSizing:'border-box'}} maxLength={10} placeholder="MG13" value={distritoForm.centro} disabled={!!distritoEditando} onChange={e=>setDistritoForm(f=>({...f,centro:e.target.value.toUpperCase()}))}/></label>
           <label>Nombre o Región<input style={{...s.input,width:'100%',boxSizing:'border-box'}} maxLength={150} value={distritoForm.nombre_region} onChange={e=>setDistritoForm(f=>({...f,nombre_region:e.target.value}))}/></label>
@@ -239,9 +258,14 @@ export default function ConfiguracionPage(){
           <button style={s.regresar} onClick={()=>{setDistritoEditando('');setDistritoForm({centro:'',nombre_region:'',token_excel:'',activo:true})}}>Limpiar / Nuevo</button>
           <button style={s.boton} onClick={cargarDistritos}>Actualizar lista</button>
         </div>
-        <div style={{overflowX:'auto',overflowY:'auto',maxHeight:'60vh'}}><table style={{...s.tabla,minWidth:850}}><thead><tr>{['Centro','Nombre o Región','Activo','TOKEN_EXCEL','Acciones'].map(h=><th style={s.th} key={h}>{h}</th>)}</tr></thead><tbody>
-          {distritos.map(d=><tr key={d.centro}><td style={s.td}>{d.centro}</td><td style={s.td}>{d.nombre_region}</td><td style={s.td}>{d.activo?'SI':'NO ACTIVO'}</td><td style={s.td}>{d.tiene_token?'CONFIGURADO (OCULTO)':'SIN CONFIGURAR'}</td><td style={s.td}><button style={s.boton} onClick={()=>editarDistrito(d)}>Editar</button></td></tr>)}
-          {!distritos.length&&<tr><td colSpan={5} style={s.td}>No hay distritos registrados.</td></tr>}
+        <div style={{overflowX:'auto',overflowY:'auto',maxHeight:'60vh'}}><table style={{...s.tabla,minWidth:850}}><thead><tr>{['Centro','Nombre o Región','Activo','TOKEN_EXCEL','Administrador','Acciones'].map(h=><th style={s.th} key={h}>{h}</th>)}</tr></thead><tbody>
+          {distritos.map(d=><tr key={d.centro}><td style={s.td}>{d.centro}</td><td style={s.td}>{d.nombre_region}</td><td style={s.td}>{d.activo?'SI':'NO ACTIVO'}</td><td style={s.td}>{d.tiene_token?'CONFIGURADO (OCULTO)':'SIN CONFIGURAR'}</td><td style={s.td}>{d.tiene_admin?'CREADO':'SIN CREAR'}</td><td style={s.td}>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              <button style={s.boton} onClick={()=>editarDistrito(d)}>Editar</button>
+              {!d.tiene_admin&&<button style={s.boton} disabled={!!creandoAdminDistrito||!d.activo} onClick={()=>crearAdminExistente(d.centro)}>{creandoAdminDistrito===d.centro?'Creando...':'Crear administrador'}</button>}
+            </div>
+          </td></tr>)}
+          {!distritos.length&&<tr><td colSpan={6} style={s.td}>No hay distritos registrados.</td></tr>}
         </tbody></table></div>
       </>}
     </section> : seccion==='usuarios' ? <section style={s.panel}>
@@ -337,4 +361,3 @@ const s={
  permisosGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))',gap:9,marginBottom:20},
  permiso:{display:'flex',alignItems:'center',gap:8,background:'#07291f',border:'1px solid #42685b',padding:9,borderRadius:7}
 }
-
