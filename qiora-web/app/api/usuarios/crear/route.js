@@ -2,68 +2,68 @@ import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 
 export const runtime = 'nodejs'
-
-function responder(error, status = 400) {
-  return NextResponse.json({ ok: false, error }, { status })
-}
+const fail = (error, status=400) => NextResponse.json({ok:false,error},{status})
+const norm = value => String(value ?? '').trim().toUpperCase()
 
 export async function POST(request) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+  const publicKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!url || !anon || !serviceKey) return responder('Falta configurar SUPABASE_SERVICE_ROLE_KEY en Vercel (solo servidor).', 503)
-  const header = request.headers.get('authorization') || ''
-  if (!header.startsWith('Bearer ')) return responder('Sesión requerida.', 401)
-  const jwt = header.slice(7)
-  const authClient = createClient(url, anon, { auth: { persistSession: false, autoRefreshToken: false } })
-  const { data: { user }, error: authError } = await authClient.auth.getUser(jwt)
-  if (authError || !user) return responder('Sesión no válida.', 401)
-  const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
-  const { data: caller, error: callerError } = await admin.from('almacen_usuarios')
-    .select('distrito,activo,puesto,administrar_permisos').eq('auth_user_id', user.id).eq('activo', true).maybeSingle()
-  if (callerError || !caller || (caller.administrar_permisos !== true && String(caller.puesto||'').toUpperCase() !== 'ADMIN_'+String(caller.distrito||'').toUpperCase() && String(caller.puesto||'').toUpperCase() !== 'ADMIN_PADRE')) return responder('No autorizado para crear usuarios.', 403)
-
-  let payload
-  try { payload = await request.json() } catch { return responder('Datos JSON inválidos.') }
-  if (String(payload.puesto||'').toUpperCase().startsWith('ADMIN_') || String(payload.puesto||'').toUpperCase()==='ADMIN_PADRE') return responder('Los roles administrativos solo pueden asignarse mediante el procedimiento de alta de distrito.',403)
-  delete payload.distrito
-  delete payload.auth_user_id
-  delete payload.fecha_alta
-  delete payload.fecha_baja
-  if (payload.permisos && typeof payload.permisos === 'object') { for (const k of ['administrar_distritos','administrar_permisos']) delete payload.permisos[k] }
-  const nombre = String(payload.nombre || '').trim()
-  const identificador = String(payload.usuario_almacen || '').trim()
-  const clave = String(payload.clave || '')
-  const empleado = String(payload.numero_empleado || '').trim()
-  if (!/^[a-zA-Z0-9_-]{2,40}$/.test(identificador)) return responder('Usuario/almacén inválido (2 a 40 caracteres alfanuméricos).')
-  if (nombre.length < 3 || nombre.length > 200) return responder('Nombre inválido.')
-  if (clave.length < 6 || clave.length > 100) return responder('La clave debe contener entre 6 y 100 caracteres.')
-  if (empleado && !/^\d{1,30}$/.test(empleado)) return responder('Número de empleado inválido.')
-  const { data: repetido, error: checkError } = await admin.from('almacen_usuarios').select('id').eq('distrito', caller.distrito).eq('usuario_almacen', identificador).limit(1)
-  if (checkError) return responder('Error verificando duplicados: ' + checkError.message, 500)
-  if (repetido?.length) return responder('Ya existe ese usuario/almacén.')
-  const correoAutenticacion = `${identificador.toLowerCase()}@qiora.local`
-  // Mantener compatibilidad con el inicio de sesión existente de QIORA.
-  const { data: authCreated, error: createError } = await admin.auth.admin.createUser({
-    email: correoAutenticacion,
-    password: `QIORA#${clave}`,
-    email_confirm: true,
-  })
-  if (createError || !authCreated?.user) return responder('No se pudo crear la cuenta Auth: ' + (createError?.message || ''), 400)
-  const uid = authCreated.user.id
-  const datos = { ...payload, usuario_almacen: identificador, nombre, numero_empleado: empleado }
-  delete datos.clave
-  // Las fechas laborales son asignadas exclusivamente por Supabase.
-  delete datos.fecha_alta
-  delete datos.fecha_baja
-  try {
-    const { data, error } = await admin.rpc('qiora_usuarios_crear_servidor', { p_auth_id: uid, p_datos: datos, p_distrito: caller.distrito })
-    if (error || !data) throw new Error(error?.message || 'No se pudo guardar el perfil')
-    return NextResponse.json({ ok: true })
-  } catch (error) {
-    // Compensación: eliminar la cuenta Auth si falló la creación del perfil.
-    const { error: rollback } = await admin.auth.admin.deleteUser(uid)
-    if (rollback) return responder(`Fallo al crear el perfil (${error.message}). Requiere intervención administrativa para la cuenta Auth ${uid}.`, 500)
-    return responder(`Fallo al crear perfil: ${error.message}. Se revirtió el alta Auth.`, 500)
+  if (!url || !publicKey || !serviceKey) return fail('Variables Supabase incompletas en Vercel.',503)
+  const bearer = request.headers.get('authorization') || ''
+  if (!bearer.startsWith('Bearer ')) return fail('Inicia sesion.',401)
+  const publicClient = createClient(url,publicKey,{auth:{persistSession:false,autoRefreshToken:false}})
+  const {data:{user}={},error:sessionError} = await publicClient.auth.getUser(bearer.slice(7))
+  if (sessionError || !user) return fail('Sesion invalida.',401)
+  const admin = createClient(url,serviceKey,{auth:{persistSession:false,autoRefreshToken:false}})
+  const {data:actor,error:actorError} = await admin.from('almacen_usuarios')
+    .select('distrito,puesto,activo').eq('auth_user_id',user.id).maybeSingle()
+  if (actorError || !actor || actor.activo !== true) return fail('Usuario no autorizado.',403)
+  const parent = norm(actor.puesto)==='ADMIN_PADRE'
+  const localAdmin = norm(actor.puesto)==='ADMIN_'+norm(actor.distrito)
+  if (!parent && !localAdmin) return fail('Solo ADMIN_PADRE y el administrador de distrito pueden crear usuarios.',403)
+  let body
+  try { body=await request.json() } catch { return fail('Datos invalidos.') }
+  const distrito = parent ? norm(body.distrito || actor.distrito) : norm(actor.distrito)
+  if (!/^[A-Z]{2,5}[0-9]{1,5}$/.test(distrito)) return fail('Distrito invalido.')
+  if (!parent && body.distrito && norm(body.distrito)!==distrito) return fail('No puedes crear usuarios de otro distrito.',403)
+  const {data:district,error:districtError} = await admin.from('distritos').select('codigo,activo').eq('codigo',distrito).maybeSingle()
+  if (districtError || !district || !district.activo) return fail('Distrito inexistente o inactivo.')
+  const usuario_almacen=norm(body.usuario_almacen)
+  const nombre=String(body.nombre ?? '').trim()
+  const puesto=norm(body.puesto)
+  const clave=String(body.clave ?? '')
+  if (!/^[A-Z0-9_-]{2,40}$/.test(usuario_almacen)) return fail('Usuario/almacen invalido.')
+  if (nombre.length<3 || nombre.length>200) return fail('Nombre invalido.')
+  if (!puesto || puesto.startsWith('ADMIN')) return fail('No puedes asignar puestos administrativos.',403)
+  if (clave.length<10 || clave.length>100) return fail('La clave debe tener de 10 a 100 caracteres.')
+  const {data:existing,error:existingError} = await admin.from('almacen_usuarios')
+    .select('id').eq('usuario_almacen',usuario_almacen).limit(1)
+  if (existingError) return fail('Error al verificar duplicados.',500)
+  if (existing?.length) return fail('Ese usuario ya existe.')
+  const datos = {
+    usuario_almacen,nombre,puesto,
+    numero_empleado:String(body.numero_empleado ?? '').trim(),
+    telefono:String(body.telefono ?? '').trim(),
+    correo:String(body.correo ?? '').trim(),
+    coordinador:String(body.coordinador ?? '').trim(),
+    usuario_ffm:String(body.usuario_ffm ?? '').trim(),
+    fecha_nacimiento:body.fecha_nacimiento || null,
+    permisos:body.permisos && typeof body.permisos==='object' && !Array.isArray(body.permisos) ? body.permisos : {}
   }
+  // Compatibilidad con el esquema de inicio de sesion existente.
+  const {data:created,error:createError} = await admin.auth.admin.createUser({
+    email:`${usuario_almacen.toLowerCase()}@qiora.local`,password:`QIORA#${clave}`,email_confirm:true
+  })
+  if (createError || !created?.user) return fail('Error creando Auth: '+(createError?.message||''))
+  const uid=created.user.id
+  const {error:profileError} = await admin.rpc('qiora_usuarios_crear_servidor',{
+    p_auth_id:uid,p_datos:datos,p_distrito:distrito,p_actor_id:user.id
+  })
+  if (profileError) {
+    const {error:rollbackError} = await admin.auth.admin.deleteUser(uid)
+    if (rollbackError) return fail('Error de perfil y fallo de compensacion; requiere revision administrativa.',500)
+    return fail('No se pudo crear el usuario: '+profileError.message)
+  }
+  return NextResponse.json({ok:true,usuario_almacen,distrito})
 }
