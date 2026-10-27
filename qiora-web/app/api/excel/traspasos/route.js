@@ -1,3 +1,4 @@
+// API QIORA - Descarga de traspasos SAP por distrito
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 export const runtime = 'nodejs'
