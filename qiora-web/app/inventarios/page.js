@@ -1,14 +1,16 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
 
 const OPCIONES = [
   { id: 'STOCK_TECNICOS', titulo: 'Stock Técnicos', descripcion: 'Existencias asignadas a técnicos' },
+  { id: 'STOCK_ALMACEN', titulo: 'Stock Almacén', descripcion: 'Inventario del almacén del centro cargado desde SAP MB52' },
   { id: 'IQ09_EQUIPOS', titulo: 'Equipos IQ09', descripcion: 'Series, materiales y estados SAP' },
 ]
 const CAMPOS = {
+  STOCK_ALMACEN: [['centro','Centro'],['almacen','Almacén'],['material','Material'],['descripcion_material','Descripción'],['lote','Lote'],['libre_utilizacion','Libre utilización'],['trans_trasl','Tránsito/traslado'],['disponible','Disponible'],['denominacion_almacen','Denominación almacén']],
   STOCK_TECNICOS: [['almacen','Almacén'],['sku','SKU'],['material','Material'],['lote','Lote'],['tecnico','Técnico'],['cantidad','Cantidad'],['disponible','Cantidad disponible']],
   IQ09_EQUIPOS: [['almacen','Almacén'],['serie','Serie'],['material','Material'],['descripcion','Descripción'],['lote','Lote'],['estatus_sap','Estatus SAP'],['denom_status','Denominación'],['tipo_stock','Tipo de stock']],
 }
@@ -83,6 +85,7 @@ export default function InventariosPage() {
   const [exportando, setExportando] = useState(false)
   const [error, setError] = useState('')
   const esMateriales = tipo === 'STOCK_TECNICOS'
+  const esAlmacen = tipo === 'STOCK_ALMACEN'
   const esEquipos = tipo === 'IQ09_EQUIPOS'
   const columnas = esMateriales
     ? [['almacen','Almacén'],['tecnico','Técnico'],['sku','SKU'],['material','Material'],['grupo','Grupo'],['lote','Lote'],['disponible','Cantidad disponible']]
@@ -136,13 +139,14 @@ export default function InventariosPage() {
   }, [almacen, perfil, esMateriales, esEquipos])
 
   // Todos los filtros IQ09 se ejecutan en Supabase ANTES de paginar.
-  const consultaRpc = tipo === 'IQ09_EQUIPOS' ? 'qiora_consultar_equipos_filtrados' : tipo === 'STOCK_TECNICOS' ? 'qiora_consultar_materiales_filtrados' : 'qiora_consultar_inventario_v2'
+  // El inventario de almacen usa una RPC dedicada que valida usuario y distrito.
+  const consultaRpc = tipo === 'IQ09_EQUIPOS' ? 'qiora_consultar_equipos_filtrados' : tipo === 'STOCK_TECNICOS' ? 'qiora_consultar_materiales_filtrados' : 'qiora_consultar_stock_almacen'
   const preparar = filas => (filas||[]).filter(f => !esMateriales || normalizar(f.lote) !== 'TPE USADO')
   const argumentosConsulta = (numero, a, filtros) => esEquipos
     ? { p_almacen: a || null, p_estado: ({EN_TIEMPO:'EN TIEMPO', FUERA_TIEMPO:'FUERA DE TIEMPO', CRITICO:'CRÍTICO'})[filtros.estado] || 'TODOS', p_serie: filtros.serie || null, p_pagina: numero, p_limite: lim }
     : esMateriales
       ? { p_tipo: tipo, p_almacen: a || null, p_busqueda: filtros.busqueda || null, p_pagina: numero, p_limite: lim }
-      : { p_tipo: tipo, p_almacen: a || null, p_pagina: numero, p_limite: lim }
+      : { p_almacen: a || null, p_pagina: numero, p_limite: lim }
 
   function regresar() {
     if (!tipo) return router.push('/')
@@ -168,7 +172,7 @@ export default function InventariosPage() {
           : {}
       const { data, error: queryError } = await supabase.rpc(consultaRpc, argumentosConsulta(nuevaPagina, f, filtros))
       if (queryError) throw queryError
-      if (!data?.ok) throw new Error(data?.mensaje || 'No se pudo consultar el inventario.')
+      if (!data?.ok) throw new Error(data?.mensaje || 'No se pudo consultar el inventario. Verifica que la función qiora_consultar_stock_almacen esté instalada y que tengas permiso para consultar el distrito.')
       setRespuesta({...data,filas:preparar(data.filas)})
       setPagina(nuevaPagina)
       setFiltroAplicado(f)
@@ -255,7 +259,7 @@ export default function InventariosPage() {
 
   return <main style={s.pagina}><div style={s.marco}>
     <button type="button" style={s.regresar} onClick={regresar}>← {tipo ? 'Regresar a Inventarios' : 'Regresar al menú principal'}</button>
-    <header style={s.hero}><h1 style={{margin:0,fontSize:29}}>{tipo ? (esMateriales ? 'Técnicos - Materiales' : esEquipos ? 'Equipos' : OPCIONES.find(o=>o.id===tipo)?.titulo) : 'INVENTARIOS'}</h1><p style={{margin:'8px 0 0'}}>{!tipo ? 'Seleccione una opción de inventarios' : esMateriales ? 'Consulta de materiales cargados por técnico y almacén.' : esEquipos ? 'Consulta general de equipos por almacén o todos los almacenes.' : 'Consulta de existencias del distrito ' + perfil.distrito}</p></header>
+    <header style={s.hero}><h1 style={{margin:0,fontSize:29}}>{tipo ? (esMateriales ? 'Técnicos - Materiales' : esEquipos ? 'Equipos' : OPCIONES.find(o=>o.id===tipo)?.titulo) : 'INVENTARIOS'}</h1><p style={{margin:'8px 0 0'}}>{!tipo ? 'Seleccione una opción de inventarios' : esMateriales ? 'Consulta de materiales cargados por técnico y almacén.' : esEquipos ? 'Consulta general de equipos por almacén o todos los almacenes.' : esAlmacen ? 'Consulta de existencias del almacén del centro (MB52).' : 'Consulta de existencias del distrito ' + perfil.distrito}</p></header>
     {!tipo ? <section style={s.menu}>{adminCatalogos && <><button type="button" style={s.opcion} onClick={()=>router.push('/inventarios/catalogos?tab=materiales')}><strong>Administrar Materiales</strong><small style={{display:'block',marginTop:9}}>Agregar, editar, activar y desactivar materiales</small></button><button type="button" style={s.opcion} onClick={()=>router.push('/inventarios/catalogos?tab=grupos')}><strong>Administrar Grupos</strong><small style={{display:'block',marginTop:9}}>Agregar, editar, activar y desactivar grupos</small></button></>}{OPCIONES.map(o => <button type="button" key={o.id} style={s.opcion} onClick={() => abrir(o.id)}><strong>{o.id==='STOCK_TECNICOS'?'Técnicos - Materiales':o.id==='IQ09_EQUIPOS'?'Equipos':o.titulo}</strong><small style={{display:'block',marginTop:9}}>{o.descripcion}</small></button>)}</section> : <>
       <section style={s.panelOscuro}>
         <div style={s.filtros}>
@@ -263,6 +267,7 @@ export default function InventariosPage() {
           {(esMateriales || esEquipos) && <label style={s.campo}>{esMateriales?'Técnico':'Técnico responsable'}<input style={s.input} readOnly value={almacen ? tecnicoResuelto : 'Todos los técnicos autorizados'} placeholder="Automático por almacén"/></label>}
           {esEquipos && <label style={s.campo}>Estado<select style={s.input} value={estado} onChange={e=>{setEstado(e.target.value);setRespuesta(null);setPagina(1)}}><option value="">Todos</option><option value="EN_TIEMPO">Equipo en Tiempo (menos de 15 días)</option><option value="FUERA_TIEMPO">Equipos fuera de tiempo (15 a 30 días)</option><option value="CRITICO">Equipo Crítico (más de 30 días)</option></select></label>}
           {esMateriales && <label style={s.campo}>SKU, material o grupo<input style={s.input} value={buscador} placeholder="Escribe SKU, material o grupo" onChange={e=>{setBuscador(e.target.value);setRespuesta(null);setPagina(1)}}/></label>}
+          {esAlmacen && <p style={{...s.aviso,gridColumn:'1 / -1',marginTop:0}}>Consulta el almacén que SAP ha cargado para este centro. Puedes filtrar por código de almacén o dejarlo vacío para ver los autorizados.</p>}
           {esEquipos && <label style={{...s.campo,gridColumn:'1 / -1'}}>Serie (opcional)<input style={s.input} value={serie} placeholder="Escanea o captura la serie" onChange={e=>{setSerie(e.target.value.toUpperCase());setRespuesta(null);setPagina(1)}}/></label>}
         </div>
         <div style={s.acciones}>
@@ -270,7 +275,7 @@ export default function InventariosPage() {
           {esEquipos && <>{btn('Enviar por WhatsApp',compartirWhatsapp,true,!respuesta||cambiosEquiposPendientes||exportando)}{btn('Descargar Excel',()=>exportar('Excel'),true,!respuesta||cambiosEquiposPendientes||exportando)}</>}
           {!esEquipos && respuesta && <>{btn('Excel',()=>exportar('Excel'),true,exportando)}{btn('PDF',()=>exportar('PDF'),true,exportando)}</>}
         </div>
-        <p style={s.aviso}>Técnicos - Materiales excluye TPE USADO; SKU, nombre y grupo se buscan en Supabase antes de paginar, con grupos del catálogo dinámico. Equipos filtra por estado y serie en Supabase antes de paginar; al cambiar un filtro se limpia la consulta anterior y debes presionar Buscar; Excel y WhatsApp respetan los filtros consultados. Los estados son excluyentes: 0 a 14 días en tiempo, 15 a 30 días fuera de tiempo y desde 31 días crítico. WhatsApp abre el mensaje para confirmar el envío.</p>{cambiosEquiposPendientes && <p style={s.aviso}>Cambiaste los filtros. Pulsa Buscar para actualizar la consulta antes de exportar o enviar.</p>}
+        <p style={s.aviso}>Stock Almacén muestra la información guardada por MB52; la celda C2 se usa en Excel para la descarga SAP, no se lee desde esta página. Técnicos - Materiales excluye TPE USADO; SKU, nombre y grupo se buscan en Supabase antes de paginar, con grupos del catálogo dinámico. Equipos filtra por estado y serie en Supabase antes de paginar; al cambiar un filtro se limpia la consulta anterior y debes presionar Buscar; Excel y WhatsApp respetan los filtros consultados. Los estados son excluyentes: 0 a 14 días en tiempo, 15 a 30 días fuera de tiempo y desde 31 días crítico. WhatsApp abre el mensaje para confirmar el envío.</p>{cambiosEquiposPendientes && <p style={s.aviso}>Cambiaste los filtros. Pulsa Buscar para actualizar la consulta antes de exportar o enviar.</p>}
       </section>
       {error && <p role="alert" style={s.error}>{error}</p>}{advertencia && <p style={s.aviso}>{advertencia}</p>}
       <section style={s.panelOscuro}>
