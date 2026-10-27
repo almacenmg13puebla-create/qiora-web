@@ -94,14 +94,26 @@ export default function ConfiguracionPage(){
       const nombre=String(distritoForm.nombre_region||'').trim()
       if(!/^[A-Z]{2,5}[0-9]{1,5}$/.test(centro))throw new Error('Centro inválido. Ejemplo: MG13, ME13 o MG19.')
       if(!nombre)throw new Error('Captura Nombre o Región.')
-      const {error:e}=await supabase.rpc('qiora_distritos_guardar',{
-        p_centro:centro,p_nombre_region:nombre,p_token_excel:distritoForm.token_excel||null,
-        p_activo:distritoForm.activo,p_centro_original:distritoEditando||null
-      })
-      if(e)throw e
+      if (!distritoEditando) {
+        const {data:{session}}=await supabase.auth.getSession()
+        if(!session?.access_token)throw new Error('Sesión caducada.')
+        const respuesta=await fetch('/api/distritos/crear',{
+          method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},
+          body:JSON.stringify({centro,nombre_region:nombre,token_excel:distritoForm.token_excel||null,activo:distritoForm.activo})
+        })
+        const resultado=await respuesta.json()
+        if(!respuesta.ok)throw new Error(resultado.error||'No se pudo crear distrito y administrador')
+        setAviso('Distrito '+centro+' creado. Administrador: '+resultado.usuario+'. Contraseña temporal: '+resultado.clave_temporal+' (cópiala ahora; no se mostrará otra vez).')
+      } else {
+        const {error:e}=await supabase.rpc('qiora_distritos_guardar',{
+          p_centro:centro,p_nombre_region:nombre,p_token_excel:distritoForm.token_excel||null,
+          p_activo:distritoForm.activo,p_centro_original:distritoEditando
+        })
+        if(e)throw e
+        setAviso('Distrito actualizado. TOKEN_EXCEL permanece oculto.')
+      }
       setDistritoEditando('');setDistritoForm({centro:'',nombre_region:'',token_excel:'',activo:true})
       await cargarDistritos()
-      setAviso('Distrito guardado correctamente. El token nunca se muestra en pantalla.')
     }catch(e){setError(e.message||'No se pudo guardar el distrito')}
     finally{setGuardandoDistrito(false)}
   }
@@ -215,7 +227,7 @@ export default function ConfiguracionPage(){
     seccion==='distritos' ? <section style={s.panel}>
       <h2>Administrar Distritos</h2>
       {!esPadre?<p style={s.error}>Acceso restringido. Solo ADMIN_PADRE puede consultar y configurar distritos.</p>:<>
-        <p style={s.nota}>Centro, Nombre o Región y TOKEN_EXCEL. Los tokens existentes se mantienen ocultos. Los usuarios y sus distritos actuales se conservan.</p>
+        <p style={s.nota}>Al crear distrito se genera ADMIN_CENTRO (ej. ADMIN_MG13), con una clave temporal única. Copia la clave al guardar: no se mostrará de nuevo. No modifica usuarios existentes ni revela TOKEN_EXCEL.</p>
         <div style={s.cuadriculaUsuarios}>
           <label>Centro<input style={{...s.input,width:'100%',boxSizing:'border-box'}} maxLength={10} placeholder="MG13" value={distritoForm.centro} disabled={!!distritoEditando} onChange={e=>setDistritoForm(f=>({...f,centro:e.target.value.toUpperCase()}))}/></label>
           <label>Nombre o Región<input style={{...s.input,width:'100%',boxSizing:'border-box'}} maxLength={150} value={distritoForm.nombre_region} onChange={e=>setDistritoForm(f=>({...f,nombre_region:e.target.value}))}/></label>
@@ -325,3 +337,4 @@ const s={
  permisosGrid:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))',gap:9,marginBottom:20},
  permiso:{display:'flex',alignItems:'center',gap:8,background:'#07291f',border:'1px solid #42685b',padding:9,borderRadius:7}
 }
+
