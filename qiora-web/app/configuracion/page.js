@@ -75,15 +75,39 @@ export default function ConfiguracionPage(){
   const [esPadre,setEsPadre]=useState(false)
   const [distritos,setDistritos]=useState([])
   const [distritoEditando,setDistritoEditando]=useState('')
-  const [distritoForm,setDistritoForm]=useState({centro:'',nombre_region:'',token_excel:'',activo:true})
+  const [distritoForm,setDistritoForm]=useState({centro:'',nombre_region:'',token_excel:'',token_traspasos:'',chat_traspasos:'',activo:true})
+  const [configTelegram,setConfigTelegram]=useState({})
   const [guardandoDistrito,setGuardandoDistrito]=useState(false)
   const [creandoAdminDistrito,setCreandoAdminDistrito]=useState('')
+  async function cargarTelegramDistritos(){
+    try{
+      const {data:{session}}=await supabase.auth.getSession()
+      if(!session?.access_token)return
+      const r=await fetch('/api/distritos/telegram',{headers:{Authorization:'Bearer '+session.access_token},cache:'no-store'})
+      const j=await r.json()
+      if(!r.ok)throw new Error(j.error||'No se pudo consultar Telegram')
+      setConfigTelegram(j.distritos||{})
+    }catch(e){setError(e.message||'No se pudo consultar Telegram')}
+  }
+  async function guardarTelegramDistrito(centro,token,chat){
+    if(!token&&!chat)return
+    const {data:{session}}=await supabase.auth.getSession()
+    if(!session?.access_token)throw new Error('Sesión caducada')
+    const r=await fetch('/api/distritos/telegram',{
+      method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},
+      body:JSON.stringify({centro,token_traspasos:token||'',chat_traspasos:chat||''})
+    })
+    const j=await r.json()
+    if(!r.ok)throw new Error(j.error||'No se pudo guardar Telegram')
+    await cargarTelegramDistritos()
+  }
   async function cargarDistritos(){
     setCargando(true);setError('')
     try{
       const {data,error:e}=await supabase.rpc('qiora_distritos_listar')
       if(e)throw e
       setDistritos(Array.isArray(data)?data:[])
+      await cargarTelegramDistritos()
     }catch(e){setError(e.message||'No se pudieron cargar los distritos')}
     finally{setCargando(false)}
   }
@@ -113,7 +137,8 @@ export default function ConfiguracionPage(){
         if(e)throw e
         setAviso('Distrito actualizado. TOKEN_EXCEL permanece oculto.')
       }
-      setDistritoEditando('');setDistritoForm({centro:'',nombre_region:'',token_excel:'',activo:true})
+      try{await guardarTelegramDistrito(centro,distritoForm.token_traspasos,distritoForm.chat_traspasos)}catch(err){setAviso('Distrito guardado, pero TELEGRAM no se guardó: '+err.message)}
+      setDistritoEditando('');setDistritoForm({centro:'',nombre_region:'',token_excel:'',token_traspasos:'',chat_traspasos:'',activo:true})
       await cargarDistritos()
     }catch(e){setError(e.message||'No se pudo guardar el distrito')}
     finally{setGuardandoDistrito(false)}
@@ -138,7 +163,7 @@ export default function ConfiguracionPage(){
   }
   function editarDistrito(d){
     setDistritoEditando(d.centro)
-    setDistritoForm({centro:d.centro,nombre_region:d.nombre_region,token_excel:'',activo:d.activo})
+    setDistritoForm({centro:d.centro,nombre_region:d.nombre_region,token_excel:'',token_traspasos:'',chat_traspasos:configTelegram[d.centro]?.chat_traspasos||'',activo:d.activo})
     setAviso('Por seguridad, el token no se recupera. Deja TOKEN_EXCEL vacío para conservar el actual.')
   }
   async function cargarUsuarios(){
@@ -251,21 +276,23 @@ export default function ConfiguracionPage(){
           <label>Centro<input style={{...s.input,width:'100%',boxSizing:'border-box'}} maxLength={10} placeholder="MG13" value={distritoForm.centro} disabled={!!distritoEditando} onChange={e=>setDistritoForm(f=>({...f,centro:e.target.value.toUpperCase()}))}/></label>
           <label>Nombre o Región<input style={{...s.input,width:'100%',boxSizing:'border-box'}} maxLength={150} value={distritoForm.nombre_region} onChange={e=>setDistritoForm(f=>({...f,nombre_region:e.target.value}))}/></label>
           <label>TOKEN_EXCEL (oculto al guardar)<input style={{...s.input,width:'100%',boxSizing:'border-box'}} type="password" autoComplete="new-password" placeholder={distritoEditando?'Dejar vacío para conservar token':'Ingresar token'} value={distritoForm.token_excel} onChange={e=>setDistritoForm(f=>({...f,token_excel:e.target.value}))}/></label>
+          <label>TOKEN_TRASPASOS (solo ADMIN_PADRE)<input style={{...s.input,width:'100%',boxSizing:'border-box'}} type="password" autoComplete="new-password" placeholder={distritoEditando?'Vacío conserva el token actual':'Token nuevo de BotFather'} value={distritoForm.token_traspasos} onChange={e=>setDistritoForm(f=>({...f,token_traspasos:e.target.value}))}/></label>
+          <label>CHAT_TRASPASOS (grupo Telegram)<input style={{...s.input,width:'100%',boxSizing:'border-box'}} type="text" placeholder="-1001234567890" value={distritoForm.chat_traspasos} onChange={e=>setDistritoForm(f=>({...f,chat_traspasos:e.target.value}))}/></label>
           <label>Estado<select style={s.input} value={distritoForm.activo?'SI':'NO'} onChange={e=>setDistritoForm(f=>({...f,activo:e.target.value==='SI'}))}><option value="SI">ACTIVO</option><option value="NO">NO ACTIVO</option></select></label>
         </div>
         <div style={s.herramientas}>
           <button style={s.boton} disabled={guardandoDistrito} onClick={guardarDistrito}>{guardandoDistrito?'Guardando...':distritoEditando?'Guardar cambios':'Crear distrito'}</button>
-          <button style={s.regresar} onClick={()=>{setDistritoEditando('');setDistritoForm({centro:'',nombre_region:'',token_excel:'',activo:true})}}>Limpiar / Nuevo</button>
+          <button style={s.regresar} onClick={()=>{setDistritoEditando('');setDistritoForm({centro:'',nombre_region:'',token_excel:'',token_traspasos:'',chat_traspasos:'',activo:true})}}>Limpiar / Nuevo</button>
           <button style={s.boton} onClick={cargarDistritos}>Actualizar lista</button>
         </div>
-        <div style={{overflowX:'auto',overflowY:'auto',maxHeight:'60vh'}}><table style={{...s.tabla,minWidth:850}}><thead><tr>{['Centro','Nombre o Región','Activo','TOKEN_EXCEL','Administrador','Acciones'].map(h=><th style={s.th} key={h}>{h}</th>)}</tr></thead><tbody>
-          {distritos.map(d=><tr key={d.centro}><td style={s.td}>{d.centro}</td><td style={s.td}>{d.nombre_region}</td><td style={s.td}>{d.activo?'SI':'NO ACTIVO'}</td><td style={s.td}>{d.tiene_token?'CONFIGURADO (OCULTO)':'SIN CONFIGURAR'}</td><td style={s.td}>{d.tiene_admin?'CREADO':'SIN CREAR'}</td><td style={s.td}>
+        <div style={{overflowX:'auto',overflowY:'auto',maxHeight:'60vh'}}><table style={{...s.tabla,minWidth:850}}><thead><tr>{['Centro','Nombre o Región','Activo','TOKEN_EXCEL','TOKEN_TRASPASOS','CHAT_TRASPASOS','Administrador','Acciones'].map(h=><th style={s.th} key={h}>{h}</th>)}</tr></thead><tbody>
+          {distritos.map(d=><tr key={d.centro}><td style={s.td}>{d.centro}</td><td style={s.td}>{d.nombre_region}</td><td style={s.td}>{d.activo?'SI':'NO ACTIVO'}</td><td style={s.td}>{d.tiene_token?'CONFIGURADO (OCULTO)':'SIN CONFIGURAR'}</td><td style={s.td}>{configTelegram[d.centro]?.tiene_token_traspasos?'CONFIGURADO (OCULTO)':'SIN CONFIGURAR'}</td><td style={s.td}>{configTelegram[d.centro]?.chat_traspasos||'SIN CONFIGURAR'}</td><td style={s.td}>{d.tiene_admin?'CREADO':'SIN CREAR'}</td><td style={s.td}>
             <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
               <button style={s.boton} onClick={()=>editarDistrito(d)}>Editar</button>
               {!d.tiene_admin&&<button style={s.boton} disabled={!!creandoAdminDistrito||!d.activo} onClick={()=>crearAdminExistente(d.centro)}>{creandoAdminDistrito===d.centro?'Creando...':'Crear administrador'}</button>}
             </div>
           </td></tr>)}
-          {!distritos.length&&<tr><td colSpan={6} style={s.td}>No hay distritos registrados.</td></tr>}
+          {!distritos.length&&<tr><td colSpan={8} style={s.td}>No hay distritos registrados.</td></tr>}
         </tbody></table></div>
       </>}
     </section> : seccion==='usuarios' ? <section style={s.panel}>
