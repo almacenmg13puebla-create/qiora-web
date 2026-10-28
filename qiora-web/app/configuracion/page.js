@@ -443,7 +443,7 @@ export default function ConfiguracionPage() {
       } =
         await supabase
           .from(
-            'CONFIG_HORARIOS'
+            'config_horarios'
           )
           .select(`
             dia,
@@ -680,7 +680,7 @@ export default function ConfiguracionPage() {
         } =
           await supabase
             .from(
-              'CONFIG_HORARIOS'
+              'config_horarios'
             )
             .update(
               registro
@@ -720,7 +720,7 @@ export default function ConfiguracionPage() {
         } =
           await supabase
             .from(
-              'CONFIG_HORARIOS'
+              'config_horarios'
             )
             .select(
               'dia,fecha'
@@ -751,7 +751,7 @@ export default function ConfiguracionPage() {
           } =
             await supabase
               .from(
-                'CONFIG_HORARIOS'
+                'config_horarios'
               )
               .update(
                 registro
@@ -782,7 +782,7 @@ export default function ConfiguracionPage() {
           } =
             await supabase
               .from(
-                'CONFIG_HORARIOS'
+                'config_horarios'
               )
               .insert(
                 registro
