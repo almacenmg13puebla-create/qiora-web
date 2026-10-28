@@ -156,9 +156,10 @@ export default function Home() {
     )
   }
 
-  const puedeVerSolicitudes = perfil.ver_solicitud === true || perfil.administrar_permisos === true || perfil.acceso_almacen === true || perfil.acceso_coordinador === true
+  const esAdminPadre = String(perfil.puesto ?? '').trim().toUpperCase() === 'ADMIN_PADRE'
+  const puedeVerSolicitudes = esAdminPadre || perfil.ver_solicitud === true || perfil.administrar_permisos === true || perfil.acceso_almacen === true || perfil.acceso_coordinador === true
   const modulos = MODULOS.filter((modulo) => modulo.permiso === null || perfil[modulo.permiso] === true || (modulo.permiso === 'ver_solicitud' && puedeVerSolicitudes))
-  const modulosAutorizados = MODULOS.filter((modulo) => modulo.permiso !== null && perfil[modulo.permiso] === true)
+  const modulosAutorizados = MODULOS.filter((modulo) => modulo.permiso !== null && (perfil[modulo.permiso] === true || (modulo.permiso === 'ver_solicitud' && puedeVerSolicitudes)))
   const disponibles = modulos.filter((modulo) => modulo.disponible)
 
   return (
