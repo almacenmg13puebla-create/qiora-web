@@ -11,7 +11,6 @@ import { supabase } from '../../lib/supabase'
 
 const MENU = [
   ['Accesos especiales', null],
-  ['WhatsApp destino', null],
   ['Actualizar máximos', 'catalogos'],
   ['Materiales', 'materiales'],
   ['Distritos', 'distritos'],
@@ -20,13 +19,7 @@ const MENU = [
   ['Costos ODOO', 'costos_odoo'],
   ['Herramienta ODOO', 'herramienta_odoo_inventario'],
   ['Exportar fechas', null],
-  ['Recarga UTP', null],
-  ['Ver cargas UTP', null],
   ['Usuarios', 'usuarios'],
-  ['Permisos', null],
-  ['Ver justificaciones UTP', null],
-  ['PDF equipos admin', null],
-  ['Visibilidad BRM', null],
   ['RECUS TP', null],
   ['Actualizar macro Excel', null],
   ['Grupos de materiales', 'grupos_materiales']
@@ -113,13 +106,7 @@ const nuevoUsuarioVacio = () => ({
   coordinador: '',
   usuario_ffm: '',
   fecha_nacimiento: '',
-
-  /*
-    NUEVO:
-    ID privado del técnico en Telegram.
-  */
   telegram_chat_id: '',
-
   activo: true,
   permisos: {}
 })
@@ -132,11 +119,6 @@ export default function ConfiguracionPage() {
 
   const [usuarios, setUsuarios] =
     useState([])
-
-  const [
-    guardandoUsuario,
-    setGuardandoUsuario
-  ] = useState('')
 
   const [permitido, setPermitido] =
     useState(false)
@@ -239,7 +221,7 @@ export default function ConfiguracionPage() {
   ] = useState('')
 
   /*
-    VALIDAR PERMISOS DE CONFIGURACIÓN
+    VALIDAR ACCESO A CONFIGURACIÓN
   */
   useEffect(() => {
     let vivo = true
@@ -251,10 +233,7 @@ export default function ConfiguracionPage() {
           error: authError
         } = await supabase.auth.getUser()
 
-        if (
-          authError ||
-          !user
-        ) {
+        if (authError || !user) {
           router.replace('/')
           return
         }
@@ -266,9 +245,7 @@ export default function ConfiguracionPage() {
           'qiora_config_es_admin'
         )
 
-        if (e) {
-          throw e
-        }
+        if (e) throw e
 
         if (vivo) {
           setPermitido(
@@ -277,6 +254,7 @@ export default function ConfiguracionPage() {
         }
 
       } catch (e) {
+
         if (vivo) {
           setError(
             e.message ||
@@ -285,6 +263,7 @@ export default function ConfiguracionPage() {
         }
 
       } finally {
+
         if (vivo) {
           setValidando(false)
         }
@@ -294,10 +273,11 @@ export default function ConfiguracionPage() {
     return () => {
       vivo = false
     }
+
   }, [router])
 
   /*
-    CARGA GENERAL DE CATÁLOGOS
+    CATÁLOGOS
   */
   const cargar =
     useCallback(
@@ -335,9 +315,7 @@ export default function ConfiguracionPage() {
                   }
                 )
 
-          if (e) {
-            throw e
-          }
+          if (e) throw e
 
           setFilas(
             Array.isArray(
@@ -354,6 +332,7 @@ export default function ConfiguracionPage() {
           )
 
         } catch (e) {
+
           setError(
             e.message ||
             'Error al cargar'
@@ -362,6 +341,7 @@ export default function ConfiguracionPage() {
           setFilas([])
 
         } finally {
+
           setCargando(false)
         }
       },
@@ -372,7 +352,7 @@ export default function ConfiguracionPage() {
     )
 
   /*
-    TELEGRAM DE DISTRITOS
+    TELEGRAM DISTRITOS
   */
   async function cargarTelegramDistritos() {
     try {
@@ -385,8 +365,7 @@ export default function ConfiguracionPage() {
           .getSession()
 
       if (
-        !session
-          ?.access_token
+        !session?.access_token
       ) {
         return
       }
@@ -419,6 +398,7 @@ export default function ConfiguracionPage() {
       )
 
     } catch (e) {
+
       setError(
         e.message ||
         'No se pudo consultar Telegram'
@@ -431,10 +411,7 @@ export default function ConfiguracionPage() {
     token,
     chat
   ) {
-    if (
-      !token &&
-      !chat
-    ) {
+    if (!token && !chat) {
       return
     }
 
@@ -447,8 +424,7 @@ export default function ConfiguracionPage() {
         .getSession()
 
     if (
-      !session
-        ?.access_token
+      !session?.access_token
     ) {
       throw new Error(
         'Sesión caducada'
@@ -473,6 +449,7 @@ export default function ConfiguracionPage() {
           body:
             JSON.stringify({
               centro,
+
               token_traspasos:
                 token || '',
 
@@ -511,9 +488,7 @@ export default function ConfiguracionPage() {
           'qiora_distritos_listar'
         )
 
-      if (e) {
-        throw e
-      }
+      if (e) throw e
 
       setDistritos(
         Array.isArray(data)
@@ -524,20 +499,20 @@ export default function ConfiguracionPage() {
       await cargarTelegramDistritos()
 
     } catch (e) {
+
       setError(
         e.message ||
         'No se pudieron cargar los distritos'
       )
 
     } finally {
+
       setCargando(false)
     }
   }
 
   async function guardarDistrito() {
-    if (
-      guardandoDistrito
-    ) {
+    if (guardandoDistrito) {
       return
     }
 
@@ -577,6 +552,7 @@ export default function ConfiguracionPage() {
       }
 
       if (!distritoEditando) {
+
         const {
           data: {
             session
@@ -586,8 +562,7 @@ export default function ConfiguracionPage() {
             .getSession()
 
         if (
-          !session
-            ?.access_token
+          !session?.access_token
         ) {
           throw new Error(
             'Sesión caducada.'
@@ -598,8 +573,7 @@ export default function ConfiguracionPage() {
           await fetch(
             '/api/distritos/crear',
             {
-              method:
-                'POST',
+              method: 'POST',
 
               headers: {
                 'Content-Type':
@@ -632,9 +606,7 @@ export default function ConfiguracionPage() {
         const resultado =
           await respuesta.json()
 
-        if (
-          !respuesta.ok
-        ) {
+        if (!respuesta.ok) {
           throw new Error(
             resultado.error ||
             'No se pudo crear distrito y administrador'
@@ -652,6 +624,7 @@ export default function ConfiguracionPage() {
         )
 
       } else {
+
         const {
           error: e
         } =
@@ -678,9 +651,7 @@ export default function ConfiguracionPage() {
             }
           )
 
-        if (e) {
-          throw e
-        }
+        if (e) throw e
 
         setAviso(
           'Distrito actualizado. TOKEN_EXCEL permanece oculto.'
@@ -697,6 +668,7 @@ export default function ConfiguracionPage() {
         )
 
       } catch (err) {
+
         setAviso(
           'Distrito guardado, pero TELEGRAM no se guardó: ' +
           err.message
@@ -717,12 +689,14 @@ export default function ConfiguracionPage() {
       await cargarDistritos()
 
     } catch (e) {
+
       setError(
         e.message ||
         'No se pudo guardar el distrito'
       )
 
     } finally {
+
       setGuardandoDistrito(false)
     }
   }
@@ -730,16 +704,13 @@ export default function ConfiguracionPage() {
   async function crearAdminExistente(
     centro
   ) {
-    if (
-      creandoAdminDistrito
-    ) {
+    if (creandoAdminDistrito) {
       return
     }
 
     if (
       !window.confirm(
-        '¿Crear ' +
-        'ADMIN_' +
+        '¿Crear ADMIN_' +
         centro +
         ' para el distrito ' +
         centro +
@@ -766,8 +737,7 @@ export default function ConfiguracionPage() {
           .getSession()
 
       if (
-        !session
-          ?.access_token
+        !session?.access_token
       ) {
         throw new Error(
           'Sesión caducada. Vuelve a iniciar sesión.'
@@ -778,8 +748,7 @@ export default function ConfiguracionPage() {
         await fetch(
           '/api/distritos/crear-administrador',
           {
-            method:
-              'POST',
+            method: 'POST',
 
             headers: {
               'Content-Type':
@@ -800,9 +769,7 @@ export default function ConfiguracionPage() {
       const result =
         await response.json()
 
-      if (
-        !response.ok
-      ) {
+      if (!response.ok) {
         throw new Error(
           result.error ||
           'No se pudo crear administrador'
@@ -820,12 +787,14 @@ export default function ConfiguracionPage() {
       await cargarDistritos()
 
     } catch (e) {
+
       setError(
         e.message ||
         'No fue posible crear el administrador'
       )
 
     } finally {
+
       setCreandoAdminDistrito('')
     }
   }
@@ -862,9 +831,9 @@ export default function ConfiguracionPage() {
   }
 
   /*
-    ==============================
+    =========================
     USUARIOS
-    ==============================
+    =========================
   */
 
   async function cargarUsuarios() {
@@ -881,9 +850,7 @@ export default function ConfiguracionPage() {
           'qiora_usuarios_administracion_listar'
         )
 
-      if (e) {
-        throw e
-      }
+      if (e) throw e
 
       setUsuarios(
         Array.isArray(
@@ -902,23 +869,20 @@ export default function ConfiguracionPage() {
       )
 
     } catch (e) {
+
       setError(
         e.message ||
         'No se pudieron cargar usuarios'
       )
 
     } finally {
+
       setCargando(false)
     }
   }
 
-  /*
-    CREAR CUENTA NUEVA
-  */
   async function crearCuentaUsuario() {
-    if (
-      guardandoFicha
-    ) {
+    if (guardandoFicha) {
       return
     }
 
@@ -954,24 +918,18 @@ export default function ConfiguracionPage() {
 
       if (
         sessionError ||
-        !session
-          ?.access_token
+        !session?.access_token
       ) {
         throw new Error(
           'La sesión expiró. Inicia sesión nuevamente.'
         )
       }
 
-      /*
-        El objeto nuevoUsuario ya contiene:
-        telegram_chat_id
-      */
       const response =
         await fetch(
           '/api/usuarios/crear',
           {
-            method:
-              'POST',
+            method: 'POST',
 
             headers: {
               'Content-Type':
@@ -1026,12 +984,14 @@ export default function ConfiguracionPage() {
       )
 
     } catch (e) {
+
       setError(
         e.message ||
         'No se pudo crear el usuario'
       )
 
     } finally {
+
       setGuardandoFicha(false)
     }
   }
@@ -1071,9 +1031,6 @@ export default function ConfiguracionPage() {
     })
   }
 
-  /*
-    EDITAR USUARIO EXISTENTE
-  */
   async function guardarFichaUsuario() {
     if (
       !usuarioEditando ||
@@ -1127,9 +1084,6 @@ export default function ConfiguracionPage() {
                 usuarioEditando
                   .fecha_nacimiento,
 
-              /*
-                NUEVO CAMPO
-              */
               telegram_chat_id:
                 String(
                   usuarioEditando
@@ -1147,13 +1101,9 @@ export default function ConfiguracionPage() {
           }
         )
 
-      if (e) {
-        throw e
-      }
+      if (e) throw e
 
-      if (
-        data !== true
-      ) {
+      if (data !== true) {
         throw new Error(
           'No se confirmó el guardado'
         )
@@ -1170,12 +1120,14 @@ export default function ConfiguracionPage() {
       )
 
     } catch (e) {
+
       setError(
         e.message ||
         'No se pudo guardar el usuario'
       )
 
     } finally {
+
       setGuardandoFicha(false)
     }
   }
@@ -1211,9 +1163,7 @@ export default function ConfiguracionPage() {
           }
         )
 
-      if (e) {
-        throw e
-      }
+      if (e) throw e
 
       await cargarUsuarios()
 
@@ -1222,12 +1172,14 @@ export default function ConfiguracionPage() {
       )
 
     } catch (e) {
+
       setError(
         e.message ||
         'No se pudo actualizar el estado'
       )
 
     } finally {
+
       setGuardandoFicha(false)
     }
   }
@@ -1257,7 +1209,7 @@ export default function ConfiguracionPage() {
       : 0
 
   /*
-    ABRIR MÓDULO
+    ABRIR SECCIÓN
   */
   function abrir(tipo) {
     if (
@@ -1267,6 +1219,7 @@ export default function ConfiguracionPage() {
       router.push(
         '/inventarios/catalogos'
       )
+
       return
     }
 
@@ -1396,9 +1349,7 @@ export default function ConfiguracionPage() {
           }
         )
 
-      if (x) {
-        throw x
-      }
+      if (x) throw x
 
       setAviso(
         'Registro guardado en Supabase'
@@ -1413,12 +1364,14 @@ export default function ConfiguracionPage() {
       )
 
     } catch (x) {
+
       setError(
         x.message ||
         'No se pudo guardar'
       )
 
     } finally {
+
       setCargando(false)
     }
   }
@@ -1458,9 +1411,6 @@ export default function ConfiguracionPage() {
     seccion ===
       'costos_odoo'
 
-  /*
-    LISTA FILTRADA DE USUARIOS
-  */
   const usuariosFiltrados =
     usuarios.filter(
       u => {
@@ -1597,13 +1547,16 @@ export default function ConfiguracionPage() {
 
                   <button
                     key={label}
+
                     style={{
                       ...s.opcion,
+
                       opacity:
                         tipo
                           ? 1
                           : .68
                     }}
+
                     onClick={() =>
                       tipo
                         ? abrir(tipo)
@@ -1613,6 +1566,7 @@ export default function ConfiguracionPage() {
                             '» todavía no está implementado en esta versión web.'
                           )
                     }
+
                     type="button"
                   >
                     {label}
@@ -1655,23 +1609,30 @@ export default function ConfiguracionPage() {
                     <input
                       style={{
                         ...s.input,
-                        width: '100%',
+                        width:
+                          '100%',
                         boxSizing:
                           'border-box'
                       }}
+
                       maxLength={10}
                       placeholder="MG13"
+
                       value={
-                        distritoForm.centro
+                        distritoForm
+                          .centro
                       }
+
                       disabled={
                         !!distritoEditando
                       }
+
                       onChange={
                         e =>
                           setDistritoForm(
                             f => ({
                               ...f,
+
                               centro:
                                 e.target
                                   .value
@@ -1688,20 +1649,25 @@ export default function ConfiguracionPage() {
                     <input
                       style={{
                         ...s.input,
-                        width: '100%',
+                        width:
+                          '100%',
                         boxSizing:
                           'border-box'
                       }}
+
                       maxLength={150}
+
                       value={
                         distritoForm
                           .nombre_region
                       }
+
                       onChange={
                         e =>
                           setDistritoForm(
                             f => ({
                               ...f,
+
                               nombre_region:
                                 e.target
                                   .value
@@ -1717,26 +1683,32 @@ export default function ConfiguracionPage() {
                     <input
                       style={{
                         ...s.input,
-                        width: '100%',
+                        width:
+                          '100%',
                         boxSizing:
                           'border-box'
                       }}
+
                       type="password"
                       autoComplete="new-password"
+
                       placeholder={
                         distritoEditando
                           ? 'Dejar vacío para conservar token'
                           : 'Ingresar token'
                       }
+
                       value={
                         distritoForm
                           .token_excel
                       }
+
                       onChange={
                         e =>
                           setDistritoForm(
                             f => ({
                               ...f,
+
                               token_excel:
                                 e.target
                                   .value
@@ -1752,26 +1724,32 @@ export default function ConfiguracionPage() {
                     <input
                       style={{
                         ...s.input,
-                        width: '100%',
+                        width:
+                          '100%',
                         boxSizing:
                           'border-box'
                       }}
+
                       type="password"
                       autoComplete="new-password"
+
                       placeholder={
                         distritoEditando
                           ? 'Vacío conserva el token actual'
                           : 'Token nuevo de BotFather'
                       }
+
                       value={
                         distritoForm
                           .token_traspasos
                       }
+
                       onChange={
                         e =>
                           setDistritoForm(
                             f => ({
                               ...f,
+
                               token_traspasos:
                                 e.target
                                   .value
@@ -1787,21 +1765,26 @@ export default function ConfiguracionPage() {
                     <input
                       style={{
                         ...s.input,
-                        width: '100%',
+                        width:
+                          '100%',
                         boxSizing:
                           'border-box'
                       }}
+
                       type="text"
                       placeholder="-1001234567890"
+
                       value={
                         distritoForm
                           .chat_traspasos
                       }
+
                       onChange={
                         e =>
                           setDistritoForm(
                             f => ({
                               ...f,
+
                               chat_traspasos:
                                 e.target
                                   .value
@@ -1816,17 +1799,20 @@ export default function ConfiguracionPage() {
 
                     <select
                       style={s.input}
+
                       value={
                         distritoForm
                           .activo
                           ? 'SI'
                           : 'NO'
                       }
+
                       onChange={
                         e =>
                           setDistritoForm(
                             f => ({
                               ...f,
+
                               activo:
                                 e.target
                                   .value ===
@@ -1843,6 +1829,7 @@ export default function ConfiguracionPage() {
                         NO ACTIVO
                       </option>
                     </select>
+
                   </label>
 
                 </div>
@@ -1851,9 +1838,11 @@ export default function ConfiguracionPage() {
 
                   <button
                     style={s.boton}
+
                     disabled={
                       guardandoDistrito
                     }
+
                     onClick={
                       guardarDistrito
                     }
@@ -1869,6 +1858,7 @@ export default function ConfiguracionPage() {
 
                   <button
                     style={s.regresar}
+
                     onClick={() => {
                       setDistritoEditando(
                         ''
@@ -1889,6 +1879,7 @@ export default function ConfiguracionPage() {
 
                   <button
                     style={s.boton}
+
                     onClick={
                       cargarDistritos
                     }
@@ -1917,7 +1908,9 @@ export default function ConfiguracionPage() {
                   >
 
                     <thead>
+
                       <tr>
+
                         {[
                           'Centro',
                           'Nombre o Región',
@@ -1930,22 +1923,23 @@ export default function ConfiguracionPage() {
                         ].map(
                           h => (
                             <th
-                              style={
-                                s.th
-                              }
+                              style={s.th}
                               key={h}
                             >
                               {h}
                             </th>
                           )
                         )}
+
                       </tr>
+
                     </thead>
 
                     <tbody>
 
                       {distritos.map(
                         d => (
+
                           <tr
                             key={
                               d.centro
@@ -2017,6 +2011,7 @@ export default function ConfiguracionPage() {
 
                                 <button
                                   style={s.boton}
+
                                   onClick={() =>
                                     editarDistrito(
                                       d
@@ -2030,10 +2025,12 @@ export default function ConfiguracionPage() {
 
                                   <button
                                     style={s.boton}
+
                                     disabled={
                                       !!creandoAdminDistrito ||
                                       !d.activo
                                     }
+
                                     onClick={() =>
                                       crearAdminExistente(
                                         d.centro
@@ -2055,6 +2052,7 @@ export default function ConfiguracionPage() {
                             </td>
 
                           </tr>
+
                         )
                       )}
 
@@ -2092,7 +2090,7 @@ export default function ConfiguracionPage() {
             </h2>
 
             <p style={s.nota}>
-              Consulta, edita y administra usuarios. La tabla principal muestra únicamente almacén, técnico, estado y acciones. Los demás datos se administran desde Crear / Editar.
+              Consulta y administra usuarios. La tabla principal muestra únicamente almacén, técnico, estado y acciones. Los demás datos y permisos se administran desde Crear / Editar.
             </p>
 
             <div style={s.herramientas}>
@@ -2100,6 +2098,7 @@ export default function ConfiguracionPage() {
               <button
                 type="button"
                 style={s.boton}
+
                 onClick={() => {
                   setCreandoUsuario(
                     x => !x
@@ -2119,8 +2118,6 @@ export default function ConfiguracionPage() {
 
             </div>
 
-            {/* CREAR NUEVO USUARIO */}
-
             {creandoUsuario && (
 
               <div
@@ -2135,7 +2132,7 @@ export default function ConfiguracionPage() {
                 </h3>
 
                 <p style={s.nota}>
-                  El usuario se crea en Supabase Auth y en ALMACEN_USUARIOS. El distrito se asigna desde la sesión del administrador.
+                  El usuario se crea en Supabase Auth y ALMACEN_USUARIOS. El distrito se asigna desde la sesión del administrador.
                 </p>
 
                 <div style={s.cuadriculaUsuarios}>
@@ -2190,11 +2187,8 @@ export default function ConfiguracionPage() {
                     ) => (
 
                       <label
-                        key={
-                          campo
-                        }
+                        key={campo}
                       >
-
                         {label}
 
                         <input
@@ -2256,7 +2250,8 @@ export default function ConfiguracionPage() {
 
                       style={{
                         ...s.input,
-                        width: '100%',
+                        width:
+                          '100%',
                         boxSizing:
                           'border-box'
                       }}
@@ -2275,6 +2270,7 @@ export default function ConfiguracionPage() {
                           )
                       }
                     />
+
                   </label>
 
                   <label>
@@ -2307,7 +2303,9 @@ export default function ConfiguracionPage() {
                       <option value="NO">
                         NO
                       </option>
+
                     </select>
+
                   </label>
 
                 </div>
@@ -2372,9 +2370,11 @@ export default function ConfiguracionPage() {
                   <button
                     type="button"
                     style={s.boton}
+
                     disabled={
                       guardandoFicha
                     }
+
                     onClick={
                       crearCuentaUsuario
                     }
@@ -2389,6 +2389,7 @@ export default function ConfiguracionPage() {
                   <button
                     type="button"
                     style={s.regresar}
+
                     onClick={() =>
                       setCreandoUsuario(
                         false
@@ -2403,8 +2404,6 @@ export default function ConfiguracionPage() {
               </div>
 
             )}
-
-            {/* EDITAR USUARIO */}
 
             {usuarioEditando && (
 
@@ -2438,6 +2437,7 @@ export default function ConfiguracionPage() {
 
                       readOnly
                     />
+
                   </label>
 
                   <label>
@@ -2470,7 +2470,9 @@ export default function ConfiguracionPage() {
                       <option value="NO">
                         NO
                       </option>
+
                     </select>
+
                   </label>
 
                   {[
@@ -2515,9 +2517,7 @@ export default function ConfiguracionPage() {
                     ) => (
 
                       <label
-                        key={
-                          campo
-                        }
+                        key={campo}
                       >
 
                         {nombreCampo}
@@ -2572,6 +2572,7 @@ export default function ConfiguracionPage() {
                         ''
                       }
                     />
+
                   </label>
 
                   <label>
@@ -2582,7 +2583,8 @@ export default function ConfiguracionPage() {
 
                       style={{
                         ...s.input,
-                        width: '100%',
+                        width:
+                          '100%',
                         boxSizing:
                           'border-box'
                       }}
@@ -2602,6 +2604,7 @@ export default function ConfiguracionPage() {
                           )
                       }
                     />
+
                   </label>
 
                 </div>
@@ -2611,7 +2614,7 @@ export default function ConfiguracionPage() {
                 </h3>
 
                 <p style={s.nota}>
-                  Permisos seleccionados: {permisosActivos} de {permisosDisponibles.length}. Solo se muestran permisos existentes en tu base de datos.
+                  Permisos seleccionados: {permisosActivos} de {permisosDisponibles.length}.
                 </p>
 
                 <div style={s.permisosGrid}>
@@ -2670,9 +2673,11 @@ export default function ConfiguracionPage() {
                   <button
                     type="button"
                     style={s.boton}
+
                     disabled={
                       guardandoFicha
                     }
+
                     onClick={
                       guardarFichaUsuario
                     }
@@ -2687,6 +2692,7 @@ export default function ConfiguracionPage() {
                   <button
                     type="button"
                     style={s.regresar}
+
                     onClick={() =>
                       setUsuarioEditando(
                         null
@@ -2702,31 +2708,38 @@ export default function ConfiguracionPage() {
 
             )}
 
-            {/* BUSCADOR */}
-
             <div style={s.herramientas}>
 
               <input
                 style={s.input}
+
                 placeholder="Buscar almacén, técnico o Telegram Chat ID"
-                value={busqueda}
+
+                value={
+                  busqueda
+                }
+
                 onChange={
                   e =>
                     setBusqueda(
-                      e.target.value
+                      e.target
+                        .value
                     )
                 }
               />
 
               <select
                 style={s.input}
+
                 value={
                   filtroActivos
                 }
+
                 onChange={
                   e =>
                     setFiltroActivos(
-                      e.target.value
+                      e.target
+                        .value
                     )
                 }
               >
@@ -2741,12 +2754,17 @@ export default function ConfiguracionPage() {
                 <option value="NO">
                   No activos
                 </option>
+
               </select>
 
               <button
                 type="button"
                 style={s.boton}
-                disabled={cargando}
+
+                disabled={
+                  cargando
+                }
+
                 onClick={
                   cargarUsuarios
                 }
@@ -2759,8 +2777,6 @@ export default function ConfiguracionPage() {
             <p style={s.nota}>
               {usuariosFiltrados.length} usuario(s) encontrados.
             </p>
-
-            {/* TABLA SIMPLIFICADA */}
 
             <div
               style={{
@@ -2866,6 +2882,7 @@ export default function ConfiguracionPage() {
                             <button
                               type="button"
                               style={s.boton}
+
                               onClick={() =>
                                 editarUsuario(
                                   u
@@ -2916,12 +2933,14 @@ export default function ConfiguracionPage() {
                   {!usuariosFiltrados.length && (
 
                     <tr>
+
                       <td
                         colSpan={4}
                         style={s.td}
                       >
                         No hay usuarios.
                       </td>
+
                     </tr>
 
                   )}
@@ -2933,7 +2952,7 @@ export default function ConfiguracionPage() {
             </div>
 
             <p style={s.nota}>
-              Telegram Chat ID se administra desde Crear / Editar usuario y se guarda en ALMACEN_USUARIOS. La desactivación conserva el historial.
+              Telegram Chat ID se administra desde Crear / Editar usuario. La desactivación conserva el historial.
             </p>
 
           </section>
@@ -2946,22 +2965,32 @@ export default function ConfiguracionPage() {
 
               <input
                 style={s.input}
-                value={busqueda}
+
+                value={
+                  busqueda
+                }
+
                 onChange={
                   e => {
                     setBusqueda(
-                      e.target.value
+                      e.target
+                        .value
                     )
 
                     setPagina(1)
                   }
                 }
+
                 placeholder="Buscar SKU, descripción o grupo"
               />
 
               <button
                 style={s.boton}
-                disabled={cargando}
+
+                disabled={
+                  cargando
+                }
+
                 onClick={() =>
                   cargar(
                     seccion
@@ -2977,19 +3006,8 @@ export default function ConfiguracionPage() {
               {
                 seccion ===
                 'herramienta_odoo_inventario'
-                  ? `${total} registros del inventario. Página ${pagina}. Valores de compra y actual corresponden al renglón, no al costo unitario.`
+                  ? `${total} registros del inventario. Página ${pagina}.`
                   : `${filas.length} registros del catálogo.`
-              }
-
-              {' '}
-
-              {
-                editable
-                  ? 'Los cambios se guardan en Supabase.'
-                  : seccion ===
-                    'herramienta_odoo_inventario'
-                    ? 'Inventario de consulta, importado desde Excel.'
-                    : 'Para editar este catálogo utiliza la pantalla de Materiales y Grupos ya instalada.'
               }
             </p>
 
@@ -2999,6 +3017,7 @@ export default function ConfiguracionPage() {
                 onSubmit={
                   guardar
                 }
+
                 style={
                   s.formulario
                 }
@@ -3010,13 +3029,16 @@ export default function ConfiguracionPage() {
                   <input
                     required
                     style={s.input}
+
                     value={
                       form.sku
                     }
+
                     onChange={
                       e =>
                         setForm({
                           ...form,
+
                           sku:
                             e.target
                               .value
@@ -3059,6 +3081,7 @@ export default function ConfiguracionPage() {
                         })
                     }
                   />
+
                 </label>
 
                 <label>
@@ -3079,12 +3102,14 @@ export default function ConfiguracionPage() {
                       e =>
                         setForm({
                           ...form,
+
                           costo:
                             e.target
                               .value
                         })
                     }
                   />
+
                 </label>
 
                 {seccion ===
@@ -3115,6 +3140,7 @@ export default function ConfiguracionPage() {
                           })
                       }
                     />
+
                   </label>
 
                 )}
@@ -3125,31 +3151,34 @@ export default function ConfiguracionPage() {
                       'center'
                   }}
                 >
-                  Activo
-
-                  {' '}
+                  Activo{' '}
 
                   <input
                     type="checkbox"
+
                     checked={
                       form.activo
                     }
+
                     onChange={
                       e =>
                         setForm({
                           ...form,
+
                           activo:
                             e.target
                               .checked
                         })
                     }
                   />
+
                 </label>
 
                 <button
                   disabled={
                     cargando
                   }
+
                   type="submit"
                   style={s.boton}
                 >
@@ -3163,6 +3192,7 @@ export default function ConfiguracionPage() {
                 <button
                   type="button"
                   style={s.boton}
+
                   onClick={() =>
                     setForm(
                       nuevo()
@@ -3211,9 +3241,11 @@ export default function ConfiguracionPage() {
                       )}
 
                     {editable && (
+
                       <th style={s.th}>
                         Acción
                       </th>
+
                     )}
 
                   </tr>
@@ -3279,6 +3311,7 @@ export default function ConfiguracionPage() {
 
                             <button
                               style={s.boton}
+
                               onClick={() =>
                                 editar(
                                   f
@@ -3304,6 +3337,7 @@ export default function ConfiguracionPage() {
 
                       <td
                         style={s.td}
+
                         colSpan={
                           (
                             CAMPOS[
@@ -3334,10 +3368,11 @@ export default function ConfiguracionPage() {
 
                 <button
                   style={s.boton}
+
                   disabled={
-                    pagina <=
-                    1
+                    pagina <= 1
                   }
+
                   onClick={() =>
                     setPagina(
                       x =>
@@ -3362,6 +3397,7 @@ export default function ConfiguracionPage() {
 
                 <button
                   style={s.boton}
+
                   disabled={
                     pagina >=
                     Math.ceil(
@@ -3369,6 +3405,7 @@ export default function ConfiguracionPage() {
                       100
                     )
                   }
+
                   onClick={() =>
                     setPagina(
                       x =>
@@ -3389,6 +3426,7 @@ export default function ConfiguracionPage() {
 
               <button
                 style={s.boton}
+
                 onClick={() =>
                   router.push(
                     '/inventarios/catalogos'
