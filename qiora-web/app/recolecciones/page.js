@@ -10,34 +10,106 @@ const upper = v => clean(v).toUpperCase()
 const formatPhone = raw => {
   const digits = clean(raw).replace(/\D/g, '')
 
-  if (digits.length === 10) {
-    return `52${digits}`
-  }
-
-  if (digits.length >= 11 && digits.length <= 15) {
-    return digits
-  }
+  if (digits.length === 10) return `52${digits}`
+  if (digits.length >= 11 && digits.length <= 15) return digits
 
   return ''
 }
 
+const formatFecha = valor => {
+  if (!valor) return ''
+
+  const fecha = new Date(valor)
+
+  if (Number.isNaN(fecha.getTime())) {
+    return clean(valor)
+  }
+
+  return fecha.toLocaleString('es-MX', {
+    timeZone: 'America/Mexico_City',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
+}
+
+/*
+  Este texto se usa para WhatsApp.
+
+  Cuando conectemos el BOT, se debe mandar EXACTAMENTE
+  este mismo texto al telegram_chat_id del técnico.
+*/
 const makeText = r => {
+  const series = Array.isArray(r.series) ? r.series : []
+  const pendientes = Number(r.pendientes ?? 0)
+
   const lines = [
-    'RECEPCIÓN DE RECOLECCIONES',
-    `Folio: ${r.folio || ''}`,
-    `Distrito: ${r.distrito || ''}`,
-    `Almacén: ${r.almacen || ''}`,
-    `Técnico: ${r.tecnico || ''}`,
-    `Recibe: ${r.recibe || ''}`,
-    `Series recibidas: ${(r.series || []).length}`,
-    ''
+    '*RECOLECCIÓN RECIBIDA*',
+    '',
+    `Hola *${r.tecnico || ''}* 👋`,
+    'Tu recolección fue recibida en almacén.',
+    '',
+    `📄 *Folio:* ${r.folio || ''}`,
+    `🏢 *Centro:* ${r.centro || r.distrito || ''}`,
+    `📦 *Almacén:* ${r.almacen || ''}`,
+    `👷 *Técnico:* ${r.tecnico || ''}`,
+    `👤 *Recibió:* ${r.recibe || ''}`,
+    `📅 *Fecha:* ${formatFecha(r.fecha)}`,
+    '',
+    '━━━━━━━━━━━━━━━━━━━━',
+    `📦 *EQUIPOS ENTREGADOS (${series.length})*`
   ]
 
-  for (const m of r.series || []) {
+  for (const equipo of series) {
+    const serie = clean(equipo.serie)
+    const material = clean(equipo.material)
+    const descripcion = clean(equipo.descripcion)
+
+    if (!material || !descripcion) {
+      lines.push(
+        `• ${serie} ⚠️ NO EXISTE EN SAP`
+      )
+    } else {
+      lines.push(
+        `• ${serie} | ${material} - ${descripcion}`
+      )
+    }
+  }
+
+  lines.push(
+    '━━━━━━━━━━━━━━━━━━━━',
+    ''
+  )
+
+  if (pendientes <= 0) {
     lines.push(
-      `${m.serie || ''} | ${m.material || ''} | ${m.lote || ''} | ${m.dias ?? 0} días`
+      '✅ *ENTREGA COMPLETA*',
+      'No tienes equipos pendientes en esta recolección.'
+    )
+  } else {
+    lines.push(
+      '⚠️ *ENTREGA PARCIAL*',
+      `Quedan ${pendientes} equipo(s) pendiente(s) por entregar.`
     )
   }
+
+  if (clean(r.comprobante_url)) {
+    lines.push(
+      '',
+      '📎 *COMPROBANTE DE RECEPCIÓN*',
+      clean(r.comprobante_url)
+    )
+  }
+
+  lines.push(
+    '',
+    '✅ *Recepción registrada correctamente*',
+    '',
+    '🏢 *Sistema Nacional de Almacenes*'
+  )
 
   return lines.join('\n')
 }
@@ -65,16 +137,14 @@ export default function RecoleccionesPage() {
 
   const inputSerie = useRef(null)
 
-  /*
-    Todas las series que devuelve qiora_rec_cargar.
-  */
   const catalogo = useMemo(
     () => datos?.equipos || [],
     [datos]
   )
 
   /*
-    Series que todavía NO han sido escaneadas.
+    Las series entregadas desaparecen automáticamente
+    de Series en SAP.
   */
   const pendientes = useMemo(() => {
     return catalogo.filter(
@@ -87,8 +157,7 @@ export default function RecoleccionesPage() {
   }, [catalogo, entregadas])
 
   /*
-    Cargar nombre del usuario activo.
-    Este nombre se utiliza como RECIBE.
+    RECIBE = usuario activo.
   */
   useEffect(() => {
     let activo = true
@@ -102,9 +171,7 @@ export default function RecoleccionesPage() {
           error: authError
         } = await supabase.auth.getUser()
 
-        if (authError) {
-          throw authError
-        }
+        if (authError) throw authError
 
         if (!user?.id) {
           throw new Error('No existe una sesión activa.')
@@ -115,9 +182,7 @@ export default function RecoleccionesPage() {
           error: perfilError
         } = await supabase.rpc('qiora_mi_perfil')
 
-        if (perfilError) {
-          throw perfilError
-        }
+        if (perfilError) throw perfilError
 
         const nombre = clean(data?.nombre)
 
@@ -139,7 +204,7 @@ export default function RecoleccionesPage() {
 
         if (activo) {
           setError(
-            e.message ||
+            e?.message ||
             'No fue posible identificar al usuario activo.'
           )
         }
@@ -176,9 +241,6 @@ export default function RecoleccionesPage() {
     }
   }
 
-  /*
-    Cargar equipos del técnico.
-  */
   const cargar = () =>
     ejecutar(async () => {
       const almacenLimpio = clean(almacen)
@@ -199,9 +261,7 @@ export default function RecoleccionesPage() {
         }
       )
 
-      if (e) {
-        throw e
-      }
+      if (e) throw e
 
       if (!data) {
         throw new Error(
@@ -221,9 +281,6 @@ export default function RecoleccionesPage() {
       setFolio('')
       setCaptura('')
 
-      /*
-        RECIBE siempre debe ser el usuario activo.
-      */
       if (usuarioActivo) {
         setRecibe(usuarioActivo)
       }
@@ -238,9 +295,6 @@ export default function RecoleccionesPage() {
       }, 0)
     })
 
-  /*
-    Escanear / agregar serie.
-  */
   const agregar = () => {
     setError('')
     setMensaje('')
@@ -261,9 +315,7 @@ export default function RecoleccionesPage() {
       return
     }
 
-    if (!serie) {
-      return
-    }
+    if (!serie) return
 
     const equipo = catalogo.find(
       e => upper(e.serie) === serie
@@ -273,7 +325,6 @@ export default function RecoleccionesPage() {
       setError(
         `La serie ${serie} no pertenece a este técnico con lote TPE USADO.`
       )
-
       return
     }
 
@@ -295,10 +346,6 @@ export default function RecoleccionesPage() {
       return
     }
 
-    /*
-      Al agregar a entregadas desaparece automáticamente
-      de pendientes / Series en SAP.
-    */
     setEntregadas(prev => [
       ...prev,
       equipo
@@ -312,13 +359,11 @@ export default function RecoleccionesPage() {
   }
 
   /*
-    Si se elimina una serie de entregadas,
-    regresa automáticamente a Series en SAP.
+    Al eliminar una entregada vuelve automáticamente
+    a Series en SAP.
   */
   const eliminarSerie = serie => {
-    if (guardado) {
-      return
-    }
+    if (guardado) return
 
     setEntregadas(prev =>
       prev.filter(
@@ -335,28 +380,24 @@ export default function RecoleccionesPage() {
     }, 0)
   }
 
-  /*
-    WhatsApp después de guardar.
-  */
-  const enviarWhatsapp = r => {
+  const enviarWhatsapp = resultado => {
     const telefono = formatPhone(
-      r.telefono
+      resultado.telefono
     )
 
     if (!telefono) {
       setMensaje(
-        `Recolección ${r.folio} guardada. ` +
+        `Recolección ${resultado.folio} guardada. ` +
         'El técnico no tiene un teléfono válido registrado.'
       )
-
       return
     }
 
+    const texto = makeText(resultado)
+
     const url =
       `https://wa.me/${telefono}?text=` +
-      encodeURIComponent(
-        makeText(r)
-      )
+      encodeURIComponent(texto)
 
     const ventana = window.open(
       url,
@@ -366,21 +407,16 @@ export default function RecoleccionesPage() {
 
     if (!ventana) {
       setMensaje(
-        `Guardado: ${r.folio}. ` +
-        `El navegador bloqueó WhatsApp. ${url}`
+        `Recolección ${resultado.folio} guardada. ` +
+        'El navegador bloqueó WhatsApp.'
       )
     } else {
       setMensaje(
-        `Guardado: ${r.folio}. WhatsApp abierto.`
+        `Recolección ${resultado.folio} guardada. WhatsApp abierto.`
       )
     }
   }
 
-  /*
-    Guardar recolección.
-    qiora_rec_guardar inserta las series
-    en recolecciones_equipos.
-  */
   const guardar = () =>
     ejecutar(async () => {
       if (guardado) {
@@ -407,6 +443,18 @@ export default function RecoleccionesPage() {
         )
       }
 
+      /*
+        Guardamos estos datos antes de llamar a Supabase
+        para conservar correctamente los pendientes.
+      */
+      const pendientesAntesDeGuardar =
+        Math.max(
+          0,
+          catalogo.length - entregadas.length
+        )
+
+      const seriesAntesDeGuardar = [...entregadas]
+
       const {
         data,
         error: e
@@ -421,9 +469,7 @@ export default function RecoleccionesPage() {
         }
       )
 
-      if (e) {
-        throw e
-      }
+      if (e) throw e
 
       if (!data) {
         throw new Error(
@@ -431,40 +477,128 @@ export default function RecoleccionesPage() {
         )
       }
 
-      setGuardado(data)
-      setFolio(
-        data.folio ||
-        ''
-      )
+      /*
+        Completamos el resultado con información que ya
+        tenemos cargada en pantalla.
 
-      if (Array.isArray(data.series)) {
-        setEntregadas(
-          data.series
-        )
+        Esto permite generar correctamente el mensaje
+        aun cuando la RPC no devuelva todos estos campos.
+      */
+      const seriesResultado =
+        Array.isArray(data.series) &&
+        data.series.length
+          ? data.series.map(serieGuardada => {
+              const original =
+                seriesAntesDeGuardar.find(
+                  s =>
+                    upper(s.serie) ===
+                    upper(serieGuardada.serie)
+                )
+
+              return {
+                ...original,
+                ...serieGuardada,
+
+                material:
+                  serieGuardada.material ||
+                  original?.material ||
+                  '',
+
+                descripcion:
+                  serieGuardada.descripcion ||
+                  original?.descripcion ||
+                  '',
+
+                lote:
+                  serieGuardada.lote ||
+                  original?.lote ||
+                  '',
+
+                dias:
+                  serieGuardada.dias ??
+                  original?.dias ??
+                  null
+              }
+            })
+          : seriesAntesDeGuardar
+
+      const resultado = {
+        ...data,
+
+        folio:
+          data.folio || '',
+
+        fecha:
+          data.fecha ||
+          new Date().toISOString(),
+
+        almacen:
+          data.almacen ||
+          datos.almacen ||
+          almacen,
+
+        tecnico:
+          data.tecnico ||
+          datos.tecnico ||
+          '',
+
+        recibe:
+          data.recibe ||
+          recibe,
+
+        telefono:
+          data.telefono ||
+          datos.telefono ||
+          '',
+
+        centro:
+          data.centro ||
+          datos.centro ||
+          '',
+
+        distrito:
+          data.distrito ||
+          datos.distrito ||
+          '',
+
+        pendientes:
+          pendientesAntesDeGuardar,
+
+        series:
+          seriesResultado
       }
 
-      if (data.recibe) {
-        setRecibe(
-          data.recibe
-        )
+      setGuardado(resultado)
+      setFolio(resultado.folio)
+      setEntregadas(seriesResultado)
+
+      if (resultado.recibe) {
+        setRecibe(resultado.recibe)
       }
 
-      enviarWhatsapp(data)
+      /*
+        WHATSAPP
+      */
+      enviarWhatsapp(resultado)
+
+      /*
+        BOT DEL TÉCNICO
+
+        Debe recibir exactamente:
+        makeText(resultado)
+
+        NO agrego aquí una URL o RPC inventada.
+        Falta conectar esta misma variable "resultado"
+        a la integración real de Telegram de tu proyecto.
+      */
     })
 
-  /*
-    Limpiar nueva captura.
-    RECIBE se conserva porque sigue siendo
-    el usuario activo.
-  */
   const limpiar = () => {
     setFolio('')
     setAlmacen('')
     setDatos(null)
 
-    setRecibe(
-      usuarioActivo
-    )
+    setRecibe(usuarioActivo)
 
     setCaptura('')
     setEntregadas([])
@@ -505,7 +639,6 @@ export default function RecoleccionesPage() {
 
             <label>
               Folio
-
               <input
                 value={folio}
                 placeholder="Se genera al guardar"
@@ -531,9 +664,7 @@ export default function RecoleccionesPage() {
                   )
                 }
                 onKeyDown={e => {
-                  if (
-                    e.key === 'Enter'
-                  ) {
+                  if (e.key === 'Enter') {
                     e.preventDefault()
                     cargar()
                   }
@@ -589,7 +720,6 @@ export default function RecoleccionesPage() {
 
             <article>
               Series en SAP
-
               <strong>
                 {pendientes.length}
               </strong>
@@ -597,7 +727,6 @@ export default function RecoleccionesPage() {
 
             <article>
               Series entregadas
-
               <strong>
                 {entregadas.length}
               </strong>
@@ -605,7 +734,6 @@ export default function RecoleccionesPage() {
 
             <article>
               Total técnico
-
               <strong>
                 {catalogo.length}
               </strong>
@@ -616,8 +744,6 @@ export default function RecoleccionesPage() {
         </section>
 
         <section className="columns">
-
-          {/* SERIES ENTREGADAS */}
 
           <div>
 
@@ -631,25 +757,11 @@ export default function RecoleccionesPage() {
 
                 <thead>
                   <tr>
-                    <th>
-                      Cantidad
-                    </th>
-
-                    <th>
-                      Serie
-                    </th>
-
-                    <th>
-                      Material
-                    </th>
-
-                    <th>
-                      Días
-                    </th>
-
-                    <th>
-                      Acción
-                    </th>
+                    <th>Cantidad</th>
+                    <th>Serie</th>
+                    <th>Material</th>
+                    <th>Días</th>
+                    <th>Acción</th>
                   </tr>
                 </thead>
 
@@ -659,13 +771,9 @@ export default function RecoleccionesPage() {
 
                     entregadas.map(
                       s => (
-                        <tr
-                          key={s.serie}
-                        >
+                        <tr key={s.serie}>
 
-                          <td>
-                            1
-                          </td>
+                          <td>1</td>
 
                           <td>
                             {s.serie}
@@ -704,9 +812,7 @@ export default function RecoleccionesPage() {
                   ) : (
 
                     <tr>
-                      <td
-                        colSpan="5"
-                      >
+                      <td colSpan="5">
                         Sin series entregadas.
                       </td>
                     </tr>
@@ -721,8 +827,6 @@ export default function RecoleccionesPage() {
 
           </div>
 
-          {/* SERIES EN SAP = SOLO PENDIENTES */}
-
           <div>
 
             <h3>
@@ -735,21 +839,10 @@ export default function RecoleccionesPage() {
 
                 <thead>
                   <tr>
-                    <th>
-                      Cantidad
-                    </th>
-
-                    <th>
-                      Serie
-                    </th>
-
-                    <th>
-                      Material
-                    </th>
-
-                    <th>
-                      Días
-                    </th>
+                    <th>Cantidad</th>
+                    <th>Serie</th>
+                    <th>Material</th>
+                    <th>Días</th>
                   </tr>
                 </thead>
 
@@ -758,9 +851,7 @@ export default function RecoleccionesPage() {
                   {!datos ? (
 
                     <tr>
-                      <td
-                        colSpan="4"
-                      >
+                      <td colSpan="4">
                         Ingrese almacén y cargue recolección.
                       </td>
                     </tr>
@@ -769,13 +860,9 @@ export default function RecoleccionesPage() {
 
                     pendientes.map(
                       s => (
-                        <tr
-                          key={s.serie}
-                        >
+                        <tr key={s.serie}>
 
-                          <td>
-                            1
-                          </td>
+                          <td>1</td>
 
                           <td>
                             {s.serie}
@@ -796,9 +883,7 @@ export default function RecoleccionesPage() {
                   ) : (
 
                     <tr>
-                      <td
-                        colSpan="4"
-                      >
+                      <td colSpan="4">
                         Sin series pendientes.
                       </td>
                     </tr>
@@ -836,9 +921,7 @@ export default function RecoleccionesPage() {
                   )
                 }
                 onKeyDown={e => {
-                  if (
-                    e.key === 'Enter'
-                  ) {
+                  if (e.key === 'Enter') {
                     e.preventDefault()
                     agregar()
                   }
@@ -936,14 +1019,12 @@ export default function RecoleccionesPage() {
           border: 1px solid #2a826c;
           border-radius: 15px;
           padding: 23px;
-
           background:
             linear-gradient(
               115deg,
               #0b5545,
               #17a581
             );
-
           margin-bottom: 15px;
         }
 
@@ -972,7 +1053,6 @@ export default function RecoleccionesPage() {
               4,
               minmax(0, 1fr)
             );
-
           gap: 12px;
         }
 
@@ -987,16 +1067,11 @@ export default function RecoleccionesPage() {
         input {
           width: 100%;
           box-sizing: border-box;
-
-          border:
-            1px solid #c9dfda;
-
+          border: 1px solid #c9dfda;
           background: #f5f8fa;
           color: #173c38;
-
           border-radius: 8px;
           height: 38px;
-
           padding: 9px;
           font-size: 14px;
         }
@@ -1017,30 +1092,24 @@ export default function RecoleccionesPage() {
 
         .stats {
           display: grid;
-
           grid-template-columns:
             repeat(
               3,
               1fr
             );
-
           gap: 12px;
         }
 
         .stats article {
           text-align: center;
-
           background:
             linear-gradient(
               110deg,
               #09624f,
               #119e7d
             );
-
           border-radius: 12px;
-
           padding: 14px;
-
           font-weight: 700;
           font-size: 12px;
         }
@@ -1055,7 +1124,6 @@ export default function RecoleccionesPage() {
           display: grid;
           grid-template-columns:
             1fr 1fr;
-
           gap: 15px;
         }
 
@@ -1072,9 +1140,7 @@ export default function RecoleccionesPage() {
         table {
           width: 100%;
           border-collapse: collapse;
-
           font-size: 12px;
-
           background: #f8fbfa;
           color: #183831;
         }
@@ -1086,11 +1152,8 @@ export default function RecoleccionesPage() {
         }
 
         td {
-          border:
-            1px solid #c5d0ce;
-
+          border: 1px solid #c5d0ce;
           padding: 9px 5px;
-
           text-align: center;
         }
 
@@ -1142,8 +1205,7 @@ export default function RecoleccionesPage() {
           }
 
           .columns {
-            grid-template-columns:
-              1fr;
+            grid-template-columns: 1fr;
           }
 
           h1 {
