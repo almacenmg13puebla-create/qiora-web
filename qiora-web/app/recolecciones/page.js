@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase } from '../../lib/supabase'
+import { supabase } from '../../../lib/supabase'
 
 const clean = v => String(v ?? '').trim()
 const upper = v => clean(v).toUpperCase()
@@ -10,8 +10,13 @@ const upper = v => clean(v).toUpperCase()
 const formatPhone = raw => {
   const digits = clean(raw).replace(/\D/g, '')
 
-  if (digits.length === 10) return `52${digits}`
-  if (digits.length >= 11 && digits.length <= 15) return digits
+  if (digits.length === 10) {
+    return `52${digits}`
+  }
+
+  if (digits.length >= 11 && digits.length <= 15) {
+    return digits
+  }
 
   return ''
 }
@@ -36,12 +41,6 @@ const formatFecha = valor => {
   })
 }
 
-/*
-  Este texto se usa para WhatsApp.
-
-  Cuando conectemos el BOT, se debe mandar EXACTAMENTE
-  este mismo texto al telegram_chat_id del técnico.
-*/
 const makeText = r => {
   const series = Array.isArray(r.series) ? r.series : []
   const pendientes = Number(r.pendientes ?? 0)
@@ -96,14 +95,6 @@ const makeText = r => {
     )
   }
 
-  if (clean(r.comprobante_url)) {
-    lines.push(
-      '',
-      '📎 *COMPROBANTE DE RECEPCIÓN*',
-      clean(r.comprobante_url)
-    )
-  }
-
   lines.push(
     '',
     '✅ *Recepción registrada correctamente*',
@@ -136,16 +127,13 @@ export default function RecoleccionesPage() {
   const [mensaje, setMensaje] = useState('')
 
   const inputSerie = useRef(null)
+  const inputAlmacen = useRef(null)
 
   const catalogo = useMemo(
     () => datos?.equipos || [],
     [datos]
   )
 
-  /*
-    Las series entregadas desaparecen automáticamente
-    de Series en SAP.
-  */
   const pendientes = useMemo(() => {
     return catalogo.filter(
       equipo =>
@@ -157,7 +145,8 @@ export default function RecoleccionesPage() {
   }, [catalogo, entregadas])
 
   /*
-    RECIBE = usuario activo.
+    CARGAR USUARIO ACTIVO
+    RECIBE = usuario conectado
   */
   useEffect(() => {
     let activo = true
@@ -171,20 +160,30 @@ export default function RecoleccionesPage() {
           error: authError
         } = await supabase.auth.getUser()
 
-        if (authError) throw authError
+        if (authError) {
+          throw authError
+        }
 
         if (!user?.id) {
-          throw new Error('No existe una sesión activa.')
+          throw new Error(
+            'No existe una sesión activa.'
+          )
         }
 
         const {
           data,
           error: perfilError
-        } = await supabase.rpc('qiora_mi_perfil')
+        } = await supabase.rpc(
+          'qiora_mi_perfil'
+        )
 
-        if (perfilError) throw perfilError
+        if (perfilError) {
+          throw perfilError
+        }
 
-        const nombre = clean(data?.nombre)
+        const nombre = clean(
+          data?.nombre
+        )
 
         if (!nombre) {
           throw new Error(
@@ -196,7 +195,9 @@ export default function RecoleccionesPage() {
           setUsuarioActivo(nombre)
           setRecibe(nombre)
         }
+
       } catch (e) {
+
         console.error(
           'ERROR CARGANDO USUARIO ACTIVO:',
           e
@@ -208,7 +209,9 @@ export default function RecoleccionesPage() {
             'No fue posible identificar al usuario activo.'
           )
         }
+
       } finally {
+
         if (activo) {
           setCargandoUsuario(false)
         }
@@ -224,26 +227,34 @@ export default function RecoleccionesPage() {
 
   const ejecutar = async fn => {
     setError('')
-    setMensaje('')
     setBusy(true)
 
     try {
       await fn()
     } catch (e) {
-      console.error('ERROR RECOLECCIONES:', e)
+
+      console.error(
+        'ERROR RECOLECCIONES:',
+        e
+      )
 
       setError(
         e?.message ||
         'Ocurrió un error.'
       )
+
     } finally {
       setBusy(false)
     }
   }
 
+  /*
+    CARGAR TÉCNICO Y EQUIPOS
+  */
   const cargar = () =>
     ejecutar(async () => {
-      const almacenLimpio = clean(almacen)
+      const almacenLimpio =
+        clean(almacen)
 
       if (!almacenLimpio) {
         throw new Error(
@@ -257,11 +268,14 @@ export default function RecoleccionesPage() {
       } = await supabase.rpc(
         'qiora_rec_cargar',
         {
-          p_almacen: almacenLimpio
+          p_almacen:
+            almacenLimpio
         }
       )
 
-      if (e) throw e
+      if (e) {
+        throw e
+      }
 
       if (!data) {
         throw new Error(
@@ -282,7 +296,9 @@ export default function RecoleccionesPage() {
       setCaptura('')
 
       if (usuarioActivo) {
-        setRecibe(usuarioActivo)
+        setRecibe(
+          usuarioActivo
+        )
       }
 
       setMensaje(
@@ -292,14 +308,18 @@ export default function RecoleccionesPage() {
 
       setTimeout(() => {
         inputSerie.current?.focus()
-      }, 0)
+      }, 100)
     })
 
+  /*
+    ESCANEAR SERIE
+  */
   const agregar = () => {
     setError('')
     setMensaje('')
 
-    const serie = upper(captura)
+    const serie =
+      upper(captura)
 
     if (!datos) {
       setError(
@@ -315,11 +335,15 @@ export default function RecoleccionesPage() {
       return
     }
 
-    if (!serie) return
+    if (!serie) {
+      return
+    }
 
-    const equipo = catalogo.find(
-      e => upper(e.serie) === serie
-    )
+    const equipo =
+      catalogo.find(
+        e =>
+          upper(e.serie) === serie
+      )
 
     if (!equipo) {
       setError(
@@ -328,9 +352,11 @@ export default function RecoleccionesPage() {
       return
     }
 
-    const duplicada = entregadas.some(
-      e => upper(e.serie) === serie
-    )
+    const duplicada =
+      entregadas.some(
+        e =>
+          upper(e.serie) === serie
+      )
 
     if (duplicada) {
       setError(
@@ -341,84 +367,133 @@ export default function RecoleccionesPage() {
 
       setTimeout(() => {
         inputSerie.current?.focus()
-      }, 0)
+      }, 100)
 
       return
     }
 
-    setEntregadas(prev => [
-      ...prev,
-      equipo
-    ])
+    /*
+      PASA A ENTREGADAS
+      Y DESAPARECE DE SERIES EN SAP
+    */
+    setEntregadas(
+      prev => [
+        ...prev,
+        equipo
+      ]
+    )
 
     setCaptura('')
 
     setTimeout(() => {
       inputSerie.current?.focus()
-    }, 0)
+    }, 100)
   }
 
   /*
-    Al eliminar una entregada vuelve automáticamente
-    a Series en SAP.
+    ELIMINAR SERIE ENTREGADA
+    REGRESA A SERIES EN SAP
   */
-  const eliminarSerie = serie => {
-    if (guardado) return
+  const eliminarSerie =
+    serie => {
 
-    setEntregadas(prev =>
-      prev.filter(
-        item =>
-          upper(item.serie) !== upper(serie)
+      if (guardado) {
+        return
+      }
+
+      setEntregadas(
+        prev =>
+          prev.filter(
+            item =>
+              upper(item.serie) !==
+              upper(serie)
+          )
       )
-    )
 
-    setError('')
-    setMensaje('')
+      setError('')
+      setMensaje('')
 
-    setTimeout(() => {
-      inputSerie.current?.focus()
-    }, 0)
-  }
-
-  const enviarWhatsapp = resultado => {
-    const telefono = formatPhone(
-      resultado.telefono
-    )
-
-    if (!telefono) {
-      setMensaje(
-        `Recolección ${resultado.folio} guardada. ` +
-        'El técnico no tiene un teléfono válido registrado.'
-      )
-      return
+      setTimeout(() => {
+        inputSerie.current?.focus()
+      }, 100)
     }
 
-    const texto = makeText(resultado)
+  /*
+    WHATSAPP
+  */
+  const enviarWhatsapp =
+    resultado => {
 
-    const url =
-      `https://wa.me/${telefono}?text=` +
-      encodeURIComponent(texto)
+      const telefono =
+        formatPhone(
+          resultado.telefono
+        )
 
-    const ventana = window.open(
-      url,
-      '_blank',
-      'noopener,noreferrer'
-    )
+      if (!telefono) {
+        return false
+      }
 
-    if (!ventana) {
-      setMensaje(
-        `Recolección ${resultado.folio} guardada. ` +
-        'El navegador bloqueó WhatsApp.'
-      )
-    } else {
-      setMensaje(
-        `Recolección ${resultado.folio} guardada. WhatsApp abierto.`
-      )
+      const texto =
+        makeText(resultado)
+
+      const url =
+        `https://wa.me/${telefono}?text=` +
+        encodeURIComponent(
+          texto
+        )
+
+      const ventana =
+        window.open(
+          url,
+          '_blank',
+          'noopener,noreferrer'
+        )
+
+      return !!ventana
     }
-  }
 
+  /*
+    LIMPIEZA AUTOMÁTICA
+    después de guardar correctamente.
+  */
+  const limpiarDespuesDeGuardar =
+    folioGuardado => {
+
+      setFolio('')
+      setAlmacen('')
+      setDatos(null)
+      setCaptura('')
+      setEntregadas([])
+      setGuardado(null)
+
+      /*
+        RECIBE SE CONSERVA
+        porque sigue siendo el usuario activo.
+      */
+      setRecibe(
+        usuarioActivo
+      )
+
+      setError('')
+
+      setMensaje(
+        `Recolección ${folioGuardado} guardada correctamente. Pantalla lista para una nueva captura.`
+      )
+
+      /*
+        Foco directo en ALMACÉN
+      */
+      setTimeout(() => {
+        inputAlmacen.current?.focus()
+      }, 150)
+    }
+
+  /*
+    GUARDAR RECOLECCIÓN
+  */
   const guardar = () =>
     ejecutar(async () => {
+
       if (guardado) {
         throw new Error(
           'Esta recolección ya está guardada.'
@@ -444,16 +519,18 @@ export default function RecoleccionesPage() {
       }
 
       /*
-        Guardamos estos datos antes de llamar a Supabase
-        para conservar correctamente los pendientes.
+        GUARDAMOS LOS DATOS ACTUALES
+        antes de llamar a Supabase.
       */
       const pendientesAntesDeGuardar =
         Math.max(
           0,
-          catalogo.length - entregadas.length
+          catalogo.length -
+          entregadas.length
         )
 
-      const seriesAntesDeGuardar = [...entregadas]
+      const seriesAntesDeGuardar =
+        [...entregadas]
 
       const {
         data,
@@ -461,15 +538,23 @@ export default function RecoleccionesPage() {
       } = await supabase.rpc(
         'qiora_rec_guardar',
         {
-          p_almacen: datos.almacen,
-          p_recibe: clean(recibe),
-          p_series: entregadas.map(
-            s => upper(s.serie)
-          )
+          p_almacen:
+            datos.almacen,
+
+          p_recibe:
+            clean(recibe),
+
+          p_series:
+            entregadas.map(
+              s =>
+                upper(s.serie)
+            )
         }
       )
 
-      if (e) throw e
+      if (e) {
+        throw e
+      }
 
       if (!data) {
         throw new Error(
@@ -478,55 +563,58 @@ export default function RecoleccionesPage() {
       }
 
       /*
-        Completamos el resultado con información que ya
-        tenemos cargada en pantalla.
-
-        Esto permite generar correctamente el mensaje
-        aun cuando la RPC no devuelva todos estos campos.
+        COMPLETAR LAS SERIES
+        con los datos originales cargados.
       */
       const seriesResultado =
         Array.isArray(data.series) &&
         data.series.length
-          ? data.series.map(serieGuardada => {
-              const original =
-                seriesAntesDeGuardar.find(
-                  s =>
-                    upper(s.serie) ===
-                    upper(serieGuardada.serie)
-                )
+          ? data.series.map(
+              serieGuardada => {
 
-              return {
-                ...original,
-                ...serieGuardada,
+                const original =
+                  seriesAntesDeGuardar.find(
+                    s =>
+                      upper(s.serie) ===
+                      upper(
+                        serieGuardada.serie
+                      )
+                  )
 
-                material:
-                  serieGuardada.material ||
-                  original?.material ||
-                  '',
+                return {
+                  ...original,
+                  ...serieGuardada,
 
-                descripcion:
-                  serieGuardada.descripcion ||
-                  original?.descripcion ||
-                  '',
+                  material:
+                    serieGuardada.material ||
+                    original?.material ||
+                    '',
 
-                lote:
-                  serieGuardada.lote ||
-                  original?.lote ||
-                  '',
+                  descripcion:
+                    serieGuardada.descripcion ||
+                    original?.descripcion ||
+                    '',
 
-                dias:
-                  serieGuardada.dias ??
-                  original?.dias ??
-                  null
+                  lote:
+                    serieGuardada.lote ||
+                    original?.lote ||
+                    '',
+
+                  dias:
+                    serieGuardada.dias ??
+                    original?.dias ??
+                    null
+                }
               }
-            })
+            )
           : seriesAntesDeGuardar
 
+      /*
+        RESULTADO COMPLETO
+        PARA EL MENSAJE
+      */
       const resultado = {
         ...data,
-
-        folio:
-          data.folio || '',
 
         fecha:
           data.fecha ||
@@ -568,44 +656,60 @@ export default function RecoleccionesPage() {
           seriesResultado
       }
 
-      setGuardado(resultado)
-      setFolio(resultado.folio)
-      setEntregadas(seriesResultado)
+      const folioGuardado =
+        clean(resultado.folio)
 
-      if (resultado.recibe) {
-        setRecibe(resultado.recibe)
+      if (!folioGuardado) {
+        throw new Error(
+          'La recolección se guardó pero Supabase no devolvió el folio.'
+        )
       }
 
       /*
-        WHATSAPP
+        MARCAR TEMPORALMENTE COMO GUARDADO
+        para evitar doble clic.
       */
-      enviarWhatsapp(resultado)
+      setGuardado(resultado)
+      setFolio(folioGuardado)
 
       /*
-        BOT DEL TÉCNICO
-
-        Debe recibir exactamente:
-        makeText(resultado)
-
-        NO agrego aquí una URL o RPC inventada.
-        Falta conectar esta misma variable "resultado"
-        a la integración real de Telegram de tu proyecto.
+        ABRIR WHATSAPP
       */
+      enviarWhatsapp(
+        resultado
+      )
+
+      /*
+        IMPORTANTE:
+        DESPUÉS DE GUARDAR
+        LIMPIAR TODA LA PANTALLA.
+      */
+      limpiarDespuesDeGuardar(
+        folioGuardado
+      )
     })
 
+  /*
+    LIMPIAR MANUALMENTE
+  */
   const limpiar = () => {
     setFolio('')
     setAlmacen('')
     setDatos(null)
-
-    setRecibe(usuarioActivo)
-
     setCaptura('')
     setEntregadas([])
     setGuardado(null)
 
+    setRecibe(
+      usuarioActivo
+    )
+
     setError('')
     setMensaje('')
+
+    setTimeout(() => {
+      inputAlmacen.current?.focus()
+    }, 100)
   }
 
   return (
@@ -617,13 +721,16 @@ export default function RecoleccionesPage() {
           type="button"
           className="back"
           onClick={() =>
-            router.push('/acceso-almacen')
+            router.push(
+              '/recolecciones'
+            )
           }
         >
-          ← Regresar a Acceso Almacén
+          ← Regresar a Recolecciones
         </button>
 
         <header>
+
           <h1>
             Recepción de Recolecciones
           </h1>
@@ -631,6 +738,7 @@ export default function RecoleccionesPage() {
           <p>
             Solo equipos de iq09_equipos con lote TPE USADO.
           </p>
+
         </header>
 
         <section>
@@ -639,6 +747,7 @@ export default function RecoleccionesPage() {
 
             <label>
               Folio
+
               <input
                 value={folio}
                 placeholder="Se genera al guardar"
@@ -650,6 +759,7 @@ export default function RecoleccionesPage() {
               Almacén
 
               <input
+                ref={inputAlmacen}
                 placeholder="0008"
                 value={almacen}
                 disabled={
@@ -659,12 +769,21 @@ export default function RecoleccionesPage() {
                 onChange={e =>
                   setAlmacen(
                     e.target.value
-                      .replace(/\D/g, '')
-                      .slice(0, 4)
+                      .replace(
+                        /\D/g,
+                        ''
+                      )
+                      .slice(
+                        0,
+                        4
+                      )
                   )
                 }
                 onKeyDown={e => {
-                  if (e.key === 'Enter') {
+                  if (
+                    e.key ===
+                    'Enter'
+                  ) {
                     e.preventDefault()
                     cargar()
                   }
@@ -707,7 +826,9 @@ export default function RecoleccionesPage() {
                 busy ||
                 !!guardado
               }
-              onClick={cargar}
+              onClick={
+                cargar
+              }
             >
               {busy
                 ? 'Cargando...'
@@ -719,24 +840,39 @@ export default function RecoleccionesPage() {
           <div className="stats">
 
             <article>
+
               Series en SAP
+
               <strong>
-                {pendientes.length}
+                {
+                  pendientes.length
+                }
               </strong>
+
             </article>
 
             <article>
+
               Series entregadas
+
               <strong>
-                {entregadas.length}
+                {
+                  entregadas.length
+                }
               </strong>
+
             </article>
 
             <article>
+
               Total técnico
+
               <strong>
-                {catalogo.length}
+                {
+                  catalogo.length
+                }
               </strong>
+
             </article>
 
           </div>
@@ -745,6 +881,8 @@ export default function RecoleccionesPage() {
 
         <section className="columns">
 
+          {/* SERIES ENTREGADAS */}
+
           <div>
 
             <h3>
@@ -757,67 +895,96 @@ export default function RecoleccionesPage() {
 
                 <thead>
                   <tr>
-                    <th>Cantidad</th>
-                    <th>Serie</th>
-                    <th>Material</th>
-                    <th>Días</th>
-                    <th>Acción</th>
+                    <th>
+                      Cantidad
+                    </th>
+
+                    <th>
+                      Serie
+                    </th>
+
+                    <th>
+                      Material
+                    </th>
+
+                    <th>
+                      Días
+                    </th>
+
+                    <th>
+                      Acción
+                    </th>
                   </tr>
                 </thead>
 
                 <tbody>
 
-                  {entregadas.length ? (
+                  {
+                    entregadas.length
+                      ? entregadas.map(
+                          s => (
+                            <tr
+                              key={
+                                s.serie
+                              }
+                            >
 
-                    entregadas.map(
-                      s => (
-                        <tr key={s.serie}>
+                              <td>
+                                1
+                              </td>
 
-                          <td>1</td>
+                              <td>
+                                {
+                                  s.serie
+                                }
+                              </td>
 
-                          <td>
-                            {s.serie}
-                          </td>
+                              <td>
+                                {
+                                  s.material
+                                }
+                              </td>
 
-                          <td>
-                            {s.material}
-                          </td>
+                              <td>
+                                {
+                                  s.dias ??
+                                  '—'
+                                }
+                              </td>
 
-                          <td>
-                            {s.dias ?? '—'}
-                          </td>
+                              <td>
 
-                          <td>
-
-                            {!guardado && (
-                              <button
-                                type="button"
-                                className="delete"
-                                onClick={() =>
-                                  eliminarSerie(
-                                    s.serie
+                                {
+                                  !guardado && (
+                                    <button
+                                      type="button"
+                                      className="delete"
+                                      onClick={() =>
+                                        eliminarSerie(
+                                          s.serie
+                                        )
+                                      }
+                                    >
+                                      Eliminar
+                                    </button>
                                   )
                                 }
-                              >
-                                Eliminar
-                              </button>
-                            )}
 
+                              </td>
+
+                            </tr>
+                          )
+                        )
+                      : (
+                        <tr>
+                          <td
+                            colSpan="5"
+                          >
+                            Sin series entregadas.
                           </td>
-
                         </tr>
                       )
-                    )
-
-                  ) : (
-
-                    <tr>
-                      <td colSpan="5">
-                        Sin series entregadas.
-                      </td>
-                    </tr>
-
-                  )}
+                  }
 
                 </tbody>
 
@@ -826,6 +993,8 @@ export default function RecoleccionesPage() {
             </div>
 
           </div>
+
+          {/* SERIES EN SAP */}
 
           <div>
 
@@ -839,56 +1008,86 @@ export default function RecoleccionesPage() {
 
                 <thead>
                   <tr>
-                    <th>Cantidad</th>
-                    <th>Serie</th>
-                    <th>Material</th>
-                    <th>Días</th>
+
+                    <th>
+                      Cantidad
+                    </th>
+
+                    <th>
+                      Serie
+                    </th>
+
+                    <th>
+                      Material
+                    </th>
+
+                    <th>
+                      Días
+                    </th>
+
                   </tr>
                 </thead>
 
                 <tbody>
 
-                  {!datos ? (
-
-                    <tr>
-                      <td colSpan="4">
-                        Ingrese almacén y cargue recolección.
-                      </td>
-                    </tr>
-
-                  ) : pendientes.length ? (
-
-                    pendientes.map(
-                      s => (
-                        <tr key={s.serie}>
-
-                          <td>1</td>
-
-                          <td>
-                            {s.serie}
+                  {
+                    !datos
+                      ? (
+                        <tr>
+                          <td
+                            colSpan="4"
+                          >
+                            Ingrese almacén y cargue recolección.
                           </td>
-
-                          <td>
-                            {s.material}
-                          </td>
-
-                          <td>
-                            {s.dias ?? '—'}
-                          </td>
-
                         </tr>
                       )
-                    )
 
-                  ) : (
+                      : pendientes.length
+                        ? pendientes.map(
+                            s => (
+                              <tr
+                                key={
+                                  s.serie
+                                }
+                              >
 
-                    <tr>
-                      <td colSpan="4">
-                        Sin series pendientes.
-                      </td>
-                    </tr>
+                                <td>
+                                  1
+                                </td>
 
-                  )}
+                                <td>
+                                  {
+                                    s.serie
+                                  }
+                                </td>
+
+                                <td>
+                                  {
+                                    s.material
+                                  }
+                                </td>
+
+                                <td>
+                                  {
+                                    s.dias ??
+                                    '—'
+                                  }
+                                </td>
+
+                              </tr>
+                            )
+                          )
+
+                        : (
+                          <tr>
+                            <td
+                              colSpan="4"
+                            >
+                              Sin series pendientes.
+                            </td>
+                          </tr>
+                        )
+                  }
 
                 </tbody>
 
@@ -900,39 +1099,46 @@ export default function RecoleccionesPage() {
 
         </section>
 
-        {!guardado && (
+        {
+          !guardado && (
+            <section>
 
-          <section>
+              <label>
+                Escanear serie
 
-            <label>
-              Escanear serie
-
-              <input
-                ref={inputSerie}
-                placeholder="Escanee serie y presione Enter"
-                value={captura}
-                disabled={
-                  !datos ||
-                  busy
-                }
-                onChange={e =>
-                  setCaptura(
-                    e.target.value
-                  )
-                }
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    agregar()
+                <input
+                  ref={
+                    inputSerie
                   }
-                }}
-              />
+                  placeholder="Escanee serie y presione Enter"
+                  value={
+                    captura
+                  }
+                  disabled={
+                    !datos ||
+                    busy
+                  }
+                  onChange={e =>
+                    setCaptura(
+                      e.target.value
+                    )
+                  }
+                  onKeyDown={e => {
+                    if (
+                      e.key ===
+                      'Enter'
+                    ) {
+                      e.preventDefault()
+                      agregar()
+                    }
+                  }}
+                />
 
-            </label>
+              </label>
 
-          </section>
-
-        )}
+            </section>
+          )
+        }
 
         <section>
 
@@ -945,34 +1151,47 @@ export default function RecoleccionesPage() {
                 !!guardado ||
                 !entregadas.length
               }
-              onClick={guardar}
+              onClick={
+                guardar
+              }
             >
-              {busy
-                ? 'Guardando...'
-                : 'Guardar recolección'}
+              {
+                busy
+                  ? 'Guardando...'
+                  : 'Guardar recolección'
+              }
             </button>
 
             <button
               type="button"
               className="danger"
-              onClick={limpiar}
+              disabled={
+                busy
+              }
+              onClick={
+                limpiar
+              }
             >
               Limpiar
             </button>
 
           </div>
 
-          {error && (
-            <p className="error">
-              {error}
-            </p>
-          )}
+          {
+            error && (
+              <p className="error">
+                {error}
+              </p>
+            )
+          }
 
-          {mensaje && (
-            <p className="msg">
-              {mensaje}
-            </p>
-          )}
+          {
+            mensaje && (
+              <p className="msg">
+                {mensaje}
+              </p>
+            )
+          }
 
         </section>
 
@@ -985,7 +1204,9 @@ export default function RecoleccionesPage() {
           background: #042a23;
           color: #fff;
           padding: 18px;
-          font-family: Arial, sans-serif;
+          font-family:
+            Arial,
+            sans-serif;
         }
 
         .wrap {
@@ -1016,7 +1237,8 @@ export default function RecoleccionesPage() {
 
         header {
           text-align: center;
-          border: 1px solid #2a826c;
+          border:
+            1px solid #2a826c;
           border-radius: 15px;
           padding: 23px;
           background:
@@ -1034,13 +1256,15 @@ export default function RecoleccionesPage() {
         }
 
         header p {
-          margin: 6px 0 0;
+          margin:
+            6px 0 0;
           font-size: 12px;
         }
 
         section {
           background: #07382f;
-          border: 1px solid #256254;
+          border:
+            1px solid #256254;
           border-radius: 15px;
           padding: 16px;
           margin-bottom: 14px;
@@ -1051,7 +1275,10 @@ export default function RecoleccionesPage() {
           grid-template-columns:
             repeat(
               4,
-              minmax(0, 1fr)
+              minmax(
+                0,
+                1fr
+              )
             );
           gap: 12px;
         }
@@ -1066,8 +1293,10 @@ export default function RecoleccionesPage() {
 
         input {
           width: 100%;
-          box-sizing: border-box;
-          border: 1px solid #c9dfda;
+          box-sizing:
+            border-box;
+          border:
+            1px solid #c9dfda;
           background: #f5f8fa;
           color: #173c38;
           border-radius: 8px;
@@ -1083,7 +1312,8 @@ export default function RecoleccionesPage() {
         .controls {
           display: flex;
           gap: 10px;
-          margin: 12px 0;
+          margin:
+            12px 0;
         }
 
         .controls button {
@@ -1129,7 +1359,8 @@ export default function RecoleccionesPage() {
 
         h3 {
           font-size: 15px;
-          margin: 6px 0 10px;
+          margin:
+            6px 0 10px;
         }
 
         .scroll {
@@ -1139,7 +1370,8 @@ export default function RecoleccionesPage() {
 
         table {
           width: 100%;
-          border-collapse: collapse;
+          border-collapse:
+            collapse;
           font-size: 12px;
           background: #f8fbfa;
           color: #183831;
@@ -1148,17 +1380,21 @@ export default function RecoleccionesPage() {
         th {
           background: #007e60;
           color: white;
-          padding: 11px 5px;
+          padding:
+            11px 5px;
         }
 
         td {
-          border: 1px solid #c5d0ce;
-          padding: 9px 5px;
+          border:
+            1px solid #c5d0ce;
+          padding:
+            9px 5px;
           text-align: center;
         }
 
         td:nth-child(2) {
-          word-break: break-all;
+          word-break:
+            break-all;
         }
 
         .delete {
@@ -1181,7 +1417,8 @@ export default function RecoleccionesPage() {
           padding: 12px;
           border-radius: 8px;
           font-size: 13px;
-          overflow-wrap: anywhere;
+          overflow-wrap:
+            anywhere;
         }
 
         .error {
@@ -1194,7 +1431,9 @@ export default function RecoleccionesPage() {
           color: #09543e;
         }
 
-        @media (max-width: 720px) {
+        @media(
+          max-width: 720px
+        ) {
 
           .fields {
             grid-template-columns:
@@ -1205,7 +1444,8 @@ export default function RecoleccionesPage() {
           }
 
           .columns {
-            grid-template-columns: 1fr;
+            grid-template-columns:
+              1fr;
           }
 
           h1 {
