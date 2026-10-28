@@ -38,6 +38,7 @@ export default function EntregaMaterial() {
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
   const [manual, setManual] = useState(false)
+  const [manualDistrito, setManualDistrito] = useState('')
   const [identificando, setIdentificando] = useState(false)
   const [nuevoSku, setNuevoSku] = useState('')
   const [buscandoSku, setBuscandoSku] = useState(false)
@@ -115,10 +116,13 @@ export default function EntregaMaterial() {
     try {
       const {data,error:e} = await supabase.rpc('qiora_material_identificar_tecnico',{p_almacen:valor})
       if(e)throw e
-      setManual(true); setGuardada(false); setPendientes([]); setFolio('')
+      setManual(true); setManualDistrito(str(data.distrito)); setGuardada(false); setPendientes([]); setFolio('')
       setAlmacen(str(data.almacen)); setTecnico(str(data.tecnico))
       setFecha(''); setRetiro(''); setEstatus('ASIGNACIÓN SIN SOLICITUD')
-      setMateriales([]);setSeleccion('');setNuevoSku('');setNuevoLotes([])
+      let borrador=[]
+      try {borrador=JSON.parse(window.localStorage.getItem('qiora_manual_draft_'+str(data.distrito)+'_'+str(data.almacen))||'[]')}catch(_){}
+      const items=(Array.isArray(borrador)?borrador:[]).map(normalizar)
+      setMateriales(items);setSeleccion(items.find(m=>esTPE(m.lote))?._key||'');setNuevoSku('');setNuevoLotes([])
       setExito('Técnico identificado: '+str(data.tecnico)+' · Almacén '+str(data.almacen)+'. No se consultaron solicitudes pendientes.')
     } catch(e) {setError(e?.message||'No se pudo identificar al técnico.')}
     finally {setIdentificando(false)}
@@ -158,6 +162,12 @@ export default function EntregaMaterial() {
     else if (query.get('folio')) buscarPendientes('', query.get('folio'))
   }, [buscarPendientes, cargarGuardada])
 
+
+  useEffect(() => {
+    if (!manual || !manualDistrito || !almacen || guardada) return
+    try {window.localStorage.setItem('qiora_manual_draft_'+manualDistrito+'_'+almacen,JSON.stringify(materiales))}catch(_){}
+  }, [manual,manualDistrito,almacen,guardada,materiales])
+
   const objetivo = materiales.find(m => m._key === seleccion)
   const faltantes = useMemo(() => materiales.filter(m => esTPE(m.lote) && (
     !Number.isInteger(cantidad(m)) || cantidad(m) <= 0 ||
@@ -168,7 +178,7 @@ export default function EntregaMaterial() {
     const todas = materiales.flatMap(m => m.series.map(normal))
     return new Set(todas).size !== todas.length
   }, [materiales])
-  const puedeGuardar = !manual && !guardada && !!folio && materiales.length > 0 && !busy && !manual && !faltantes.length && !duplicadasGlobales
+  const puedeGuardar = !guardada && (manual ? !!almacen && !!tecnico : !!folio) && materiales.length > 0 && !busy && !faltantes.length && !duplicadasGlobales
 
   const consultarSku = useCallback(async (skuValor, mostrarErrores = false) => {
     const sku = str(skuValor).toUpperCase()
@@ -217,7 +227,20 @@ export default function EntregaMaterial() {
   }, [nuevoSku, folio, manual, consultarSku])
   async function actualizarReserva(accion,m=null,nuevaCantidad=null) {
     if (guardada) return setError('La entrega ya fue guardada; no se pueden editar sus materiales.')
-    if(manual) return setError('La asignación sin solicitud requiere la función de reserva manual en Supabase; no se crearán reservas ficticias.')
+    if(manual) {
+      if(accion==='AGREGAR') {
+        const x=nuevoLotes.find(z=>z.lote===nuevoLote); const n=Number(nuevaCantidad);
+        if(!x||!Number.isInteger(n)||n<1||n>Number(x.disponible))return setError('Cantidad o lote sin existencia disponible.')
+        if(materiales.some(z=>z.sku===nuevoSku&&z.lote===nuevoLote))return setError('SKU y lote ya agregados; utilice Modificar.')
+        setMateriales(prev=>[...prev,normalizar({sku:nuevoSku,lote:nuevoLote,material:x.material,descripcion:x.material,cantidad:n,series:[]},prev.length)]);
+        setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setNuevoCantidad(1);setError('');return
+      }
+      if(accion==='ELIMINAR') {setMateriales(prev=>prev.filter(z=>z._key!==m._key));setEditando('');return}
+      if(accion==='MODIFICAR') {
+        const n=Number(nuevaCantidad);if(!Number.isInteger(n)||n<1||n>10000)return setError('Cantidad inválida.')
+        setMateriales(prev=>prev.map(z=>z._key===m._key?{...z,cantidad:n,series:z.series.slice(0,n)}:z));setEditando('');return
+      }
+    }
     if(!folio)return setError('Seleccione una solicitud pendiente.')
     setBusy(true);setError('');setExito('')
     try{
@@ -242,9 +265,9 @@ export default function EntregaMaterial() {
     if (objetivo.series.length >= cantidad(objetivo)) return setError('Ya se capturaron todas las series requeridas.')
     setBusy(true)
     try {
-      const {error:e}=await supabase.rpc('qiora_material_validar_serie_entrega',{
-        p_folio:folio,p_sku:objetivo.sku,p_lote:objetivo.lote,p_serie:valor
-      })
+      const {error:e}= manual
+        ? await supabase.rpc('qiora_material_validar_serie_manual',{p_almacen:almacen,p_sku:objetivo.sku,p_lote:objetivo.lote,p_serie:valor})
+        : await supabase.rpc('qiora_material_validar_serie_entrega',{p_folio:folio,p_sku:objetivo.sku,p_lote:objetivo.lote,p_serie:valor})
       if(e)throw e
     }catch(e){setError(e.message);return}finally{setBusy(false)}
     setMateriales(prev => prev.map(m => m._key === seleccion ? {...m,series:[...m.series,valor]} : m))
@@ -257,7 +280,7 @@ export default function EntregaMaterial() {
   }
   function limpiar() {
     setBusqueda(''); setPendientes([]); setFolio(''); setAlmacen(''); setTecnico('')
-    setFecha(''); setRetiro(''); setEstatus(''); setMateriales([]); setSeleccion('')
+    setFecha(''); setRetiro(''); setEstatus(''); setMateriales([]); setSeleccion('');setManualDistrito('')
     setGuardada(false);setControlGuardado('');setBuscarControl('');
     window.history.replaceState(null,'',window.location.pathname);
     setCaptura(''); setError(''); setExito(''); setManual(false);setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setErrorSku('');setNuevoCantidad(1);setEditando('')
@@ -271,9 +294,9 @@ export default function EntregaMaterial() {
         cantidad:m.cantidad, lote:m.lote,
         requiere_series:esTPE(m.lote)?'SI':'NO', series:m.series
       }))
-      const {data,error:e} = await supabase.rpc('qiora_material_guardar_entrega', {
-        p_folio_solicitud:folio, p_almacen:almacen, p_materiales:payload
-      })
+      const {data,error:e} = manual
+        ? await supabase.rpc('qiora_material_guardar_sin_solicitud',{p_almacen:almacen,p_materiales:payload})
+        : await supabase.rpc('qiora_material_guardar_entrega', {p_folio_solicitud:folio, p_almacen:almacen, p_materiales:payload})
       if(e)throw e
       setExito(`Entrega registrada en MIGO. FOLIO ${str(data?.folio)} · FOLIO_CONTROL ${str(data?.folio_control)} · PENDIENTE SAP`)
       setEstatus('EN_PROCESO_SAP')
@@ -281,7 +304,7 @@ export default function EntregaMaterial() {
       // No limpiar la vista: recuperar los datos ya persistidos en Supabase.
       const ctl = str(data?.folio_control)
       if (ctl) {
-        try { window.localStorage.removeItem('qiora_series_draft_' + folio) } catch (_) {}
+        try { window.localStorage.removeItem('qiora_series_draft_' + folio);if(manual)window.localStorage.removeItem('qiora_manual_draft_'+manualDistrito+'_'+almacen) } catch (_) {}
         await cargarGuardada(ctl)
       }
     }catch(e){setError(e?.message||'Error al guardar entrega.')}finally{setBusy(false)}
@@ -298,14 +321,14 @@ export default function EntregaMaterial() {
       <label>Almacén<input readOnly value={almacen}/></label><label>Técnico<input readOnly value={tecnico}/></label>
       {!manual&&<><label>Fecha solicitud<input readOnly value={fecha?new Date(fecha).toLocaleDateString('es-MX'):''}/></label>
       <label>Fecha retiro<input readOnly value={retiro}/></label></>}<label>Estatus<input readOnly value={estatus}/></label></div>
-      {manual&&<p className="muted">Asignación directa al técnico, sin consultar solicitudes pendientes. La confirmación de materiales necesita la reserva y el guardado transaccional del backend.</p>}
+      {manual&&<p className="muted">Asignación directa al técnico, sin consultar solicitudes pendientes. Los materiales se validarán y se registrarán en una operación atómica al guardar; antes del guardado solo se conserva un borrador local.</p>}
     </section>
     <section><h3>Consultar entrega guardada</h3>
       <div className="acciones"><label>FOLIO_CONTROL<input placeholder="ABAS-00000001" value={buscarControl} onChange={e=>setBuscarControl(normal(e.target.value))}/></label>
       <button disabled={busy || !buscarControl} onClick={()=>cargarGuardada(buscarControl)}>Ver entrega y series</button></div>
       {guardada&&<p className="ok">Entrega registrada: {controlGuardado}. Las series permanecen guardadas después de actualizar la página. Esta entrega es de solo lectura.</p>}
     </section>
-    {!guardada&&!manual&&<section><h3>Agregar material adicional</h3><p className="muted">Al escribir o escanear un SKU se cargan automáticamente el material y los lotes con existencia de STOCK_ALMACEN.</p>
+    {!guardada&&<section><h3>Agregar material adicional</h3><p className="muted">Al escribir o escanear un SKU se cargan automáticamente el material y los lotes con existencia de STOCK_ALMACEN.</p>
       <div className="grid">
         <label>SKU<input value={nuevoSku} placeholder="Escanee o escriba SKU" autoComplete="off"
           onChange={e=>setNuevoSku(e.target.value.replace(/[^0-9A-Za-z]/g,'').toUpperCase())}
@@ -318,7 +341,7 @@ export default function EntregaMaterial() {
           {nuevoLotes.map((x,i)=><option key={`${x.lote}-${i}`} value={x.lote}>{x.lote||'SIN LOTE'} · disponible {x.disponible}</option>)}
         </select></label>
         <label>Requiere Series<input readOnly value={esTPE(nuevoLote)?'SI':'NO'}/></label>
-        <button className="orange" disabled={busy||buscandoSku||manual||!folio||!nuevoLotes.length||!nuevoLote||!(Number(nuevoCantidad)>0)||Number(nuevoCantidad)>Number(nuevoLotes.find(x=>x.lote===nuevoLote)?.disponible||0)} onClick={()=>actualizarReserva('AGREGAR',null,nuevoCantidad)}>+ Agregar Material</button>
+        <button className="orange" disabled={busy||buscandoSku||(!manual&&!folio)||!nuevoLotes.length||!(Number(nuevoCantidad)>0)||Number(nuevoCantidad)>Number(nuevoLotes.find(x=>x.lote===nuevoLote)?.disponible||0)} onClick={()=>actualizarReserva('AGREGAR',null,nuevoCantidad)}>+ Agregar Material</button>
       </div>
       {buscandoSku&&<p className="muted">Buscando SKU en STOCK_ALMACEN...</p>}
       {!!errorSku&&<p className="warn">{errorSku}</p>}
@@ -332,12 +355,12 @@ export default function EntregaMaterial() {
       <div className="scroll"><table><thead><tr><th>#</th><th>Serie</th><th>Acción</th></tr></thead><tbody>{objetivo?.series.length?objetivo.series.map((s,i)=><tr key={s}><td>{i+1}</td><td>{s}</td><td><button className="small red" disabled={busy} onClick={()=>quitarSerie(s)}>Eliminar</button></td></tr>):<tr><td colSpan={3}>Sin series capturadas.</td></tr>}</tbody></table></div>
       <p className="muted">Series capturadas: {objetivo?.series.length||0} / {objetivo?.cantidad||0}</p>
     </section>}
-    {!guardada&&!manual&&<section><div className="bottom"><button className="green" disabled={!puedeGuardar} onClick={guardar}>{busy?'Guardando...':'Guardar Entrega'}</button><button className="red" disabled={busy} onClick={limpiar}>Limpiar</button></div>
+    {!guardada&&<section><div className="bottom"><button className="green" disabled={!puedeGuardar} onClick={guardar}>{busy?'Guardando...':'Guardar Entrega'}</button><button className="red" disabled={busy} onClick={limpiar}>Limpiar</button></div>
       {!!faltantes.length&&<p className="warn">No se puede guardar: faltan series TPE en {faltantes.map(m=>m.sku+` (${m.series.length}/${m.cantidad})`).join(', ')}.</p>}
       {duplicadasGlobales&&<p className="warn">Existen series duplicadas entre materiales.</p>}
       {!!error&&<p className="warn">{error}</p>}{!!exito&&<p className="ok">{exito}</p>}
     </section>}
-    {manual&&<section><p className="warn">Asignación sin solicitud: se identificó al técnico, pero todavía no está habilitada la reserva/confirmación sin folio. Esto evita crear movimientos sin validar existencias, máximos y series.</p><button onClick={limpiar}>Nueva búsqueda</button></section>}
+
     {guardada&&<section><button onClick={limpiar}>Nueva entrega</button>{!!error&&<p className="warn">{error}</p>}</section>}
   </div><style jsx>{css}</style></main>
 }
