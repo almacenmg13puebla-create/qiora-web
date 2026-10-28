@@ -65,8 +65,8 @@ export async function POST(request) {
     }
 
     /*
-      Cliente exclusivamente de servidor.
-      Nunca expongas SERVICE_ROLE al navegador.
+      CLIENTE SUPABASE SOLO DEL SERVIDOR.
+      SERVICE_ROLE nunca debe ir al navegador.
     */
     const supabaseAdmin = createClient(
       supabaseUrl,
@@ -80,21 +80,19 @@ export async function POST(request) {
     )
 
     /*
-      Buscar al técnico dueño de ese almacén.
+      BUSCAR TÉCNICO POR ALMACÉN.
     */
     const {
       data: tecnico,
       error: tecnicoError
     } = await supabaseAdmin
       .from('almacen_usuarios')
-      .select(
-        `
-          usuario_almacen,
-          nombre,
-          telegram_chat_id,
-          activo
-        `
-      )
+      .select(`
+        usuario_almacen,
+        nombre,
+        telegram_chat_id,
+        activo
+      `)
       .eq('usuario_almacen', almacen)
       .eq('activo', true)
       .limit(1)
@@ -135,7 +133,7 @@ export async function POST(request) {
     }
 
     /*
-      Mandar mensaje privado desde QIORA BOT.
+      ENVIAR MENSAJE PRIVADO DESDE QIORA BOT.
     */
     const telegramResponse = await fetch(
       `https://api.telegram.org/bot${telegramToken}/sendMessage`,
@@ -143,14 +141,18 @@ export async function POST(request) {
         method: 'POST',
 
         headers: {
-          'Content-Type':
-            'application/json'
+          'Content-Type': 'application/json'
         },
 
         body: JSON.stringify({
           chat_id: chatId,
           text: mensaje,
-          parse_mode: 'Markdown',
+
+          /*
+            NO usamos parse_mode para evitar errores
+            cuando nombres, materiales o descripciones
+            contienen caracteres especiales.
+          */
           disable_web_page_preview: true
         }),
 
