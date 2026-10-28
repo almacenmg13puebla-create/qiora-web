@@ -1,149 +1,162 @@
 'use client'
-
-import { Suspense, useEffect, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
 
-// useSearchParams debe estar dentro de un componente envuelto por Suspense.
-export default function EntregaMaterialPage() {
-  return (
-    <Suspense fallback={<main className="em-loading">Cargando entrega de material...</main>}>
-      <EntregaMaterial />
-    </Suspense>
-  )
-}
+const str = v => String(v ?? '').trim()
+const normal = v => str(v).toUpperCase()
+const esTPE = lote => /^TPE/i.test(str(lote))
+const cantidad = m => Number(m.cantidad) || 0
+const normalizar = (m, i) => ({
+  ...m,
+  _key: String(m.id ?? `${m.sku}-${m.lote}-${i}`),
+  sku: str(m.sku),
+  descripcion: str(m.descripcion || m.material),
+  material: str(m.material || m.descripcion),
+  lote: str(m.lote),
+  cantidad: Number(m.cantidad),
+  series: Array.isArray(m.series) ? m.series.map(normal).filter(Boolean) : []
+})
 
-function EntregaMaterial() {
+export default function EntregaMaterial() {
   const router = useRouter()
-  const qs = useSearchParams()
-  const folioUrl = qs.get('folio') || ''
-  const [folio, F] = useState('')
-  const [almacen, A] = useState('')
-  const [tecnico, T] = useState('')
-  const [materiales, M] = useState([])
-  const [err, E] = useState('')
-  const [ok, O] = useState('')
-  const [busy, B] = useState(false)
-  const [manual, V] = useState(false)
+  const [busqueda, setBusqueda] = useState('')
+  const [pendientes, setPendientes] = useState([])
+  const [folio, setFolio] = useState('')
+  const [almacen, setAlmacen] = useState('')
+  const [tecnico, setTecnico] = useState('')
+  const [fecha, setFecha] = useState('')
+  const [retiro, setRetiro] = useState('')
+  const [estatus, setEstatus] = useState('')
+  const [materiales, setMateriales] = useState([])
+  const [seleccion, setSeleccion] = useState('')
+  const [captura, setCaptura] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [exito, setExito] = useState('')
+  const [manual, setManual] = useState(false)
+
+  const cargarSolicitud = useCallback(s => {
+    setFolio(str(s.folio)); setAlmacen(str(s.almacen).padStart(4, '0'))
+    setTecnico(str(s.tecnico)); setFecha(str(s.fecha)); setRetiro(str(s.fecha_retiro))
+    setEstatus(str(s.estatus));
+    const items = (Array.isArray(s.materiales) ? s.materiales : []).map(normalizar)
+    setMateriales(items)
+    setSeleccion(items.find(m => esTPE(m.lote))?._key || '')
+    setCaptura(''); setManual(false); setError(''); setExito('')
+  }, [])
+
+  const buscarPendientes = useCallback(async (a, f = '') => {
+    const almacenNormal = str(a).padStart(4, '0')
+    if (!/^[0-9]{4}$/.test(almacenNormal) && !f) {
+      setError('Capture el almacén del técnico (1 a 4 dígitos).'); return
+    }
+    setBusy(true); setError(''); setExito('')
+    try {
+      const {data, error: e} = await supabase.rpc('qiora_material_listar', {
+        p_folio: f, p_almacen: f ? '' : almacenNormal,
+        p_estatus: '', p_desde: null, p_hasta: null
+      })
+      if (e) throw e
+      const lista = (Array.isArray(data) ? data : []).filter(s =>
+        ['PENDIENTE', 'EN_PREPARACION'].includes(normal(s.estatus)) &&
+        (!f || str(s.folio) === str(f)) &&
+        (f || str(s.almacen).padStart(4,'0') === almacenNormal)
+      )
+      setPendientes(lista)
+      if (!lista.length) {
+        setFolio(''); setMateriales([]); setSeleccion('');
+        setError('El técnico no tiene solicitudes pendientes.'); return
+      }
+      cargarSolicitud(lista[0])
+    } catch (e) { setError(e?.message || 'No fue posible consultar solicitudes.') }
+    finally { setBusy(false) }
+  }, [cargarSolicitud])
 
   useEffect(() => {
-    if (folioUrl) buscar(folioUrl)
-    // Solo buscar cuando cambie el folio de la URL.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folioUrl])
+    const f = new URLSearchParams(window.location.search).get('folio') || ''
+    if (f) buscarPendientes('', f)
+  }, [buscarPendientes])
 
-  async function buscar(f) {
-    E('')
-    O('')
-    const { data, error } = await supabase.rpc('qiora_material_listar', {
-      p_folio: f || '',
-      p_almacen: f ? '' : almacen,
-      p_estatus: '',
-      p_desde: null,
-      p_hasta: null,
-    })
-    if (error) {
-      E(error.message)
-      return
-    }
-    const registros = Array.isArray(data) ? data : []
-    const x = (f ? registros.find(item => item.folio === f) : registros[0]) || null
-    if (!x) {
-      E('No se encontró solicitud pendiente.')
-      return
-    }
-    V(false)
-    F(x.folio)
-    A(x.almacen)
-    T(x.tecnico)
-    M(Array.isArray(x.materiales) ? x.materiales : [])
+  const objetivo = materiales.find(m => m._key === seleccion)
+  const faltantes = useMemo(() => materiales.filter(m => esTPE(m.lote) && (
+    !Number.isInteger(cantidad(m)) || cantidad(m) <= 0 ||
+    m.series.length !== cantidad(m) ||
+    new Set(m.series.map(normal)).size !== m.series.length
+  )), [materiales])
+  const duplicadasGlobales = useMemo(() => {
+    const todas = materiales.flatMap(m => m.series.map(normal))
+    return new Set(todas).size !== todas.length
+  }, [materiales])
+  const puedeGuardar = !!folio && materiales.length > 0 && !busy && !manual && !faltantes.length && !duplicadasGlobales
+
+  function agregarSerie() {
+    setError(''); setExito('')
+    if (!objetivo || !esTPE(objetivo.lote)) return setError('Seleccione un material con lote TPE.')
+    const valor = normal(captura)
+    if (!valor) return setError('Escanee o capture una serie.')
+    if (materiales.some(m => m.series.includes(valor))) return setError('La serie ya fue capturada en esta entrega.')
+    if (objetivo.series.length >= cantidad(objetivo)) return setError('Ya se capturaron todas las series requeridas.')
+    setMateriales(prev => prev.map(m => m._key === seleccion ? {...m,series:[...m.series,valor]} : m))
+    setCaptura('')
   }
-
-  async function guardar() {
-    if (busy || manual || !folio || !materiales.length) return
-    B(true)
-    E('')
-    O('')
-    try {
-      const { data, error } = await supabase.rpc('qiora_material_guardar_entrega', {
-        p_folio_solicitud: folio,
-        p_almacen: almacen,
-        p_materiales: materiales,
-      })
-      if (error) throw error
-      O('Entrega registrada en MIGO. FOLIO ' + data.folio + ' · FOLIO_CONTROL ' + data.folio_control + ' · PENDIENTE SAP')
-    } catch (e) {
-      E(e?.message || 'No se pudo guardar la entrega.')
-    } finally {
-      B(false)
-    }
+  function quitarSerie(valor) {
+    setMateriales(prev => prev.map(m => m._key === seleccion ? {...m,series:m.series.filter(s=>s!==valor)} : m))
+    setError(''); setExito('')
   }
-
   function limpiar() {
-    F('')
-    A('')
-    T('')
-    M([])
-    V(false)
-    E('')
-    O('')
+    setBusqueda(''); setPendientes([]); setFolio(''); setAlmacen(''); setTecnico('')
+    setFecha(''); setRetiro(''); setEstatus(''); setMateriales([]); setSeleccion('')
+    setCaptura(''); setError(''); setExito(''); setManual(false)
+  }
+  async function guardar() {
+    if (!puedeGuardar) {setError('Faltan series de lotes TPE o hay series duplicadas.'); return}
+    setBusy(true);setError('');setExito('')
+    try {
+      const payload = materiales.map(m => ({
+        id: m.id, sku:m.sku, descripcion:m.descripcion, material:m.material,
+        cantidad:m.cantidad, lote:m.lote,
+        requiere_series:esTPE(m.lote)?'SI':'NO', series:m.series
+      }))
+      const {data,error:e} = await supabase.rpc('qiora_material_guardar_entrega', {
+        p_folio_solicitud:folio, p_almacen:almacen, p_materiales:payload
+      })
+      if(e)throw e
+      setExito(`Entrega registrada en MIGO. FOLIO ${str(data?.folio)} · FOLIO_CONTROL ${str(data?.folio_control)} · PENDIENTE SAP`)
+      setEstatus('EN_PROCESO_SAP')
+    }catch(e){setError(e?.message||'Error al guardar entrega.')}finally{setBusy(false)}
   }
 
-  return (
-    <main className="em">
-      <div className="wrap">
-        <button onClick={() => router.push('/ver-solicitudes')}>← Ver solicitudes</button>
-        <header>
-          <h1>ENTREGA DE MATERIAL</h1>
-          <p>Complemento con materiales cargados desde Solicitudes.</p>
-        </header>
-        <section>
-          <h3>Buscar solicitudes por almacén</h3>
-          <label>
-            Almacén
-            <input value={almacen} onChange={e => A(e.target.value)} />
-          </label>
-          <button onClick={() => buscar('')}>Buscar pendientes</button>
-          <button onClick={() => {
-            V(true)
-            F('')
-            M([])
-            O('')
-            E('La entrega sin solicitud requiere un flujo de reserva autorizado. No se permite omitir existencias o máximos.')
-          }}>Entrega sin solicitud</button>
-          <div className="grid">
-            <label>Solicitud pendiente<input value={folio} readOnly /></label>
-            <label>Almacén<input value={almacen} readOnly /></label>
-            <label>Técnico<input value={tecnico} readOnly /></label>
-          </div>
-        </section>
-        <section>
-          <h3>Materiales solicitados</h3>
-          <div className="scroll">
-            <table>
-              <thead><tr><th>SKU</th><th>Material</th><th>Cantidad</th><th>Lote</th><th>Series</th></tr></thead>
-              <tbody>
-                {materiales.map((m, i) => (
-                  <tr key={i}>
-                    <td>{m.sku}</td>
-                    <td>{m.material}</td>
-                    <td>{m.cantidad}</td>
-                    <td>{m.lote || '—'}</td>
-                    <td>—</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <button className="green" disabled={busy || manual || !folio || !materiales.length} onClick={guardar}>Guardar Entrega</button>
-          <button className="red" onClick={limpiar}>Limpiar</button>
-        </section>
-        {err && <p className="warn">{err}</p>}
-        {ok && <p className="ok">{ok}</p>}
-      </div>
-      <style jsx>{css}</style>
-    </main>
-  )
+  return <main className="em"><div className="wrap">
+    <button onClick={()=>router.push('/ver-solicitudes')}>← Ver solicitudes</button>
+    <header><h1>ENTREGA DE MATERIAL</h1><p>Complemento con materiales cargados desde la hoja Solicitudes.</p></header>
+    <section><h3>Buscar solicitudes por almacén</h3>
+      <div className="acciones"><label>Almacén<input value={busqueda} maxLength={4} placeholder="0000" onChange={e=>setBusqueda(e.target.value.replace(/\D/g,'').slice(0,4))} /></label>
+        <button onClick={()=>buscarPendientes(busqueda)} disabled={busy}>Buscar pendientes</button>
+        <button onClick={()=>{setManual(true);setError('La entrega sin solicitud requiere reserva autorizada en Supabase. Esta opción no permite omitir existencias ni máximos.');setExito('')}}>Entrega sin solicitud</button></div>
+      <div className="grid"><label>Solicitud pendiente<select value={folio} onChange={e=>{const s=pendientes.find(x=>str(x.folio)===e.target.value);if(s)cargarSolicitud(s)}}><option value="">Primero busque por almacén</option>{pendientes.map(x=><option key={x.folio} value={x.folio}>{x.folio}</option>)}</select></label>
+      <label>Almacén<input readOnly value={almacen}/></label><label>Técnico<input readOnly value={tecnico}/></label>
+      <label>Fecha solicitud<input readOnly value={fecha?new Date(fecha).toLocaleDateString('es-MX'):''}/></label>
+      <label>Fecha retiro<input readOnly value={retiro}/></label><label>Estatus<input readOnly value={estatus}/></label></div>
+    </section>
+    <section><h3>Agregar material adicional</h3><p className="muted">Los materiales adicionales requieren una reserva validada; no pueden incorporarse directamente al movimiento SAP.</p>
+      <div className="grid"><label>SKU<input disabled placeholder="SKU" /></label><label>Material<input disabled placeholder="Se llena automático"/></label><label>Cantidad<input disabled value="1" readOnly/></label><label>Lote<input disabled placeholder="Se llena automático"/></label><label>Requiere Series<input disabled value="NO" readOnly/></label><button className="orange" disabled>+ Agregar Material</button></div>
+    </section>
+    <section><h3>Materiales agregados</h3><div className="scroll"><table><thead><tr><th>SKU</th><th>Material</th><th>Cantidad</th><th>Lote</th><th>Series</th><th>Acción</th></tr></thead><tbody>
+      {materiales.length?materiales.map(m=><tr key={m._key}><td>{m.sku}</td><td>{m.material}</td><td>{m.cantidad}</td><td>{m.lote||'—'}</td><td>{m.series.length?m.series.join(', '):(esTPE(m.lote)?`Faltan ${cantidad(m)} series`:'No requiere')}</td>
+        <td><button className="small" disabled={busy} onClick={()=>{setSeleccion(m._key);setError('Si necesita quitar un material solicitado, cancele o ajuste su reserva de forma autorizada.')}}>{esTPE(m.lote)?'Capturar':'Ver'}</button></td></tr>):<tr><td colSpan={6}>Sin materiales agregados.</td></tr>}
+    </tbody></table></div></section>
+    {materiales.some(m=>esTPE(m.lote))&&<section><h3>Capturar serie</h3><label>Material TPE<select value={seleccion} onChange={e=>{setSeleccion(e.target.value);setCaptura('');setError('')}}>{materiales.filter(m=>esTPE(m.lote)).map(m=><option key={m._key} value={m._key}>{m.sku} · {m.material} · {m.lote} ({m.series.length}/{m.cantidad})</option>)}</select></label>
+      <div className="acciones"><label>Escanee o seleccione serie<input value={captura} onChange={e=>setCaptura(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();agregarSerie()}}} placeholder="Escanee o seleccione serie"/></label><button disabled={!objetivo||busy} onClick={agregarSerie}>+ Agregar serie</button></div>
+      <div className="scroll"><table><thead><tr><th>#</th><th>Serie</th><th>Acción</th></tr></thead><tbody>{objetivo?.series.length?objetivo.series.map((s,i)=><tr key={s}><td>{i+1}</td><td>{s}</td><td><button className="small red" disabled={busy} onClick={()=>quitarSerie(s)}>Eliminar</button></td></tr>):<tr><td colSpan={3}>Sin series capturadas.</td></tr>}</tbody></table></div>
+      <p className="muted">Series capturadas: {objetivo?.series.length||0} / {objetivo?.cantidad||0}</p>
+    </section>}
+    <section><div className="bottom"><button className="green" disabled={!puedeGuardar} onClick={guardar}>{busy?'Guardando...':'Guardar Entrega'}</button><button className="red" disabled={busy} onClick={limpiar}>Limpiar</button></div>
+      {!!faltantes.length&&<p className="warn">No se puede guardar: faltan series TPE en {faltantes.map(m=>m.sku+` (${m.series.length}/${m.cantidad})`).join(', ')}.</p>}
+      {duplicadasGlobales&&<p className="warn">Existen series duplicadas entre materiales.</p>}
+      {!!error&&<p className="warn">{error}</p>}{!!exito&&<p className="ok">{exito}</p>}
+    </section>
+  </div><style jsx>{css}</style></main>
 }
 
-const css = `.em{background:#03251e;color:white;min-height:100vh;padding:19px;font:13px Arial}.wrap{max-width:1050px;margin:auto}.em header{background:linear-gradient(120deg,#0a5746,#159f79);text-align:center}.em header,.em section{border:1px solid #346e61;border-radius:12px;padding:18px;margin:13px 0;background-color:#08342a}.em h1{margin:0}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.em label{display:inline-block;margin:8px;font-weight:bold}.em input{display:block;padding:11px;border:0;border-radius:8px;background:#f2f6f8;color:#123}.em button{background:#118f71;color:#fff;padding:11px;border:0;border-radius:9px;margin:7px;cursor:pointer}.em button:disabled{opacity:.5}.em .green{background:#12a45f}.em .red{background:#d33}.scroll{overflow:auto}.em table{width:100%;border-collapse:collapse;background:#f9faf9;color:#234}.em th{background:#067b56;color:white}.em th,.em td{padding:11px;border:1px solid #bdcec5}.warn{background:#ffe2e2;color:#9b1f1f;padding:12px;border-radius:9px}.ok{background:#d9ffe4;color:#075f37;padding:12px;border-radius:9px}@media(max-width:680px){.grid{grid-template-columns:1fr}}`
+const css = `.em{background:#03251e;color:white;min-height:100vh;padding:16px;font:13px Arial}.wrap{max-width:1080px;margin:auto}.em header{background:linear-gradient(120deg,#0a5746,#159f79);text-align:center}.em header,.em section{border:1px solid #346e61;border-radius:12px;padding:17px;margin:13px 0;background:#08342a}.em h1{margin:0}.em h3{margin:0 0 10px}.em label{display:block;font-weight:bold;font-size:12px;min-width:0}.em input,.em select{display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:10px;border:0;border-radius:7px;background:#f2f6f8;color:#123;min-height:38px}.em button{background:#119b79;color:white;padding:10px 15px;border:0;border-radius:8px;cursor:pointer;font-weight:bold}.em button:disabled{opacity:.45;cursor:not-allowed}.acciones{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;align-items:end}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px}.em .green{background:#12ae64}.em .red{background:#d33}.em .orange{background:#f57216}.em .small{padding:7px 10px;font-size:11px}.scroll{overflow:auto;margin-top:12px}.em table{width:100%;border-collapse:collapse;background:#f9faf9;color:#234}.em th{background:#067b56;color:white}.em th,.em td{padding:10px;border:1px solid #bdcec5;text-align:center}.em td:nth-child(2){text-align:left}.bottom{display:grid;grid-template-columns:1fr 1fr;gap:12px}.muted{font-size:12px;color:#a5d4ca}.warn{background:#ffe2e2;color:#9b1f1f;padding:12px;border-radius:9px}.ok{background:#d9ffe4;color:#075f37;padding:12px;border-radius:9px}@media(max-width:680px){.grid,.acciones{grid-template-columns:1fr}.bottom{grid-template-columns:1fr}}`
