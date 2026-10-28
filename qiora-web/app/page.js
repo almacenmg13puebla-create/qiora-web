@@ -156,7 +156,8 @@ export default function Home() {
     )
   }
 
-  const modulos = MODULOS.filter((modulo) => modulo.permiso === null || perfil[modulo.permiso] === true)
+  const puedeVerSolicitudes = perfil.ver_solicitud === true || perfil.administrar_permisos === true || perfil.acceso_almacen === true || perfil.acceso_coordinador === true
+  const modulos = MODULOS.filter((modulo) => modulo.permiso === null || perfil[modulo.permiso] === true || (modulo.permiso === 'ver_solicitud' && puedeVerSolicitudes))
   const modulosAutorizados = MODULOS.filter((modulo) => modulo.permiso !== null && perfil[modulo.permiso] === true)
   const disponibles = modulos.filter((modulo) => modulo.disponible)
 
@@ -195,7 +196,12 @@ export default function Home() {
               <article className="qiora-module" key={modulo.ruta || modulo.permiso}>
                 <span className={`qiora-module-status ${modulo.disponible ? 'qiora-status-ready' : ''}`}>{modulo.disponible ? 'Ruta existente' : 'Próximamente'}</span>
                 <h3>{modulo.nombre}</h3><p>{modulo.descripcion}</p>
-                {modulo.disponible ? <a className="qiora-module-action" href={modulo.ruta}>Abrir módulo</a> : <button className="qiora-module-action" type="button" disabled>En preparación</button>}
+                {modulo.permiso === 'ver_solicitud' && modulo.disponible ? (
+                  <div className="qiora-solicitudes-actions" style={{display:"grid",gap:8}}>
+                    <a className="qiora-module-action" href="/ver-solicitudes">Ver solicitudes</a>
+                    <a className="qiora-module-action" href="/entrega-material">Entrega de material</a>
+                  </div>
+                ) : modulo.disponible ? <a className="qiora-module-action" href={modulo.ruta}>Abrir módulo</a> : <button className="qiora-module-action" type="button" disabled>En preparación</button>}
               </article>
             )) : <article className="qiora-module"><h3>Sin módulos habilitados</h3><p>El usuario inició sesión correctamente, pero todavía no tiene permisos activos para estos módulos.</p></article>}
           </section>
