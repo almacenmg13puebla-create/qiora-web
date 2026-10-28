@@ -11,18 +11,29 @@ function passwordSupabase(clave) {
 
 const MODULOS = [
   { permiso: 'auditoria', nombre: 'Auditorías', descripcion: 'Captura y seguimiento de auditorías.', ruta: '/auditorias', disponible: true },
+
   // La navegacion es visible para usuarios autenticados; cada ruta valida
   // sus propios permisos y Supabase protege las operaciones sobre datos.
   { permiso: null, nombre: 'Inventarios', descripcion: 'Consulta de materiales, equipos IQ09 y catálogos.', ruta: '/inventarios', disponible: true },
+
   { permiso: null, nombre: 'Configuración', descripcion: 'Usuarios, números de empleado y catálogos de costos.', ruta: '/configuracion', disponible: true },
+
   { permiso: 'ver_auditorias', nombre: 'Ver auditorías', descripcion: 'Consulta histórica de auditorías.', disponible: false },
-  { permiso: 'recolecciones', nombre: 'Recolecciones', descripcion: 'Seguimiento de equipos recolectados.', disponible: false },
+
+  { permiso: 'recolecciones', nombre: 'Recolecciones', descripcion: 'Seguimiento de equipos recolectados.', ruta: '/recolecciones', disponible: true },
+
   { permiso: 'solicitud_material', nombre: 'Solicitud de material', descripcion: 'Solicitudes y seguimiento de materiales.', ruta: '/solicitud-material', disponible: true },
+
   { permiso: 'ver_solicitud', nombre: 'Ver Solicitudes', descripcion: 'Consultar solicitudes de material y abrir la pantalla de entrega.', ruta: '/ver-solicitudes', disponible: true },
+
   { permiso: 'devoluciones', nombre: 'Devoluciones', descripcion: 'Registro y control de devoluciones.', disponible: false },
+
   { permiso: 'asignaciones', nombre: 'Asignaciones', descripcion: 'Administración de asignaciones.', disponible: false },
+
   { permiso: 'bajas', nombre: 'Bajas', descripcion: 'Seguimiento de bajas de inventario.', disponible: false },
+
   { permiso: null, nombre: 'Traspasos', descripcion: 'Solicitudes y seguimiento de traspasos SAP.', ruta: '/traspasos', disponible: true },
+
   { permiso: 'dashboard', nombre: 'Dashboard', descripcion: 'Indicadores y reportes de operación.', disponible: false },
 ]
 
@@ -41,10 +52,13 @@ export default function Home() {
     async function validarSesion() {
       try {
         const { data: { user }, error } = await supabase.auth.getUser()
+
         if (error || !user?.id) return
+
         await cargarPerfil(() => montado)
       } catch (error) {
         console.error('ERROR VALIDANDO SESIÓN:', error)
+
         if (montado) setMsg('Error al validar la sesión.')
       } finally {
         if (montado) setLoading(false)
@@ -52,63 +66,98 @@ export default function Home() {
     }
 
     validarSesion()
-    return () => { montado = false }
+
+    return () => {
+      montado = false
+    }
   }, [])
 
   async function cargarPerfil(sigueActivo = () => true) {
     try {
       const { data, error } = await supabase.rpc('qiora_mi_perfil')
+
       if (error || !data || data.activo !== true) {
         console.error('ERROR CARGANDO PERFIL:', error)
+
         await supabase.auth.signOut()
+
         if (sigueActivo()) {
           setPerfil(null)
-          setMsg(error ? 'No fue posible cargar el perfil.' : 'No se encontró un perfil activo vinculado.')
+          setMsg(
+            error
+              ? 'No fue posible cargar el perfil.'
+              : 'No se encontró un perfil activo vinculado.'
+          )
         }
+
         return false
       }
+
       // Consultar el numero de empleado asociado a la sesion autenticada.
       // No usar perfil.odoo: ese campo corresponde al identificador antiguo.
-      const { data: empleadoNumero, error: empleadoError } = await supabase.rpc('qiora_mi_numero_empleado')
-      if (empleadoError) console.error('ERROR NUMERO EMPLEADO:', empleadoError)
+      const {
+        data: empleadoNumero,
+        error: empleadoError,
+      } = await supabase.rpc('qiora_mi_numero_empleado')
+
+      if (empleadoError) {
+        console.error('ERROR NUMERO EMPLEADO:', empleadoError)
+      }
+
       if (sigueActivo()) {
         setPerfil(data)
-        setNumeroEmpleado(empleadoError ? '' : String(empleadoNumero ?? '').trim())
+        setNumeroEmpleado(
+          empleadoError
+            ? ''
+            : String(empleadoNumero ?? '').trim()
+        )
         setMsg('')
       }
+
       return true
     } catch (error) {
       console.error('ERROR CARGANDO PERFIL:', error)
+
       await supabase.auth.signOut()
+
       if (sigueActivo()) {
         setPerfil(null)
         setMsg('Error al cargar el perfil del usuario.')
       }
+
       return false
     }
   }
 
   async function login(e) {
     e.preventDefault()
+
     if (loading) return
+
     setMsg('')
     setLoading(true)
+
     try {
       const u = String(usuario ?? '').trim()
       const claveNormal = String(clave ?? '')
+
       if (!u || !claveNormal) {
         setMsg('Captura usuario y clave.')
         return
       }
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email: `${u.toLowerCase()}@qiora.local`,
         password: passwordSupabase(claveNormal),
       })
+
       if (error || !data?.user?.id) {
         setMsg('Usuario o clave incorrectos.')
         return
       }
+
       const perfilCargado = await cargarPerfil()
+
       if (perfilCargado) setClave('')
     } catch (error) {
       console.error('ERROR LOGIN:', error)
@@ -121,7 +170,9 @@ export default function Home() {
   async function salir() {
     try {
       const { error } = await supabase.auth.signOut()
+
       if (error) throw error
+
       setPerfil(null)
       setNumeroEmpleado('')
       setUsuario('')
@@ -135,7 +186,15 @@ export default function Home() {
   }
 
   if (loading) {
-    return <main className="center"><div className="card"><div className="brand">Q</div><h1>QIORA</h1><p className="sub">Validando sesión...</p></div></main>
+    return (
+      <main className="center">
+        <div className="card">
+          <div className="brand">Q</div>
+          <h1>QIORA</h1>
+          <p className="sub">Validando sesión...</p>
+        </div>
+      </main>
+    )
   }
 
   if (!perfil) {
@@ -143,72 +202,406 @@ export default function Home() {
       <main className="center">
         <form className="card" onSubmit={login}>
           <div className="brand">Q</div>
+
           <h1>QIORA</h1>
-          <p className="sub">Sistema de gestión de almacén</p>
-          <label htmlFor="qiora-usuario">USUARIO / ALMACÉN</label>
-          <input id="qiora-usuario" value={usuario} onChange={(e) => setUsuario(e.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} placeholder="1903" disabled={loading} required />
-          <label htmlFor="qiora-clave">CLAVE</label>
-          <input id="qiora-clave" type="password" value={clave} onChange={(e) => setClave(e.target.value)} autoComplete="current-password" placeholder="********" disabled={loading} required />
-          {msg && <div className="error" role="alert">{msg}</div>}
-          <button type="submit" disabled={loading}>{loading ? 'INGRESANDO...' : 'INICIAR SESIÓN'}</button>
+
+          <p className="sub">
+            Sistema de gestión de almacén
+          </p>
+
+          <label htmlFor="qiora-usuario">
+            USUARIO / ALMACÉN
+          </label>
+
+          <input
+            id="qiora-usuario"
+            value={usuario}
+            onChange={(e) => setUsuario(e.target.value)}
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder="1903"
+            disabled={loading}
+            required
+          />
+
+          <label htmlFor="qiora-clave">
+            CLAVE
+          </label>
+
+          <input
+            id="qiora-clave"
+            type="password"
+            value={clave}
+            onChange={(e) => setClave(e.target.value)}
+            autoComplete="current-password"
+            placeholder="********"
+            disabled={loading}
+            required
+          />
+
+          {msg && (
+            <div className="error" role="alert">
+              {msg}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+          >
+            {loading
+              ? 'INGRESANDO...'
+              : 'INICIAR SESIÓN'}
+          </button>
         </form>
       </main>
     )
   }
 
-  const esAdminPadre = String(perfil.puesto ?? '').trim().toUpperCase() === 'ADMIN_PADRE'
-  const puedeVerSolicitudes = esAdminPadre || perfil.ver_solicitud === true || perfil.administrar_permisos === true || perfil.acceso_almacen === true || perfil.acceso_coordinador === true
-  const modulos = MODULOS.filter((modulo) => modulo.permiso === null || perfil[modulo.permiso] === true || (modulo.permiso === 'ver_solicitud' && puedeVerSolicitudes))
-  const modulosAutorizados = MODULOS.filter((modulo) => modulo.permiso !== null && (perfil[modulo.permiso] === true || (modulo.permiso === 'ver_solicitud' && puedeVerSolicitudes)))
-  const disponibles = modulos.filter((modulo) => modulo.disponible)
+  const esAdminPadre =
+    String(perfil.puesto ?? '')
+      .trim()
+      .toUpperCase() === 'ADMIN_PADRE'
+
+  const puedeVerSolicitudes =
+    esAdminPadre ||
+    perfil.ver_solicitud === true ||
+    perfil.administrar_permisos === true ||
+    perfil.acceso_almacen === true ||
+    perfil.acceso_coordinador === true
+
+  const modulos = MODULOS.filter(
+    (modulo) =>
+      modulo.permiso === null ||
+      perfil[modulo.permiso] === true ||
+      (
+        modulo.permiso === 'ver_solicitud' &&
+        puedeVerSolicitudes
+      )
+  )
+
+  const modulosAutorizados = MODULOS.filter(
+    (modulo) =>
+      modulo.permiso !== null &&
+      (
+        perfil[modulo.permiso] === true ||
+        (
+          modulo.permiso === 'ver_solicitud' &&
+          puedeVerSolicitudes
+        )
+      )
+  )
+
+  const disponibles = modulos.filter(
+    (modulo) => modulo.disponible
+  )
 
   return (
     <main className="qiora-app">
-      <aside className={`qiora-sidebar ${menuAbierto ? 'qiora-sidebar-open' : ''}`} aria-label="Navegación principal">
-        <div className="qiora-sidebar-brand"><div className="qiora-logo">Q</div><div><strong>QIORA</strong><small>CONECTA</small></div></div>
-        <div className="qiora-sidebar-section">NAVEGACIÓN</div>
-        <a className="qiora-nav-item qiora-nav-active" href="/" onClick={() => setMenuAbierto(false)}>Panel principal</a>
-        <div className="qiora-sidebar-section">MIS MÓDULOS</div>
-        {modulos.length ? modulos.map((modulo) => (
-          modulo.disponible ?
-            <a key={modulo.ruta || modulo.permiso} className="qiora-nav-item" href={modulo.ruta} onClick={() => setMenuAbierto(false)}>{modulo.nombre}</a> :
-            <span key={modulo.ruta || modulo.permiso} className="qiora-nav-item qiora-nav-disabled" title="Módulo pendiente de implementación">{modulo.nombre}<small>Próximamente</small></span>
-        )) : <p className="qiora-sidebar-empty">Sin módulos asignados.</p>}
-        <div className="qiora-sidebar-bottom"><span>Distrito</span><strong>{perfil.distrito || '-'}</strong></div>
+
+      <aside
+        className={`qiora-sidebar ${
+          menuAbierto ? 'qiora-sidebar-open' : ''
+        }`}
+        aria-label="Navegación principal"
+      >
+        <div className="qiora-sidebar-brand">
+          <div className="qiora-logo">
+            Q
+          </div>
+
+          <div>
+            <strong>QIORA</strong>
+            <small>CONECTA</small>
+          </div>
+        </div>
+
+        <div className="qiora-sidebar-section">
+          NAVEGACIÓN
+        </div>
+
+        <a
+          className="qiora-nav-item qiora-nav-active"
+          href="/"
+          onClick={() => setMenuAbierto(false)}
+        >
+          Panel principal
+        </a>
+
+        <div className="qiora-sidebar-section">
+          MIS MÓDULOS
+        </div>
+
+        {modulos.length ? (
+          modulos.map((modulo) =>
+            modulo.disponible ? (
+              <a
+                key={modulo.ruta || modulo.permiso}
+                className="qiora-nav-item"
+                href={modulo.ruta}
+                onClick={() => setMenuAbierto(false)}
+              >
+                {modulo.nombre}
+              </a>
+            ) : (
+              <span
+                key={modulo.ruta || modulo.permiso}
+                className="qiora-nav-item qiora-nav-disabled"
+                title="Módulo pendiente de implementación"
+              >
+                {modulo.nombre}
+                <small>Próximamente</small>
+              </span>
+            )
+          )
+        ) : (
+          <p className="qiora-sidebar-empty">
+            Sin módulos asignados.
+          </p>
+        )}
+
+        <div className="qiora-sidebar-bottom">
+          <span>Distrito</span>
+          <strong>{perfil.distrito || '-'}</strong>
+        </div>
       </aside>
-      {menuAbierto && <button type="button" className="qiora-backdrop" aria-label="Cerrar menú" onClick={() => setMenuAbierto(false)} />}
+
+      {menuAbierto && (
+        <button
+          type="button"
+          className="qiora-backdrop"
+          aria-label="Cerrar menú"
+          onClick={() => setMenuAbierto(false)}
+        />
+      )}
+
       <div className="qiora-main">
+
         <header className="qiora-topbar">
-          <div className="qiora-top-left"><button type="button" className="qiora-menu-toggle" onClick={() => setMenuAbierto(!menuAbierto)} aria-label="Mostrar u ocultar menú">☰</button><div><strong>QIORA CONECTA</strong><span>Panel principal</span></div></div>
-          <div className="qiora-top-right"><span className="qiora-user-name">{perfil.nombre}</span><button type="button" className="out" onClick={salir}>Cerrar sesión</button></div>
+
+          <div className="qiora-top-left">
+            <button
+              type="button"
+              className="qiora-menu-toggle"
+              onClick={() => setMenuAbierto(!menuAbierto)}
+              aria-label="Mostrar u ocultar menú"
+            >
+              ☰
+            </button>
+
+            <div>
+              <strong>QIORA CONECTA</strong>
+              <span>Panel principal</span>
+            </div>
+          </div>
+
+          <div className="qiora-top-right">
+            <span className="qiora-user-name">
+              {perfil.nombre}
+            </span>
+
+            <button
+              type="button"
+              className="out"
+              onClick={salir}
+            >
+              Cerrar sesión
+            </button>
+          </div>
+
         </header>
+
         <div className="qiora-content">
-          <section className="qiora-hero"><div><p className="qiora-eyebrow">BIENVENIDO A QIORA</p><h1>Panel principal</h1><p>Consulta los módulos habilitados para tu usuario y distrito.</p></div><div className="qiora-district-badge">{perfil.distrito || 'SIN DISTRITO'}</div></section>
-          <section className="qiora-stats" aria-label="Información del usuario">
-            <div className="qiora-stat"><span>Usuario / Almacén</span><strong>{perfil.usuario_almacen}</strong></div>
-            <div className="qiora-stat"><span>Puesto</span><strong>{perfil.puesto || '-'}</strong></div>
-            <div className="qiora-stat"><span>Número de empleado</span><strong>{numeroEmpleado || 'NO REGISTRADO'}</strong></div>
-            <div className="qiora-stat"><span>Módulos autorizados</span><strong>{modulosAutorizados.length}</strong></div>
+
+          <section className="qiora-hero">
+
+            <div>
+              <p className="qiora-eyebrow">
+                BIENVENIDO A QIORA
+              </p>
+
+              <h1>
+                Panel principal
+              </h1>
+
+              <p>
+                Consulta los módulos habilitados
+                para tu usuario y distrito.
+              </p>
+            </div>
+
+            <div className="qiora-district-badge">
+              {perfil.distrito || 'SIN DISTRITO'}
+            </div>
+
           </section>
-          {msg && <div className="error" role="alert">{msg}</div>}
-          <div className="qiora-section-heading"><div><h2>Mis módulos</h2><p>Las funciones disponibles respetan los permisos de tu perfil.</p></div><span>{disponibles.length} disponible(s)</span></div>
+
+          <section
+            className="qiora-stats"
+            aria-label="Información del usuario"
+          >
+
+            <div className="qiora-stat">
+              <span>Usuario / Almacén</span>
+              <strong>{perfil.usuario_almacen}</strong>
+            </div>
+
+            <div className="qiora-stat">
+              <span>Puesto</span>
+              <strong>{perfil.puesto || '-'}</strong>
+            </div>
+
+            <div className="qiora-stat">
+              <span>Número de empleado</span>
+              <strong>
+                {numeroEmpleado || 'NO REGISTRADO'}
+              </strong>
+            </div>
+
+            <div className="qiora-stat">
+              <span>Módulos autorizados</span>
+              <strong>{modulosAutorizados.length}</strong>
+            </div>
+
+          </section>
+
+          {msg && (
+            <div
+              className="error"
+              role="alert"
+            >
+              {msg}
+            </div>
+          )}
+
+          <div className="qiora-section-heading">
+
+            <div>
+              <h2>
+                Mis módulos
+              </h2>
+
+              <p>
+                Las funciones disponibles respetan los
+                permisos de tu perfil.
+              </p>
+            </div>
+
+            <span>
+              {disponibles.length} disponible(s)
+            </span>
+
+          </div>
+
           <section className="qiora-modules">
-            {modulos.length ? modulos.map((modulo) => (
-              <article className="qiora-module" key={modulo.ruta || modulo.permiso}>
-                <span className={`qiora-module-status ${modulo.disponible ? 'qiora-status-ready' : ''}`}>{modulo.disponible ? 'Ruta existente' : 'Próximamente'}</span>
-                <h3>{modulo.nombre}</h3><p>{modulo.descripcion}</p>
-                {modulo.permiso === 'ver_solicitud' && modulo.disponible ? (
-                  <div className="qiora-solicitudes-actions" style={{display:"grid",gap:8}}>
-                    <a className="qiora-module-action" href="/ver-solicitudes">Ver solicitudes</a>
-                    <a className="qiora-module-action" href="/entrega-material">Entrega de material</a>
-                  </div>
-                ) : modulo.disponible ? <a className="qiora-module-action" href={modulo.ruta}>Abrir módulo</a> : <button className="qiora-module-action" type="button" disabled>En preparación</button>}
+
+            {modulos.length ? (
+              modulos.map((modulo) => (
+
+                <article
+                  className="qiora-module"
+                  key={modulo.ruta || modulo.permiso}
+                >
+
+                  <span
+                    className={`qiora-module-status ${
+                      modulo.disponible
+                        ? 'qiora-status-ready'
+                        : ''
+                    }`}
+                  >
+                    {modulo.disponible
+                      ? 'Ruta existente'
+                      : 'Próximamente'}
+                  </span>
+
+                  <h3>
+                    {modulo.nombre}
+                  </h3>
+
+                  <p>
+                    {modulo.descripcion}
+                  </p>
+
+                  {modulo.permiso === 'ver_solicitud' &&
+                  modulo.disponible ? (
+
+                    <div
+                      className="qiora-solicitudes-actions"
+                      style={{
+                        display: 'grid',
+                        gap: 8,
+                      }}
+                    >
+
+                      <a
+                        className="qiora-module-action"
+                        href="/ver-solicitudes"
+                      >
+                        Ver solicitudes
+                      </a>
+
+                      <a
+                        className="qiora-module-action"
+                        href="/entrega-material"
+                      >
+                        Entrega de material
+                      </a>
+
+                    </div>
+
+                  ) : modulo.disponible ? (
+
+                    <a
+                      className="qiora-module-action"
+                      href={modulo.ruta}
+                    >
+                      Abrir módulo
+                    </a>
+
+                  ) : (
+
+                    <button
+                      className="qiora-module-action"
+                      type="button"
+                      disabled
+                    >
+                      En preparación
+                    </button>
+
+                  )}
+
+                </article>
+
+              ))
+            ) : (
+
+              <article className="qiora-module">
+                <h3>
+                  Sin módulos habilitados
+                </h3>
+
+                <p>
+                  El usuario inició sesión correctamente,
+                  pero todavía no tiene permisos activos
+                  para estos módulos.
+                </p>
               </article>
-            )) : <article className="qiora-module"><h3>Sin módulos habilitados</h3><p>El usuario inició sesión correctamente, pero todavía no tiene permisos activos para estos módulos.</p></article>}
+
+            )}
+
           </section>
-          <p className="qiora-footnote">La navegación muestra los permisos del perfil. Cada módulo debe validar sus operaciones en Supabase antes de habilitar acciones sobre datos.</p>
+
+          <p className="qiora-footnote">
+            La navegación muestra los permisos del perfil.
+            Cada módulo debe validar sus operaciones en
+            Supabase antes de habilitar acciones sobre datos.
+          </p>
+
         </div>
       </div>
+
     </main>
   )
 }
