@@ -23,6 +23,9 @@ export default function EntregaMaterial() {
   const [busqueda, setBusqueda] = useState('')
   const [pendientes, setPendientes] = useState([])
   const [folio, setFolio] = useState('')
+  const [controlGuardado, setControlGuardado] = useState('')
+  const [buscarControl, setBuscarControl] = useState('')
+  const [guardada, setGuardada] = useState(false)
   const [almacen, setAlmacen] = useState('')
   const [tecnico, setTecnico] = useState('')
   const [fecha, setFecha] = useState('')
@@ -50,10 +53,57 @@ export default function EntregaMaterial() {
     setTecnico(str(s.tecnico)); setFecha(str(s.fecha)); setRetiro(str(s.fecha_retiro))
     setEstatus(str(s.estatus));
     const items = (Array.isArray(s.materiales) ? s.materiales : []).map(normalizar)
+    // Recuperar borrador de series TPE por solicitud y fila. Nunca altera las reservas.
+    try {
+      const raw = window.localStorage.getItem('qiora_series_draft_' + str(s.folio))
+      const draft = raw ? JSON.parse(raw) : {}
+      for (const m of items) {
+        const k = `${m.id ?? ''}|${m.sku}|${m.lote}|${m.cantidad}`
+        const saved = draft[k]
+        if (esTPE(m.lote) && Array.isArray(saved) && saved.length <= m.cantidad && new Set(saved).size === saved.length) m.series = saved.map(normal)
+      }
+    } catch (_) {}
     setMateriales(items)
+    setGuardada(false); setControlGuardado('')
     setSeleccion(items.find(m => esTPE(m.lote))?._key || '')
     setCaptura(''); setManual(false); setError(''); setExito(''); setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setErrorSku('');setEditando('')
   }, [])
+
+  // Cargar la entrega ya registrada directamente desde Supabase, incluyendo sus series.
+  const cargarGuardada = useCallback(async (control, mostrarError = true) => {
+    const codigo = normal(control)
+    if (!/^ABAS-[0-9]{8}$/.test(codigo)) {
+      if (mostrarError) setError('Capture un FOLIO_CONTROL válido, ejemplo ABAS-00000001.')
+      return
+    }
+    setBusy(true); setError('')
+    try {
+      const {data, error: e} = await supabase.rpc('qiora_material_consultar_entrega_guardada', {p_folio_control: codigo})
+      if (e) throw e
+      if (!data?.folio_control) throw new Error('No se encontró la entrega guardada.')
+      const items = (Array.isArray(data.materiales) ? data.materiales : []).map(normalizar)
+      setMateriales(items)
+      setFolio(str(data.folio_solicitud)); setAlmacen(str(data.destino))
+      setTecnico(str(data.tecnico)); setFecha(str(data.creado_en)); setRetiro('')
+      setEstatus(str(data.estado)); setSeleccion(items.find(m => esTPE(m.lote))?._key || '')
+      setGuardada(true); setControlGuardado(codigo); setBuscarControl(codigo)
+      setCaptura(''); setNuevoSku(''); setErrorSku(''); setPendientes([])
+      setExito('Entrega guardada · ' + codigo + ' · series recuperadas desde Supabase.')
+      try { window.localStorage.setItem('qiora_ultima_entrega_control',codigo) } catch (_) {}
+      window.history.replaceState(null, '', window.location.pathname + '?folio_control=' + encodeURIComponent(codigo))
+    } catch (e) { if (mostrarError) setError(e?.message || 'No se pudo cargar la entrega.') }
+    finally { setBusy(false) }
+  }, [])
+
+  // Conservar series escaneadas incluso antes de Guardar Entrega.
+  useEffect(() => {
+    if (!folio || guardada || !materiales.length) return
+    const draft = {}
+    for (const m of materiales) {
+      if (esTPE(m.lote) && m.series.length) draft[`${m.id ?? ''}|${m.sku}|${m.lote}|${m.cantidad}`] = m.series
+    }
+    try { window.localStorage.setItem('qiora_series_draft_' + folio, JSON.stringify(draft)) } catch (_) {}
+  }, [folio, materiales, guardada])
 
   const buscarPendientes = useCallback(async (a, f = '') => {
     const almacenNormal = str(a).padStart(4, '0')
@@ -83,9 +133,11 @@ export default function EntregaMaterial() {
   }, [cargarSolicitud])
 
   useEffect(() => {
-    const f = new URLSearchParams(window.location.search).get('folio') || ''
-    if (f) buscarPendientes('', f)
-  }, [buscarPendientes])
+    const query = new URLSearchParams(window.location.search)
+    const control = query.get('folio_control') || (() => { try { return window.localStorage.getItem('qiora_ultima_entrega_control') || '' } catch (_) { return '' } })()
+    if (control) cargarGuardada(control, !!query.get('folio_control'))
+    else if (query.get('folio')) buscarPendientes('', query.get('folio'))
+  }, [buscarPendientes, cargarGuardada])
 
   const objetivo = materiales.find(m => m._key === seleccion)
   const faltantes = useMemo(() => materiales.filter(m => esTPE(m.lote) && (
@@ -97,7 +149,7 @@ export default function EntregaMaterial() {
     const todas = materiales.flatMap(m => m.series.map(normal))
     return new Set(todas).size !== todas.length
   }, [materiales])
-  const puedeGuardar = !!folio && materiales.length > 0 && !busy && !manual && !faltantes.length && !duplicadasGlobales
+  const puedeGuardar = !guardada && !!folio && materiales.length > 0 && !busy && !manual && !faltantes.length && !duplicadasGlobales
 
   const consultarSku = useCallback(async (skuValor, mostrarErrores = false) => {
     const sku = str(skuValor).toUpperCase()
@@ -145,6 +197,7 @@ export default function EntregaMaterial() {
     return () => clearTimeout(timer)
   }, [nuevoSku, folio, consultarSku])
   async function actualizarReserva(accion,m=null,nuevaCantidad=null) {
+    if (guardada) return setError('La entrega ya fue guardada; no se pueden editar sus materiales.')
     if(!folio || manual)return setError('Seleccione una solicitud pendiente.')
     setBusy(true);setError('');setExito('')
     try{
@@ -160,6 +213,7 @@ export default function EntregaMaterial() {
     }catch(e){setError(e.message)}finally{setBusy(false)}
   }
   async function agregarSerie() {
+    if (guardada) return setError('La entrega ya fue guardada. Las series registradas son de solo lectura.')
     setError(''); setExito('')
     if (!objetivo || !esTPE(objetivo.lote)) return setError('Seleccione un material con lote TPE.')
     const valor = normal(captura)
@@ -177,12 +231,15 @@ export default function EntregaMaterial() {
     setCaptura('')
   }
   function quitarSerie(valor) {
+    if (guardada) return
     setMateriales(prev => prev.map(m => m._key === seleccion ? {...m,series:m.series.filter(s=>s!==valor)} : m))
     setError(''); setExito('')
   }
   function limpiar() {
     setBusqueda(''); setPendientes([]); setFolio(''); setAlmacen(''); setTecnico('')
     setFecha(''); setRetiro(''); setEstatus(''); setMateriales([]); setSeleccion('')
+    setGuardada(false);setControlGuardado('');setBuscarControl('');
+    window.history.replaceState(null,'',window.location.pathname);
     setCaptura(''); setError(''); setExito(''); setManual(false);setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setErrorSku('');setNuevoCantidad(1);setEditando('')
   }
   async function guardar() {
@@ -200,6 +257,13 @@ export default function EntregaMaterial() {
       if(e)throw e
       setExito(`Entrega registrada en MIGO. FOLIO ${str(data?.folio)} · FOLIO_CONTROL ${str(data?.folio_control)} · PENDIENTE SAP`)
       setEstatus('EN_PROCESO_SAP')
+      // Las series son definitivas en qiora_entregas_registro.materiales.
+      // No limpiar la vista: recuperar los datos ya persistidos en Supabase.
+      const ctl = str(data?.folio_control)
+      if (ctl) {
+        try { window.localStorage.removeItem('qiora_series_draft_' + folio) } catch (_) {}
+        await cargarGuardada(ctl)
+      }
     }catch(e){setError(e?.message||'Error al guardar entrega.')}finally{setBusy(false)}
   }
 
@@ -215,7 +279,12 @@ export default function EntregaMaterial() {
       <label>Fecha solicitud<input readOnly value={fecha?new Date(fecha).toLocaleDateString('es-MX'):''}/></label>
       <label>Fecha retiro<input readOnly value={retiro}/></label><label>Estatus<input readOnly value={estatus}/></label></div>
     </section>
-    <section><h3>Agregar material adicional</h3><p className="muted">Al escribir o escanear un SKU se cargan automáticamente el material y los lotes con existencia de STOCK_ALMACEN.</p>
+    <section><h3>Consultar entrega guardada</h3>
+      <div className="acciones"><label>FOLIO_CONTROL<input placeholder="ABAS-00000001" value={buscarControl} onChange={e=>setBuscarControl(normal(e.target.value))}/></label>
+      <button disabled={busy || !buscarControl} onClick={()=>cargarGuardada(buscarControl)}>Ver entrega y series</button></div>
+      {guardada&&<p className="ok">Entrega registrada: {controlGuardado}. Las series permanecen guardadas después de actualizar la página. Esta entrega es de solo lectura.</p>}
+    </section>
+    {!guardada&&<section><h3>Agregar material adicional</h3><p className="muted">Al escribir o escanear un SKU se cargan automáticamente el material y los lotes con existencia de STOCK_ALMACEN.</p>
       <div className="grid">
         <label>SKU<input value={nuevoSku} placeholder="Escanee o escriba SKU" autoComplete="off"
           onChange={e=>setNuevoSku(e.target.value.replace(/[^0-9A-Za-z]/g,'').toUpperCase())}
@@ -232,21 +301,22 @@ export default function EntregaMaterial() {
       </div>
       {buscandoSku&&<p className="muted">Buscando SKU en STOCK_ALMACEN...</p>}
       {!!errorSku&&<p className="warn">{errorSku}</p>}
-    </section>
+    </section>}
     <section><h3>Materiales agregados</h3><div className="scroll"><table><thead><tr><th>SKU</th><th>Material</th><th>Cantidad</th><th>Lote</th><th>Series</th><th>Acción</th></tr></thead><tbody>
       {materiales.length?materiales.map(m=><tr key={m._key}><td>{m.sku}</td><td>{m.material}</td><td>{m.cantidad}</td><td>{m.lote||'—'}</td><td>{m.series.length?m.series.join(', '):(esTPE(m.lote)?`Faltan ${cantidad(m)} series`:'No requiere')}</td>
-        <td><div className="rowbuttons"><button className="small" disabled={busy} onClick={()=>{setSeleccion(m._key);setEditando(m._key);setEditCantidad(m.cantidad);setError('')}}>Modificar</button><button className="small red" disabled={busy} onClick={()=>{if(window.confirm('¿Eliminar este material de la solicitud?')) actualizarReserva('ELIMINAR',m)}}>Eliminar</button>{esTPE(m.lote)&&<button className="small" disabled={busy} onClick={()=>setSeleccion(m._key)}>Series</button>}</div>{editando===m._key&&<div className="editrow"><input type="number" min="1" value={editCantidad} onChange={e=>setEditCantidad(e.target.value)}/><button className="small green" disabled={busy||Number(editCantidad)<1} onClick={()=>actualizarReserva('MODIFICAR',m,editCantidad)}>Aplicar</button><button className="small" onClick={()=>setEditando('')}>Cancelar</button></div>}</td></tr>):<tr><td colSpan={6}>Sin materiales agregados.</td></tr>}
+        <td><div className="rowbuttons">{!guardada&&<><button className="small" disabled={busy} onClick={()=>{setSeleccion(m._key);setEditando(m._key);setEditCantidad(m.cantidad);setError('')}}>Modificar</button><button className="small red" disabled={busy} onClick={()=>{if(window.confirm('¿Eliminar este material de la solicitud?')) actualizarReserva('ELIMINAR',m)}}>Eliminar</button>{esTPE(m.lote)&&<button className="small" disabled={busy} onClick={()=>setSeleccion(m._key)}>Series</button></>}</div>{!guardada&&editando===m._key&&<div className="editrow"><input type="number" min="1" value={editCantidad} onChange={e=>setEditCantidad(e.target.value)}/><button className="small green" disabled={busy||Number(editCantidad)<1} onClick={()=>actualizarReserva('MODIFICAR',m,editCantidad)}>Aplicar</button><button className="small" onClick={()=>setEditando('')}>Cancelar</button></div>}</td></tr>):<tr><td colSpan={6}>Sin materiales agregados.</td></tr>}
     </tbody></table></div></section>
-    {materiales.some(m=>esTPE(m.lote))&&<section><h3>Capturar serie</h3><label>Material TPE<select value={seleccion} onChange={e=>{setSeleccion(e.target.value);setCaptura('');setError('')}}>{materiales.filter(m=>esTPE(m.lote)).map(m=><option key={m._key} value={m._key}>{m.sku} · {m.material} · {m.lote} ({m.series.length}/{m.cantidad})</option>)}</select></label>
+    {!guardada&&materiales.some(m=>esTPE(m.lote))&&<section><h3>Capturar serie</h3><label>Material TPE<select value={seleccion} onChange={e=>{setSeleccion(e.target.value);setCaptura('');setError('')}}>{materiales.filter(m=>esTPE(m.lote)).map(m=><option key={m._key} value={m._key}>{m.sku} · {m.material} · {m.lote} ({m.series.length}/{m.cantidad})</option>)}</select></label>
       <div className="acciones"><label>Escanee o seleccione serie<input value={captura} onChange={e=>setCaptura(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();agregarSerie()}}} placeholder="Escanee o seleccione serie"/></label><button disabled={!objetivo||busy} onClick={agregarSerie}>+ Agregar serie</button></div>
       <div className="scroll"><table><thead><tr><th>#</th><th>Serie</th><th>Acción</th></tr></thead><tbody>{objetivo?.series.length?objetivo.series.map((s,i)=><tr key={s}><td>{i+1}</td><td>{s}</td><td><button className="small red" disabled={busy} onClick={()=>quitarSerie(s)}>Eliminar</button></td></tr>):<tr><td colSpan={3}>Sin series capturadas.</td></tr>}</tbody></table></div>
       <p className="muted">Series capturadas: {objetivo?.series.length||0} / {objetivo?.cantidad||0}</p>
     </section>}
-    <section><div className="bottom"><button className="green" disabled={!puedeGuardar} onClick={guardar}>{busy?'Guardando...':'Guardar Entrega'}</button><button className="red" disabled={busy} onClick={limpiar}>Limpiar</button></div>
+    {!guardada&&<section><div className="bottom"><button className="green" disabled={!puedeGuardar} onClick={guardar}>{busy?'Guardando...':'Guardar Entrega'}</button><button className="red" disabled={busy} onClick={limpiar}>Limpiar</button></div>
       {!!faltantes.length&&<p className="warn">No se puede guardar: faltan series TPE en {faltantes.map(m=>m.sku+` (${m.series.length}/${m.cantidad})`).join(', ')}.</p>}
       {duplicadasGlobales&&<p className="warn">Existen series duplicadas entre materiales.</p>}
       {!!error&&<p className="warn">{error}</p>}{!!exito&&<p className="ok">{exito}</p>}
-    </section>
+    </section>}
+    {guardada&&<section><button onClick={limpiar}>Nueva entrega</button>{!!error&&<p className="warn">{error}</p>}</section>}
   </div><style jsx>{css}</style></main>
 }
 
