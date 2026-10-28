@@ -44,6 +44,9 @@ export default function EntregaMaterial() {
   const [buscandoSku, setBuscandoSku] = useState(false)
   const [errorSku, setErrorSku] = useState('')
   const ultimaBusquedaSku = useRef(0)
+  const cantidadInputRef = useRef(null)
+  const skuInputRef = useRef(null)
+  const agregandoConEnter = useRef(false)
   const [nuevoLotes, setNuevoLotes] = useState([])
   const [nuevoLote, setNuevoLote] = useState('')
   const [nuevoCantidad, setNuevoCantidad] = useState(1)
@@ -225,6 +228,41 @@ export default function EntregaMaterial() {
     const timer = setTimeout(() => consultarSku(sku), 350)
     return () => clearTimeout(timer)
   }, [nuevoSku, folio, manual, consultarSku])
+  // Flujo de escáner/teclado: SKU + Enter -> Cantidad + Enter -> agregar.
+  async function enterSku(e) {
+    if (e.key !== 'Enter' || e.nativeEvent?.isComposing) return
+    e.preventDefault()
+    if (e.repeat) return
+    const sku = str(nuevoSku)
+    if (!sku) { setErrorSku('Capture un SKU.'); return }
+    // Garantizar que la consulta haya terminado antes de permitir el segundo Enter.
+    await consultarSku(sku, true)
+    cantidadInputRef.current?.focus()
+    cantidadInputRef.current?.select()
+  }
+
+  async function enterCantidad(e) {
+    if (e.key !== 'Enter' || e.nativeEvent?.isComposing) return
+    e.preventDefault()
+    if (e.repeat || agregandoConEnter.current || busy) return
+    if (buscandoSku) { setErrorSku('Espere a que termine la consulta del SKU.'); return }
+    if (!manual && !folio) { setError('Seleccione una solicitud pendiente.'); return }
+    const lote = nuevoLotes.find(x => x.lote === nuevoLote)
+    const n = Number(nuevoCantidad)
+    if (!lote) { setErrorSku('El SKU no tiene un lote disponible.'); return }
+    if (!Number.isInteger(n) || n < 1 || n > Number(lote.disponible)) {
+      setErrorSku(`Cantidad inválida. Disponible en lote ${lote.lote || 'SIN LOTE'}: ${lote.disponible}.`)
+      return
+    }
+    agregandoConEnter.current = true
+    try {
+      await actualizarReserva('AGREGAR', null, n)
+    } finally {
+      agregandoConEnter.current = false
+      skuInputRef.current?.focus()
+    }
+  }
+
   async function actualizarReserva(accion,m=null,nuevaCantidad=null) {
     if (guardada) return setError('La entrega ya fue guardada; no se pueden editar sus materiales.')
     if(manual) {
@@ -328,14 +366,14 @@ export default function EntregaMaterial() {
       <button disabled={busy || !buscarControl} onClick={()=>cargarGuardada(buscarControl)}>Ver entrega y series</button></div>
       {guardada&&<p className="ok">Entrega registrada: {controlGuardado}. Las series permanecen guardadas después de actualizar la página. Esta entrega es de solo lectura.</p>}
     </section>
-    {!guardada&&<section><h3>Agregar material adicional</h3><p className="muted">Al escribir o escanear un SKU se cargan automáticamente el material y los lotes con existencia de STOCK_ALMACEN.</p>
+    {!guardada&&<section><h3>Agregar material adicional</h3><p className="muted">Al escribir o escanear el SKU, presione Enter para pasar a Cantidad. Después de capturar la cantidad, presione Enter para agregar automáticamente el material. Se validan lote y existencias.</p>
       <div className="grid">
-        <label>SKU<input value={nuevoSku} placeholder="Escanee o escriba SKU" autoComplete="off"
+        <label>SKU<input ref={skuInputRef} value={nuevoSku} placeholder="Escanee o escriba SKU" autoComplete="off"
           onChange={e=>setNuevoSku(e.target.value.replace(/[^0-9A-Za-z]/g,'').toUpperCase())}
           onBlur={()=>{if(nuevoSku && !nuevoLotes.length && !buscandoSku)consultarSku(nuevoSku)}}
-          onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();consultarSku(nuevoSku)}}}/></label>
+          onKeyDown={enterSku}/></label>
         <label>Material<input value={nuevoLotes.find(x=>x.lote===nuevoLote)?.material||nuevoLotes[0]?.material||''} readOnly placeholder={buscandoSku?'Consultando...':'Se llena automático'}/></label>
-        <label>Cantidad<input type="number" min="1" max="10000" value={nuevoCantidad} onChange={e=>setNuevoCantidad(e.target.value)}/></label>
+        <label>Cantidad<input ref={cantidadInputRef} type="number" min="1" max="10000" value={nuevoCantidad} onChange={e=>setNuevoCantidad(e.target.value)} onKeyDown={enterCantidad}/></label>
         <label>Lote<select value={nuevoLote} onChange={e=>setNuevoLote(e.target.value)} disabled={!nuevoLotes.length}>
           <option value="">Seleccione lote</option>
           {nuevoLotes.map((x,i)=><option key={`${x.lote}-${i}`} value={x.lote}>{x.lote||'SIN LOTE'} · disponible {x.disponible}</option>)}
