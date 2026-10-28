@@ -17,7 +17,7 @@ const MODULOS = [
   { permiso: null, nombre: 'Configuración', descripcion: 'Usuarios, números de empleado y catálogos de costos.', ruta: '/configuracion', disponible: true },
   { permiso: 'ver_auditorias', nombre: 'Ver auditorías', descripcion: 'Consulta histórica de auditorías.', disponible: false },
   { permiso: 'recolecciones', nombre: 'Recolecciones', descripcion: 'Seguimiento de equipos recolectados.', disponible: false },
-  { permiso: 'solicitud_material', nombre: 'Solicitud de material', descripcion: 'Solicitudes y seguimiento de materiales.', disponible: false },
+  { permiso: 'solicitud_material', nombre: 'Solicitud de material', descripcion: 'Solicitudes y seguimiento de materiales.', ruta: '/solicitud-material', disponible: true },
   { permiso: 'devoluciones', nombre: 'Devoluciones', descripcion: 'Registro y control de devoluciones.', disponible: false },
   { permiso: 'asignaciones', nombre: 'Asignaciones', descripcion: 'Administración de asignaciones.', disponible: false },
   { permiso: 'bajas', nombre: 'Bajas', descripcion: 'Seguimiento de bajas de inventario.', disponible: false },
