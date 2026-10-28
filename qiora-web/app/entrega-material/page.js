@@ -1,5 +1,5 @@
 'use client'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
 
@@ -36,6 +36,9 @@ export default function EntregaMaterial() {
   const [exito, setExito] = useState('')
   const [manual, setManual] = useState(false)
   const [nuevoSku, setNuevoSku] = useState('')
+  const [buscandoSku, setBuscandoSku] = useState(false)
+  const [errorSku, setErrorSku] = useState('')
+  const ultimaBusquedaSku = useRef(0)
   const [nuevoLotes, setNuevoLotes] = useState([])
   const [nuevoLote, setNuevoLote] = useState('')
   const [nuevoCantidad, setNuevoCantidad] = useState(1)
@@ -49,7 +52,7 @@ export default function EntregaMaterial() {
     const items = (Array.isArray(s.materiales) ? s.materiales : []).map(normalizar)
     setMateriales(items)
     setSeleccion(items.find(m => esTPE(m.lote))?._key || '')
-    setCaptura(''); setManual(false); setError(''); setExito(''); setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setEditando('')
+    setCaptura(''); setManual(false); setError(''); setExito(''); setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setErrorSku('');setEditando('')
   }, [])
 
   const buscarPendientes = useCallback(async (a, f = '') => {
@@ -96,18 +99,51 @@ export default function EntregaMaterial() {
   }, [materiales])
   const puedeGuardar = !!folio && materiales.length > 0 && !busy && !manual && !faltantes.length && !duplicadasGlobales
 
-  async function consultarSku() {
-    setError('');setNuevoLotes([]);setNuevoLote('')
-    if (!folio || !nuevoSku.trim()) return setError('Seleccione una solicitud e indique un SKU.')
-    setBusy(true)
+  const consultarSku = useCallback(async (skuValor, mostrarErrores = false) => {
+    const sku = str(skuValor).toUpperCase()
+    const id = ++ultimaBusquedaSku.current
+    if (!folio || !sku) {
+      setNuevoLotes([]); setNuevoLote(''); setBuscandoSku(false)
+      if (mostrarErrores) setErrorSku('Seleccione una solicitud e indique un SKU.')
+      return
+    }
+    setBuscandoSku(true); setErrorSku(''); setError('')
     try {
-      const {data,error:e}=await supabase.rpc('qiora_material_stock_sku_entrega',{p_folio:folio,p_sku:nuevoSku.trim()})
-      if(e)throw e
-      const lots=(data?.lotes||[]).filter(x=>Number(x.disponible)>0)
-      if(!lots.length)throw Error('El SKU no tiene existencia libre en STOCK_ALMACEN.')
-      setNuevoLotes(lots);setNuevoLote(lots[0].lote)
-    }catch(e){setError(e.message)}finally{setBusy(false)}
-  }
+      const {data,error:e} = await supabase.rpc('qiora_material_stock_sku_entrega', {
+        p_folio:folio, p_sku:sku
+      })
+      if (id !== ultimaBusquedaSku.current) return
+      if (e) throw e
+      const lotes = (Array.isArray(data?.lotes) ? data.lotes : [])
+        .filter(x => Number(x.disponible) > 0)
+        .map(x => ({...x, lote:str(x.lote), material:str(x.material)}))
+      if (!lotes.length) {
+        setNuevoLotes([]); setNuevoLote('')
+        setErrorSku('SKU inexistente o sin existencias disponibles en STOCK_ALMACEN.')
+        return
+      }
+      setNuevoLotes(lotes)
+      setNuevoLote(anterior => lotes.some(x => x.lote === anterior) ? anterior : lotes[0].lote)
+      setNuevoCantidad(c => Number(c) > 0 ? c : 1)
+    } catch(e) {
+      if (id === ultimaBusquedaSku.current) {
+        setNuevoLotes([]); setNuevoLote('')
+        setErrorSku(e?.message || 'No se pudo consultar STOCK_ALMACEN.')
+      }
+    } finally {
+      if (id === ultimaBusquedaSku.current) setBuscandoSku(false)
+    }
+  }, [folio])
+
+  useEffect(() => {
+    const sku = str(nuevoSku)
+    ++ultimaBusquedaSku.current
+    setNuevoLotes([]);setNuevoLote('');setErrorSku('')
+    if (!folio || !sku) {setBuscandoSku(false);return}
+    // Debounce: permite escanear el SKU sin lanzar una consulta por cada digito.
+    const timer = setTimeout(() => consultarSku(sku), 350)
+    return () => clearTimeout(timer)
+  }, [nuevoSku, folio, consultarSku])
   async function actualizarReserva(accion,m=null,nuevaCantidad=null) {
     if(!folio || manual)return setError('Seleccione una solicitud pendiente.')
     setBusy(true);setError('');setExito('')
@@ -119,7 +155,7 @@ export default function EntregaMaterial() {
         p_lote:accion==='AGREGAR'?nuevoLote:null
       })
       if(e)throw e
-      setEditando('');setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setNuevoCantidad(1)
+      setEditando('');setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setErrorSku('');setNuevoCantidad(1)
       await buscarPendientes('',folio)
     }catch(e){setError(e.message)}finally{setBusy(false)}
   }
@@ -147,7 +183,7 @@ export default function EntregaMaterial() {
   function limpiar() {
     setBusqueda(''); setPendientes([]); setFolio(''); setAlmacen(''); setTecnico('')
     setFecha(''); setRetiro(''); setEstatus(''); setMateriales([]); setSeleccion('')
-    setCaptura(''); setError(''); setExito(''); setManual(false);setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setNuevoCantidad(1);setEditando('')
+    setCaptura(''); setError(''); setExito(''); setManual(false);setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setErrorSku('');setNuevoCantidad(1);setEditando('')
   }
   async function guardar() {
     if (!puedeGuardar) {setError('Faltan series de lotes TPE o hay series duplicadas.'); return}
@@ -179,13 +215,23 @@ export default function EntregaMaterial() {
       <label>Fecha solicitud<input readOnly value={fecha?new Date(fecha).toLocaleDateString('es-MX'):''}/></label>
       <label>Fecha retiro<input readOnly value={retiro}/></label><label>Estatus<input readOnly value={estatus}/></label></div>
     </section>
-    <section><h3>Agregar material adicional</h3><p className="muted">Al buscar SKU se cargan nombre y lotes de STOCK_ALMACEN. La cantidad se reserva al agregar.</p>
-      <div className="grid"><label>SKU<div className="skurow"><input value={nuevoSku} placeholder="SKU" onChange={e=>{setNuevoSku(e.target.value.replace(/[^0-9A-Za-z]/g,''));setNuevoLotes([])}} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();consultarSku()}}}/><button onClick={consultarSku} disabled={busy||!folio}>Buscar</button></div></label>
-        <label>Material<input value={nuevoLotes.find(x=>x.lote===nuevoLote)?.material||''} readOnly placeholder="Se llena automático"/></label>
+    <section><h3>Agregar material adicional</h3><p className="muted">Al escribir o escanear un SKU se cargan automáticamente el material y los lotes con existencia de STOCK_ALMACEN.</p>
+      <div className="grid">
+        <label>SKU<input value={nuevoSku} placeholder="Escanee o escriba SKU" autoComplete="off"
+          onChange={e=>setNuevoSku(e.target.value.replace(/[^0-9A-Za-z]/g,'').toUpperCase())}
+          onBlur={()=>{if(nuevoSku && !nuevoLotes.length && !buscandoSku)consultarSku(nuevoSku)}}
+          onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();consultarSku(nuevoSku)}}}/></label>
+        <label>Material<input value={nuevoLotes.find(x=>x.lote===nuevoLote)?.material||nuevoLotes[0]?.material||''} readOnly placeholder={buscandoSku?'Consultando...':'Se llena automático'}/></label>
         <label>Cantidad<input type="number" min="1" max="10000" value={nuevoCantidad} onChange={e=>setNuevoCantidad(e.target.value)}/></label>
-        <label>Lote<select value={nuevoLote} onChange={e=>setNuevoLote(e.target.value)}><option value="">Seleccione lote</option>{nuevoLotes.map(x=><option key={x.lote} value={x.lote}>{x.lote||'SIN LOTE'} · disponible {x.disponible}</option>)}</select></label>
+        <label>Lote<select value={nuevoLote} onChange={e=>setNuevoLote(e.target.value)} disabled={!nuevoLotes.length}>
+          <option value="">Seleccione lote</option>
+          {nuevoLotes.map((x,i)=><option key={`${x.lote}-${i}`} value={x.lote}>{x.lote||'SIN LOTE'} · disponible {x.disponible}</option>)}
+        </select></label>
         <label>Requiere Series<input readOnly value={esTPE(nuevoLote)?'SI':'NO'}/></label>
-        <button className="orange" disabled={busy||!folio||!nuevoLotes.length||!nuevoLote||!(Number(nuevoCantidad)>0)} onClick={()=>actualizarReserva('AGREGAR',null,nuevoCantidad)}>+ Agregar Material</button></div>
+        <button className="orange" disabled={busy||buscandoSku||!folio||!nuevoLotes.length||!nuevoLote||!(Number(nuevoCantidad)>0)||Number(nuevoCantidad)>Number(nuevoLotes.find(x=>x.lote===nuevoLote)?.disponible||0)} onClick={()=>actualizarReserva('AGREGAR',null,nuevoCantidad)}>+ Agregar Material</button>
+      </div>
+      {buscandoSku&&<p className="muted">Buscando SKU en STOCK_ALMACEN...</p>}
+      {!!errorSku&&<p className="warn">{errorSku}</p>}
     </section>
     <section><h3>Materiales agregados</h3><div className="scroll"><table><thead><tr><th>SKU</th><th>Material</th><th>Cantidad</th><th>Lote</th><th>Series</th><th>Acción</th></tr></thead><tbody>
       {materiales.length?materiales.map(m=><tr key={m._key}><td>{m.sku}</td><td>{m.material}</td><td>{m.cantidad}</td><td>{m.lote||'—'}</td><td>{m.series.length?m.series.join(', '):(esTPE(m.lote)?`Faltan ${cantidad(m)} series`:'No requiere')}</td>
