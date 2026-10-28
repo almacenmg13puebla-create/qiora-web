@@ -18,6 +18,7 @@ const MODULOS = [
   { permiso: 'ver_auditorias', nombre: 'Ver auditorías', descripcion: 'Consulta histórica de auditorías.', disponible: false },
   { permiso: 'recolecciones', nombre: 'Recolecciones', descripcion: 'Seguimiento de equipos recolectados.', disponible: false },
   { permiso: 'solicitud_material', nombre: 'Solicitud de material', descripcion: 'Solicitudes y seguimiento de materiales.', ruta: '/solicitud-material', disponible: true },
+  { permiso: 'ver_solicitud', nombre: 'Ver Solicitudes', descripcion: 'Consultar solicitudes de material y abrir la pantalla de entrega.', ruta: '/ver-solicitudes', disponible: true },
   { permiso: 'devoluciones', nombre: 'Devoluciones', descripcion: 'Registro y control de devoluciones.', disponible: false },
   { permiso: 'asignaciones', nombre: 'Asignaciones', descripcion: 'Administración de asignaciones.', disponible: false },
   { permiso: 'bajas', nombre: 'Bajas', descripcion: 'Seguimiento de bajas de inventario.', disponible: false },
@@ -168,8 +169,8 @@ export default function Home() {
         <div className="qiora-sidebar-section">MIS MÓDULOS</div>
         {modulos.length ? modulos.map((modulo) => (
           modulo.disponible ?
-            <a key={modulo.permiso} className="qiora-nav-item" href={modulo.ruta} onClick={() => setMenuAbierto(false)}>{modulo.nombre}</a> :
-            <span key={modulo.permiso} className="qiora-nav-item qiora-nav-disabled" title="Módulo pendiente de implementación">{modulo.nombre}<small>Próximamente</small></span>
+            <a key={modulo.ruta || modulo.permiso} className="qiora-nav-item" href={modulo.ruta} onClick={() => setMenuAbierto(false)}>{modulo.nombre}</a> :
+            <span key={modulo.ruta || modulo.permiso} className="qiora-nav-item qiora-nav-disabled" title="Módulo pendiente de implementación">{modulo.nombre}<small>Próximamente</small></span>
         )) : <p className="qiora-sidebar-empty">Sin módulos asignados.</p>}
         <div className="qiora-sidebar-bottom"><span>Distrito</span><strong>{perfil.distrito || '-'}</strong></div>
       </aside>
@@ -191,7 +192,7 @@ export default function Home() {
           <div className="qiora-section-heading"><div><h2>Mis módulos</h2><p>Las funciones disponibles respetan los permisos de tu perfil.</p></div><span>{disponibles.length} disponible(s)</span></div>
           <section className="qiora-modules">
             {modulos.length ? modulos.map((modulo) => (
-              <article className="qiora-module" key={modulo.permiso}>
+              <article className="qiora-module" key={modulo.ruta || modulo.permiso}>
                 <span className={`qiora-module-status ${modulo.disponible ? 'qiora-status-ready' : ''}`}>{modulo.disponible ? 'Ruta existente' : 'Próximamente'}</span>
                 <h3>{modulo.nombre}</h3><p>{modulo.descripcion}</p>
                 {modulo.disponible ? <a className="qiora-module-action" href={modulo.ruta}>Abrir módulo</a> : <button className="qiora-module-action" type="button" disabled>En preparación</button>}
