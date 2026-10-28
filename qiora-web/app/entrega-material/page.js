@@ -241,6 +241,18 @@ export default function EntregaMaterial() {
     cantidadInputRef.current?.select()
   }
 
+  function limpiarCamposMaterial() {
+    ++ultimaBusquedaSku.current
+    setNuevoSku('')
+    setNuevoLotes([])
+    setNuevoLote('')
+    setNuevoCantidad(1)
+    setBuscandoSku(false)
+    setErrorSku('')
+    // Regresar al SKU solamente despues de agregar correctamente.
+    requestAnimationFrame(() => skuInputRef.current?.focus())
+  }
+
   async function enterCantidad(e) {
     if (e.key !== 'Enter' || e.nativeEvent?.isComposing) return
     e.preventDefault()
@@ -259,7 +271,6 @@ export default function EntregaMaterial() {
       await actualizarReserva('AGREGAR', null, n)
     } finally {
       agregandoConEnter.current = false
-      skuInputRef.current?.focus()
     }
   }
 
@@ -271,7 +282,7 @@ export default function EntregaMaterial() {
         if(!x||!Number.isInteger(n)||n<1||n>Number(x.disponible))return setError('Cantidad o lote sin existencia disponible.')
         if(materiales.some(z=>z.sku===nuevoSku&&z.lote===nuevoLote))return setError('SKU y lote ya agregados; utilice Modificar.')
         setMateriales(prev=>[...prev,normalizar({sku:nuevoSku,lote:nuevoLote,material:x.material,descripcion:x.material,cantidad:n,series:[]},prev.length)]);
-        setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setNuevoCantidad(1);setError('');return
+        limpiarCamposMaterial();setError('');return true
       }
       if(accion==='ELIMINAR') {setMateriales(prev=>prev.filter(z=>z._key!==m._key));setEditando('');return}
       if(accion==='MODIFICAR') {
@@ -289,8 +300,9 @@ export default function EntregaMaterial() {
         p_lote:accion==='AGREGAR'?nuevoLote:null
       })
       if(e)throw e
-      setEditando('');setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setErrorSku('');setNuevoCantidad(1)
+      setEditando('')
       await buscarPendientes('',folio)
+      if (accion === 'AGREGAR') limpiarCamposMaterial()
     }catch(e){setError(e.message)}finally{setBusy(false)}
   }
   async function agregarSerie() {
