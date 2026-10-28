@@ -38,6 +38,7 @@ export default function EntregaMaterial() {
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
   const [manual, setManual] = useState(false)
+  const [identificando, setIdentificando] = useState(false)
   const [nuevoSku, setNuevoSku] = useState('')
   const [buscandoSku, setBuscandoSku] = useState(false)
   const [errorSku, setErrorSku] = useState('')
@@ -105,6 +106,24 @@ export default function EntregaMaterial() {
     try { window.localStorage.setItem('qiora_series_draft_' + folio, JSON.stringify(draft)) } catch (_) {}
   }, [folio, materiales, guardada])
 
+
+  // Independiente de Solicitudes: consulta UNICAMENTE el tecnico en el distrito del usuario.
+  const identificarTecnico = useCallback(async (codigo) => {
+    const valor = str(codigo)
+    if (!/^[0-9]{1,4}$/.test(valor)) return setError('Indique un almacén técnico de 1 a 4 dígitos.')
+    setIdentificando(true); setError(''); setExito('')
+    try {
+      const {data,error:e} = await supabase.rpc('qiora_material_identificar_tecnico',{p_almacen:valor})
+      if(e)throw e
+      setManual(true); setGuardada(false); setPendientes([]); setFolio('')
+      setAlmacen(str(data.almacen)); setTecnico(str(data.tecnico))
+      setFecha(''); setRetiro(''); setEstatus('ASIGNACIÓN SIN SOLICITUD')
+      setMateriales([]);setSeleccion('');setNuevoSku('');setNuevoLotes([])
+      setExito('Técnico identificado: '+str(data.tecnico)+' · Almacén '+str(data.almacen)+'. No se consultaron solicitudes pendientes.')
+    } catch(e) {setError(e?.message||'No se pudo identificar al técnico.')}
+    finally {setIdentificando(false)}
+  }, [])
+
   const buscarPendientes = useCallback(async (a, f = '') => {
     const almacenNormal = str(a).padStart(4, '0')
     if (!/^[0-9]{4}$/.test(almacenNormal) && !f) {
@@ -149,21 +168,21 @@ export default function EntregaMaterial() {
     const todas = materiales.flatMap(m => m.series.map(normal))
     return new Set(todas).size !== todas.length
   }, [materiales])
-  const puedeGuardar = !guardada && !!folio && materiales.length > 0 && !busy && !manual && !faltantes.length && !duplicadasGlobales
+  const puedeGuardar = !manual && !guardada && !!folio && materiales.length > 0 && !busy && !manual && !faltantes.length && !duplicadasGlobales
 
   const consultarSku = useCallback(async (skuValor, mostrarErrores = false) => {
     const sku = str(skuValor).toUpperCase()
     const id = ++ultimaBusquedaSku.current
-    if (!folio || !sku) {
+    if ((!folio && !manual) || !sku) {
       setNuevoLotes([]); setNuevoLote(''); setBuscandoSku(false)
-      if (mostrarErrores) setErrorSku('Seleccione una solicitud e indique un SKU.')
+      if (mostrarErrores) setErrorSku('Seleccione una solicitud o identifique al técnico e indique el SKU.')
       return
     }
     setBuscandoSku(true); setErrorSku(''); setError('')
     try {
-      const {data,error:e} = await supabase.rpc('qiora_material_stock_sku_entrega', {
-        p_folio:folio, p_sku:sku
-      })
+      const {data,error:e} = manual
+        ? await supabase.rpc('qiora_material_stock_manual',{p_almacen:almacen,p_sku:sku})
+        : await supabase.rpc('qiora_material_stock_sku_entrega',{p_folio:folio,p_sku:sku})
       if (id !== ultimaBusquedaSku.current) return
       if (e) throw e
       const lotes = (Array.isArray(data?.lotes) ? data.lotes : [])
@@ -185,20 +204,21 @@ export default function EntregaMaterial() {
     } finally {
       if (id === ultimaBusquedaSku.current) setBuscandoSku(false)
     }
-  }, [folio])
+  }, [folio,manual,almacen])
 
   useEffect(() => {
     const sku = str(nuevoSku)
     ++ultimaBusquedaSku.current
     setNuevoLotes([]);setNuevoLote('');setErrorSku('')
-    if (!folio || !sku) {setBuscandoSku(false);return}
+    if ((!folio && !manual) || !sku) {setBuscandoSku(false);return}
     // Debounce: permite escanear el SKU sin lanzar una consulta por cada digito.
     const timer = setTimeout(() => consultarSku(sku), 350)
     return () => clearTimeout(timer)
-  }, [nuevoSku, folio, consultarSku])
+  }, [nuevoSku, folio, manual, consultarSku])
   async function actualizarReserva(accion,m=null,nuevaCantidad=null) {
     if (guardada) return setError('La entrega ya fue guardada; no se pueden editar sus materiales.')
-    if(!folio || manual)return setError('Seleccione una solicitud pendiente.')
+    if(manual) return setError('La asignación sin solicitud requiere la función de reserva manual en Supabase; no se crearán reservas ficticias.')
+    if(!folio)return setError('Seleccione una solicitud pendiente.')
     setBusy(true);setError('');setExito('')
     try{
       const {error:e}=await supabase.rpc('qiora_material_editar_reserva_entrega',{
@@ -270,21 +290,22 @@ export default function EntregaMaterial() {
   return <main className="em"><div className="wrap">
     <button onClick={()=>router.push('/ver-solicitudes')}>← Ver solicitudes</button>
     <header><h1>ENTREGA DE MATERIAL</h1><p>Complemento con materiales cargados desde la hoja Solicitudes.</p></header>
-    <section><h3>Buscar solicitudes por almacén</h3>
+    <section><h3>Buscar solicitudes o asignar sin solicitud</h3>
       <div className="acciones"><label>Almacén<input value={busqueda} maxLength={4} placeholder="0000" onChange={e=>setBusqueda(e.target.value.replace(/\D/g,'').slice(0,4))} /></label>
         <button onClick={()=>buscarPendientes(busqueda)} disabled={busy}>Buscar pendientes</button>
-        <button onClick={()=>{setManual(true);setError('La entrega sin solicitud requiere reserva autorizada en Supabase. Esta opción no permite omitir existencias ni máximos.');setExito('')}}>Entrega sin solicitud</button></div>
-      <div className="grid"><label>Solicitud pendiente<select value={folio} onChange={e=>{const s=pendientes.find(x=>str(x.folio)===e.target.value);if(s)cargarSolicitud(s)}}><option value="">Primero busque por almacén</option>{pendientes.map(x=><option key={x.folio} value={x.folio}>{x.folio}</option>)}</select></label>
+        <button onClick={()=>identificarTecnico(busqueda)} disabled={busy||identificando}>{identificando?'Identificando...':'Entrega sin solicitud'}</button></div>
+      <div className="grid">{!manual&&<label>Solicitud pendiente<select value={folio} onChange={e=>{const s=pendientes.find(x=>str(x.folio)===e.target.value);if(s)cargarSolicitud(s)}}><option value="">Primero busque por almacén</option>{pendientes.map(x=><option key={x.folio} value={x.folio}>{x.folio}</option>)}</select></label>}
       <label>Almacén<input readOnly value={almacen}/></label><label>Técnico<input readOnly value={tecnico}/></label>
-      <label>Fecha solicitud<input readOnly value={fecha?new Date(fecha).toLocaleDateString('es-MX'):''}/></label>
-      <label>Fecha retiro<input readOnly value={retiro}/></label><label>Estatus<input readOnly value={estatus}/></label></div>
+      {!manual&&<><label>Fecha solicitud<input readOnly value={fecha?new Date(fecha).toLocaleDateString('es-MX'):''}/></label>
+      <label>Fecha retiro<input readOnly value={retiro}/></label></>}<label>Estatus<input readOnly value={estatus}/></label></div>
+      {manual&&<p className="muted">Asignación directa al técnico, sin consultar solicitudes pendientes. La confirmación de materiales necesita la reserva y el guardado transaccional del backend.</p>}
     </section>
     <section><h3>Consultar entrega guardada</h3>
       <div className="acciones"><label>FOLIO_CONTROL<input placeholder="ABAS-00000001" value={buscarControl} onChange={e=>setBuscarControl(normal(e.target.value))}/></label>
       <button disabled={busy || !buscarControl} onClick={()=>cargarGuardada(buscarControl)}>Ver entrega y series</button></div>
       {guardada&&<p className="ok">Entrega registrada: {controlGuardado}. Las series permanecen guardadas después de actualizar la página. Esta entrega es de solo lectura.</p>}
     </section>
-    {!guardada&&<section><h3>Agregar material adicional</h3><p className="muted">Al escribir o escanear un SKU se cargan automáticamente el material y los lotes con existencia de STOCK_ALMACEN.</p>
+    {!guardada&&!manual&&<section><h3>Agregar material adicional</h3><p className="muted">Al escribir o escanear un SKU se cargan automáticamente el material y los lotes con existencia de STOCK_ALMACEN.</p>
       <div className="grid">
         <label>SKU<input value={nuevoSku} placeholder="Escanee o escriba SKU" autoComplete="off"
           onChange={e=>setNuevoSku(e.target.value.replace(/[^0-9A-Za-z]/g,'').toUpperCase())}
@@ -297,25 +318,26 @@ export default function EntregaMaterial() {
           {nuevoLotes.map((x,i)=><option key={`${x.lote}-${i}`} value={x.lote}>{x.lote||'SIN LOTE'} · disponible {x.disponible}</option>)}
         </select></label>
         <label>Requiere Series<input readOnly value={esTPE(nuevoLote)?'SI':'NO'}/></label>
-        <button className="orange" disabled={busy||buscandoSku||!folio||!nuevoLotes.length||!nuevoLote||!(Number(nuevoCantidad)>0)||Number(nuevoCantidad)>Number(nuevoLotes.find(x=>x.lote===nuevoLote)?.disponible||0)} onClick={()=>actualizarReserva('AGREGAR',null,nuevoCantidad)}>+ Agregar Material</button>
+        <button className="orange" disabled={busy||buscandoSku||manual||!folio||!nuevoLotes.length||!nuevoLote||!(Number(nuevoCantidad)>0)||Number(nuevoCantidad)>Number(nuevoLotes.find(x=>x.lote===nuevoLote)?.disponible||0)} onClick={()=>actualizarReserva('AGREGAR',null,nuevoCantidad)}>+ Agregar Material</button>
       </div>
       {buscandoSku&&<p className="muted">Buscando SKU en STOCK_ALMACEN...</p>}
       {!!errorSku&&<p className="warn">{errorSku}</p>}
     </section>}
     <section><h3>Materiales agregados</h3><div className="scroll"><table><thead><tr><th>SKU</th><th>Material</th><th>Cantidad</th><th>Lote</th><th>Series</th><th>Acción</th></tr></thead><tbody>
       {materiales.length?materiales.map(m=><tr key={m._key}><td>{m.sku}</td><td>{m.material}</td><td>{m.cantidad}</td><td>{m.lote||'—'}</td><td>{m.series.length?m.series.join(', '):(esTPE(m.lote)?`Faltan ${cantidad(m)} series`:'No requiere')}</td>
-        <td><div className="rowbuttons">{!guardada&&<><button className="small" disabled={busy} onClick={()=>{setSeleccion(m._key);setEditando(m._key);setEditCantidad(m.cantidad);setError('')}}>Modificar</button><button className="small red" disabled={busy} onClick={()=>{if(window.confirm('¿Eliminar este material de la solicitud?')) actualizarReserva('ELIMINAR',m)}}>Eliminar</button>{esTPE(m.lote)&&<button className="small" disabled={busy} onClick={()=>setSeleccion(m._key)}>Series</button></>}</div>{!guardada&&editando===m._key&&<div className="editrow"><input type="number" min="1" value={editCantidad} onChange={e=>setEditCantidad(e.target.value)}/><button className="small green" disabled={busy||Number(editCantidad)<1} onClick={()=>actualizarReserva('MODIFICAR',m,editCantidad)}>Aplicar</button><button className="small" onClick={()=>setEditando('')}>Cancelar</button></div>}</td></tr>):<tr><td colSpan={6}>Sin materiales agregados.</td></tr>}
+        <td><div className="rowbuttons">{!guardada&&<><button className="small" disabled={busy} onClick={()=>{setSeleccion(m._key);setEditando(m._key);setEditCantidad(m.cantidad);setError('')}}>Modificar</button><button className="small red" disabled={busy} onClick={()=>{if(window.confirm('¿Eliminar este material de la solicitud?')) actualizarReserva('ELIMINAR',m)}}>Eliminar</button>{esTPE(m.lote)&&<button className="small" disabled={busy} onClick={()=>setSeleccion(m._key)}>Series</button>}</>}</div>{!guardada&&editando===m._key&&<div className="editrow"><input type="number" min="1" value={editCantidad} onChange={e=>setEditCantidad(e.target.value)}/><button className="small green" disabled={busy||Number(editCantidad)<1} onClick={()=>actualizarReserva('MODIFICAR',m,editCantidad)}>Aplicar</button><button className="small" onClick={()=>setEditando('')}>Cancelar</button></div>}</td></tr>):<tr><td colSpan={6}>Sin materiales agregados.</td></tr>}
     </tbody></table></div></section>
     {!guardada&&materiales.some(m=>esTPE(m.lote))&&<section><h3>Capturar serie</h3><label>Material TPE<select value={seleccion} onChange={e=>{setSeleccion(e.target.value);setCaptura('');setError('')}}>{materiales.filter(m=>esTPE(m.lote)).map(m=><option key={m._key} value={m._key}>{m.sku} · {m.material} · {m.lote} ({m.series.length}/{m.cantidad})</option>)}</select></label>
       <div className="acciones"><label>Escanee o seleccione serie<input value={captura} onChange={e=>setCaptura(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();agregarSerie()}}} placeholder="Escanee o seleccione serie"/></label><button disabled={!objetivo||busy} onClick={agregarSerie}>+ Agregar serie</button></div>
       <div className="scroll"><table><thead><tr><th>#</th><th>Serie</th><th>Acción</th></tr></thead><tbody>{objetivo?.series.length?objetivo.series.map((s,i)=><tr key={s}><td>{i+1}</td><td>{s}</td><td><button className="small red" disabled={busy} onClick={()=>quitarSerie(s)}>Eliminar</button></td></tr>):<tr><td colSpan={3}>Sin series capturadas.</td></tr>}</tbody></table></div>
       <p className="muted">Series capturadas: {objetivo?.series.length||0} / {objetivo?.cantidad||0}</p>
     </section>}
-    {!guardada&&<section><div className="bottom"><button className="green" disabled={!puedeGuardar} onClick={guardar}>{busy?'Guardando...':'Guardar Entrega'}</button><button className="red" disabled={busy} onClick={limpiar}>Limpiar</button></div>
+    {!guardada&&!manual&&<section><div className="bottom"><button className="green" disabled={!puedeGuardar} onClick={guardar}>{busy?'Guardando...':'Guardar Entrega'}</button><button className="red" disabled={busy} onClick={limpiar}>Limpiar</button></div>
       {!!faltantes.length&&<p className="warn">No se puede guardar: faltan series TPE en {faltantes.map(m=>m.sku+` (${m.series.length}/${m.cantidad})`).join(', ')}.</p>}
       {duplicadasGlobales&&<p className="warn">Existen series duplicadas entre materiales.</p>}
       {!!error&&<p className="warn">{error}</p>}{!!exito&&<p className="ok">{exito}</p>}
     </section>}
+    {manual&&<section><p className="warn">Asignación sin solicitud: se identificó al técnico, pero todavía no está habilitada la reserva/confirmación sin folio. Esto evita crear movimientos sin validar existencias, máximos y series.</p><button onClick={limpiar}>Nueva búsqueda</button></section>}
     {guardada&&<section><button onClick={limpiar}>Nueva entrega</button>{!!error&&<p className="warn">{error}</p>}</section>}
   </div><style jsx>{css}</style></main>
 }
