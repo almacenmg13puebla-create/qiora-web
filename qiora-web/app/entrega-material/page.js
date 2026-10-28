@@ -35,6 +35,12 @@ export default function EntregaMaterial() {
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
   const [manual, setManual] = useState(false)
+  const [nuevoSku, setNuevoSku] = useState('')
+  const [nuevoLotes, setNuevoLotes] = useState([])
+  const [nuevoLote, setNuevoLote] = useState('')
+  const [nuevoCantidad, setNuevoCantidad] = useState(1)
+  const [editando, setEditando] = useState('')
+  const [editCantidad, setEditCantidad] = useState(1)
 
   const cargarSolicitud = useCallback(s => {
     setFolio(str(s.folio)); setAlmacen(str(s.almacen).padStart(4, '0'))
@@ -43,7 +49,7 @@ export default function EntregaMaterial() {
     const items = (Array.isArray(s.materiales) ? s.materiales : []).map(normalizar)
     setMateriales(items)
     setSeleccion(items.find(m => esTPE(m.lote))?._key || '')
-    setCaptura(''); setManual(false); setError(''); setExito('')
+    setCaptura(''); setManual(false); setError(''); setExito(''); setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setEditando('')
   }, [])
 
   const buscarPendientes = useCallback(async (a, f = '') => {
@@ -90,13 +96,47 @@ export default function EntregaMaterial() {
   }, [materiales])
   const puedeGuardar = !!folio && materiales.length > 0 && !busy && !manual && !faltantes.length && !duplicadasGlobales
 
-  function agregarSerie() {
+  async function consultarSku() {
+    setError('');setNuevoLotes([]);setNuevoLote('')
+    if (!folio || !nuevoSku.trim()) return setError('Seleccione una solicitud e indique un SKU.')
+    setBusy(true)
+    try {
+      const {data,error:e}=await supabase.rpc('qiora_material_stock_sku_entrega',{p_folio:folio,p_sku:nuevoSku.trim()})
+      if(e)throw e
+      const lots=(data?.lotes||[]).filter(x=>Number(x.disponible)>0)
+      if(!lots.length)throw Error('El SKU no tiene existencia libre en STOCK_ALMACEN.')
+      setNuevoLotes(lots);setNuevoLote(lots[0].lote)
+    }catch(e){setError(e.message)}finally{setBusy(false)}
+  }
+  async function actualizarReserva(accion,m=null,nuevaCantidad=null) {
+    if(!folio || manual)return setError('Seleccione una solicitud pendiente.')
+    setBusy(true);setError('');setExito('')
+    try{
+      const {error:e}=await supabase.rpc('qiora_material_editar_reserva_entrega',{
+        p_folio:folio,p_reserva_id:m?.id||null,p_accion:accion,
+        p_cantidad:accion==='ELIMINAR'?null:Number(nuevaCantidad),
+        p_sku:accion==='AGREGAR'?nuevoSku.trim():null,
+        p_lote:accion==='AGREGAR'?nuevoLote:null
+      })
+      if(e)throw e
+      setEditando('');setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setNuevoCantidad(1)
+      await buscarPendientes('',folio)
+    }catch(e){setError(e.message)}finally{setBusy(false)}
+  }
+  async function agregarSerie() {
     setError(''); setExito('')
     if (!objetivo || !esTPE(objetivo.lote)) return setError('Seleccione un material con lote TPE.')
     const valor = normal(captura)
     if (!valor) return setError('Escanee o capture una serie.')
     if (materiales.some(m => m.series.includes(valor))) return setError('La serie ya fue capturada en esta entrega.')
     if (objetivo.series.length >= cantidad(objetivo)) return setError('Ya se capturaron todas las series requeridas.')
+    setBusy(true)
+    try {
+      const {error:e}=await supabase.rpc('qiora_material_validar_serie_entrega',{
+        p_folio:folio,p_sku:objetivo.sku,p_lote:objetivo.lote,p_serie:valor
+      })
+      if(e)throw e
+    }catch(e){setError(e.message);return}finally{setBusy(false)}
     setMateriales(prev => prev.map(m => m._key === seleccion ? {...m,series:[...m.series,valor]} : m))
     setCaptura('')
   }
@@ -107,7 +147,7 @@ export default function EntregaMaterial() {
   function limpiar() {
     setBusqueda(''); setPendientes([]); setFolio(''); setAlmacen(''); setTecnico('')
     setFecha(''); setRetiro(''); setEstatus(''); setMateriales([]); setSeleccion('')
-    setCaptura(''); setError(''); setExito(''); setManual(false)
+    setCaptura(''); setError(''); setExito(''); setManual(false);setNuevoSku('');setNuevoLotes([]);setNuevoLote('');setNuevoCantidad(1);setEditando('')
   }
   async function guardar() {
     if (!puedeGuardar) {setError('Faltan series de lotes TPE o hay series duplicadas.'); return}
@@ -139,12 +179,17 @@ export default function EntregaMaterial() {
       <label>Fecha solicitud<input readOnly value={fecha?new Date(fecha).toLocaleDateString('es-MX'):''}/></label>
       <label>Fecha retiro<input readOnly value={retiro}/></label><label>Estatus<input readOnly value={estatus}/></label></div>
     </section>
-    <section><h3>Agregar material adicional</h3><p className="muted">Los materiales adicionales requieren una reserva validada; no pueden incorporarse directamente al movimiento SAP.</p>
-      <div className="grid"><label>SKU<input disabled placeholder="SKU" /></label><label>Material<input disabled placeholder="Se llena automático"/></label><label>Cantidad<input disabled value="1" readOnly/></label><label>Lote<input disabled placeholder="Se llena automático"/></label><label>Requiere Series<input disabled value="NO" readOnly/></label><button className="orange" disabled>+ Agregar Material</button></div>
+    <section><h3>Agregar material adicional</h3><p className="muted">Al buscar SKU se cargan nombre y lotes de STOCK_ALMACEN. La cantidad se reserva al agregar.</p>
+      <div className="grid"><label>SKU<div className="skurow"><input value={nuevoSku} placeholder="SKU" onChange={e=>{setNuevoSku(e.target.value.replace(/[^0-9A-Za-z]/g,''));setNuevoLotes([])}} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();consultarSku()}}}/><button onClick={consultarSku} disabled={busy||!folio}>Buscar</button></div></label>
+        <label>Material<input value={nuevoLotes.find(x=>x.lote===nuevoLote)?.material||''} readOnly placeholder="Se llena automático"/></label>
+        <label>Cantidad<input type="number" min="1" max="10000" value={nuevoCantidad} onChange={e=>setNuevoCantidad(e.target.value)}/></label>
+        <label>Lote<select value={nuevoLote} onChange={e=>setNuevoLote(e.target.value)}><option value="">Seleccione lote</option>{nuevoLotes.map(x=><option key={x.lote} value={x.lote}>{x.lote||'SIN LOTE'} · disponible {x.disponible}</option>)}</select></label>
+        <label>Requiere Series<input readOnly value={esTPE(nuevoLote)?'SI':'NO'}/></label>
+        <button className="orange" disabled={busy||!folio||!nuevoLotes.length||!nuevoLote||!(Number(nuevoCantidad)>0)} onClick={()=>actualizarReserva('AGREGAR',null,nuevoCantidad)}>+ Agregar Material</button></div>
     </section>
     <section><h3>Materiales agregados</h3><div className="scroll"><table><thead><tr><th>SKU</th><th>Material</th><th>Cantidad</th><th>Lote</th><th>Series</th><th>Acción</th></tr></thead><tbody>
       {materiales.length?materiales.map(m=><tr key={m._key}><td>{m.sku}</td><td>{m.material}</td><td>{m.cantidad}</td><td>{m.lote||'—'}</td><td>{m.series.length?m.series.join(', '):(esTPE(m.lote)?`Faltan ${cantidad(m)} series`:'No requiere')}</td>
-        <td><button className="small" disabled={busy} onClick={()=>{setSeleccion(m._key);setError('Si necesita quitar un material solicitado, cancele o ajuste su reserva de forma autorizada.')}}>{esTPE(m.lote)?'Capturar':'Ver'}</button></td></tr>):<tr><td colSpan={6}>Sin materiales agregados.</td></tr>}
+        <td><div className="rowbuttons"><button className="small" disabled={busy} onClick={()=>{setSeleccion(m._key);setEditando(m._key);setEditCantidad(m.cantidad);setError('')}}>Modificar</button><button className="small red" disabled={busy} onClick={()=>{if(window.confirm('¿Eliminar este material de la solicitud?')) actualizarReserva('ELIMINAR',m)}}>Eliminar</button>{esTPE(m.lote)&&<button className="small" disabled={busy} onClick={()=>setSeleccion(m._key)}>Series</button>}</div>{editando===m._key&&<div className="editrow"><input type="number" min="1" value={editCantidad} onChange={e=>setEditCantidad(e.target.value)}/><button className="small green" disabled={busy||Number(editCantidad)<1} onClick={()=>actualizarReserva('MODIFICAR',m,editCantidad)}>Aplicar</button><button className="small" onClick={()=>setEditando('')}>Cancelar</button></div>}</td></tr>):<tr><td colSpan={6}>Sin materiales agregados.</td></tr>}
     </tbody></table></div></section>
     {materiales.some(m=>esTPE(m.lote))&&<section><h3>Capturar serie</h3><label>Material TPE<select value={seleccion} onChange={e=>{setSeleccion(e.target.value);setCaptura('');setError('')}}>{materiales.filter(m=>esTPE(m.lote)).map(m=><option key={m._key} value={m._key}>{m.sku} · {m.material} · {m.lote} ({m.series.length}/{m.cantidad})</option>)}</select></label>
       <div className="acciones"><label>Escanee o seleccione serie<input value={captura} onChange={e=>setCaptura(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();agregarSerie()}}} placeholder="Escanee o seleccione serie"/></label><button disabled={!objetivo||busy} onClick={agregarSerie}>+ Agregar serie</button></div>
@@ -159,4 +204,4 @@ export default function EntregaMaterial() {
   </div><style jsx>{css}</style></main>
 }
 
-const css = `.em{background:#03251e;color:white;min-height:100vh;padding:16px;font:13px Arial}.wrap{max-width:1080px;margin:auto}.em header{background:linear-gradient(120deg,#0a5746,#159f79);text-align:center}.em header,.em section{border:1px solid #346e61;border-radius:12px;padding:17px;margin:13px 0;background:#08342a}.em h1{margin:0}.em h3{margin:0 0 10px}.em label{display:block;font-weight:bold;font-size:12px;min-width:0}.em input,.em select{display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:10px;border:0;border-radius:7px;background:#f2f6f8;color:#123;min-height:38px}.em button{background:#119b79;color:white;padding:10px 15px;border:0;border-radius:8px;cursor:pointer;font-weight:bold}.em button:disabled{opacity:.45;cursor:not-allowed}.acciones{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;align-items:end}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px}.em .green{background:#12ae64}.em .red{background:#d33}.em .orange{background:#f57216}.em .small{padding:7px 10px;font-size:11px}.scroll{overflow:auto;margin-top:12px}.em table{width:100%;border-collapse:collapse;background:#f9faf9;color:#234}.em th{background:#067b56;color:white}.em th,.em td{padding:10px;border:1px solid #bdcec5;text-align:center}.em td:nth-child(2){text-align:left}.bottom{display:grid;grid-template-columns:1fr 1fr;gap:12px}.muted{font-size:12px;color:#a5d4ca}.warn{background:#ffe2e2;color:#9b1f1f;padding:12px;border-radius:9px}.ok{background:#d9ffe4;color:#075f37;padding:12px;border-radius:9px}@media(max-width:680px){.grid,.acciones{grid-template-columns:1fr}.bottom{grid-template-columns:1fr}}`
+const css = `.skurow{display:flex;gap:5px;align-items:center}.skurow input{flex:1;min-width:0}.rowbuttons{display:flex;gap:5px;justify-content:center;flex-wrap:wrap}.editrow{display:flex;gap:5px;margin-top:8px}.editrow input{width:74px;min-width:0}.em .editrow button{white-space:nowrap}.em{background:#03251e;color:white;min-height:100vh;padding:16px;font:13px Arial}.wrap{max-width:1080px;margin:auto}.em header{background:linear-gradient(120deg,#0a5746,#159f79);text-align:center}.em header,.em section{border:1px solid #346e61;border-radius:12px;padding:17px;margin:13px 0;background:#08342a}.em h1{margin:0}.em h3{margin:0 0 10px}.em label{display:block;font-weight:bold;font-size:12px;min-width:0}.em input,.em select{display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:10px;border:0;border-radius:7px;background:#f2f6f8;color:#123;min-height:38px}.em button{background:#119b79;color:white;padding:10px 15px;border:0;border-radius:8px;cursor:pointer;font-weight:bold}.em button:disabled{opacity:.45;cursor:not-allowed}.acciones{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;align-items:end}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px}.em .green{background:#12ae64}.em .red{background:#d33}.em .orange{background:#f57216}.em .small{padding:7px 10px;font-size:11px}.scroll{overflow:auto;margin-top:12px}.em table{width:100%;border-collapse:collapse;background:#f9faf9;color:#234}.em th{background:#067b56;color:white}.em th,.em td{padding:10px;border:1px solid #bdcec5;text-align:center}.em td:nth-child(2){text-align:left}.bottom{display:grid;grid-template-columns:1fr 1fr;gap:12px}.muted{font-size:12px;color:#a5d4ca}.warn{background:#ffe2e2;color:#9b1f1f;padding:12px;border-radius:9px}.ok{background:#d9ffe4;color:#075f37;padding:12px;border-radius:9px}@media(max-width:680px){.grid,.acciones{grid-template-columns:1fr}.bottom{grid-template-columns:1fr}}`
