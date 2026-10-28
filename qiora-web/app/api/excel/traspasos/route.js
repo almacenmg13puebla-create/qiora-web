@@ -8,10 +8,12 @@ const S = x => String(x ?? '').trim()
 function output(json,status=200){return NextResponse.json(json,{status,headers:{'Cache-Control':'no-store'}})}
 function dateMx(v){const d=new Date(v||Date.now());if(isNaN(d.getTime()))return '';return new Intl.DateTimeFormat('en-GB',{timeZone:'America/Mexico_City',day:'2-digit',month:'2-digit',year:'numeric'}).format(d)}
 function cell(v){return S(v).replace(/[\t\r\n]/g,' ').slice(0,3000)}
+function isAbas(t){return S(t.folio_control).toUpperCase().startsWith('ABAS-')||S(t.orden_servicio).toUpperCase()==='ENTREGA_MATERIAL'}
+function folioVisible(t){return isAbas(t)?'ABAS-'+S(t.destino).padStart(4,'0'):'TRAS-'+S(t.origen)+'-'+S(t.destino)}
 function sheetLine(t,m){
  const series=Array.isArray(m.series)?m.series.slice(0,15):[]
  const values=[
-  'TRAS-'+S(t.origen)+'-'+S(t.destino),dateMx(t.fecha),S(t.solicitado_por).split('|')[0].trim(),
+  folioVisible(t),dateMx(t.fecha),S(t.solicitado_por).split('|')[0].trim(),
   m.sku,m.descripcion||m.material,m.cantidad,t.distrito,t.origen,t.tecnico_origen,t.destino,t.tecnico_destino,
   m.lote,m.requiere_series==='SI'||series.length>0?'SI':'NO',t.orden_servicio||'TRASPASO','PENDIENTE',
   t.folio_control,'PENDIENTE','','','', '',...Array.from({length:15},(_,i)=>series[i]||'')]
@@ -54,6 +56,8 @@ async function enviarTelegram(token,chat,mensaje){
 async function notificarConfirmacion(db,folio,centro){
  const {data:t,error:te}=await db.from('qiora_traspasos').select('folio_control,folio_sap,distrito,origen,destino,materiales,estado,documento_sap').eq('folio_control',folio).eq('distrito',centro).single()
  if(te)throw te
+ // Los ABAS no se envian al grupo de TRASPASOS; su notificacion requiere un flujo propio.
+ if(isAbas(t))throw Error('Las entregas ABAS requieren notificacion de entrega independiente')
  if(t.estado!=='COMPLETADO'||!/^\d{10}$/.test(S(t.documento_sap)))throw Error('Sin documento SAP COMPLETADO para notificar')
  const {data:cfg,error:ce}=await db.from('qiora_distritos_telegram').select('token_cifrado,chat_traspasos').eq('centro',centro).single()
  if(ce||!cfg?.chat_traspasos||!cfg?.token_cifrado)throw Error('Configura el grupo Telegram de '+centro)
@@ -69,13 +73,12 @@ async function notificarConfirmacion(db,folio,centro){
  }
  const mensajes=[], errores=[]
  for(const dest of destinatarios){
-  // Clave exclusiva para confirmacion; no interfiere con avisos de NUEVO TRASPASO.
   const key='CONFIRMACION_'+dest.nombre+':'+dest.chat
   const {error:ins}=await db.from('qiora_traspasos_avisos').upsert({folio_control:folio,destino:key,estado:'PENDIENTE'}, {onConflict:'folio_control,destino',ignoreDuplicates:true})
   if(ins){errores.push(key+': '+ins.message);continue}
   const {data:lock,error:le}=await db.from('qiora_traspasos_avisos').update({estado:'ENVIANDO',actualizado_en:new Date().toISOString()}).eq('folio_control',folio).eq('destino',key).in('estado',['PENDIENTE','ERROR']).select('destino')
   if(le){errores.push(key+': '+le.message);continue}
-  if(!lock?.length)continue // ENVIADO o ENVIANDO: nunca duplicar
+  if(!lock?.length)continue
   try{
    await enviarTelegram(dest.token,dest.chat,textoConfirmacion(t))
    const {error:mark}=await db.from('qiora_traspasos_avisos').update({estado:'ENVIADO',error:null,actualizado_en:new Date().toISOString()}).eq('folio_control',folio).eq('destino',key)
@@ -88,6 +91,16 @@ async function notificarConfirmacion(db,folio,centro){
  }
  if(!privateToken)errores.push('Falta QIORA_BOT_TOKEN para mensajes privados')
  return {enviados:mensajes,errores}
+}
+async function sincronizarEntregaAbas(db,folio,centro){
+ if(!/^ABAS-[A-Z0-9-]{4,60}$/i.test(folio))return null
+ // Validar que el movimiento pertenece al distrito antes de sincronizar.
+ const {data:t,error:te}=await db.from('qiora_traspasos').select('folio_control,distrito,estado,documento_sap').eq('folio_control',folio).eq('distrito',centro).single()
+ if(te||!t)throw Error('No se encontro entrega ABAS en el distrito autorizado')
+ if(!['COMPLETADO','REALIZADO'].includes(S(t.estado).toUpperCase()))return {ok:true,estado:t.estado,sincronizado:false}
+ const {data,error}=await db.rpc('qiora_material_sincronizar_sap',{p_folio_control:folio})
+ if(error)throw Error('Error conciliando entrega ABAS: '+error.message)
+ return data
 }
 export async function POST(req){
  try{
@@ -105,7 +118,7 @@ export async function POST(req){
    for(const t of (Array.isArray(data)?data:[])){
     if(S(t.distrito)!==centro)continue
     for(const m of (Array.isArray(t.materiales)?t.materiales:[])){
-     if((m.series||[]).length>15)return output({ok:false,error:'Más de 15 series en '+t.folio_control},422)
+     if((m.series||[]).length>15)return output({ok:false,error:'Mas de 15 series en '+t.folio_control},422)
      lines.push(sheetLine(t,m))
     }
    }
@@ -130,6 +143,10 @@ export async function POST(req){
    })
    if(error)return output({ok:false,error:error.message},error.message.includes('TOKEN_INVALIDO')?403:409)
    if(estado==='REALIZADO'||estado==='COMPLETADO'){
+    if(folio.toUpperCase().startsWith('ABAS-')){
+     try{const entrega=await sincronizarEntregaAbas(db,folio,centro);return output({...data,entrega})}
+     catch(e){return output({...data,entrega:{ok:false,error:S(e.message)},advertencia:'SAP confirmado; conciliacion ABAS pendiente'})}
+    }
     try{
      const telegram=await notificarConfirmacion(db,folio,centro)
      return output({...data,telegram,advertencia:telegram.errores.length?'SAP confirmado; revisar notificaciones Telegram':undefined})
@@ -142,4 +159,3 @@ export async function POST(req){
   return output({ok:false,error:'ACCION_INVALIDA'},400)
  }catch(e){return output({ok:false,error:e.message},500)}
 }
-
