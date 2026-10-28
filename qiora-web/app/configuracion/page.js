@@ -15,13 +15,11 @@ const MENU = [
   ['Materiales', 'materiales'],
   ['Distritos', 'distritos'],
   ['Horarios', 'horarios'],
-
   ['Costos SAP', 'costos_sap'],
   ['Costos ODOO', 'costos_odoo'],
   ['Herramienta ODOO', 'herramienta_odoo_inventario'],
   ['Exportar fechas', null],
   ['Usuarios', 'usuarios'],
-
   ['RECUS TP', null],
   ['Actualizar macro Excel', null],
   ['Grupos de materiales', 'grupos_materiales']
@@ -251,11 +249,6 @@ export default function ConfiguracionPage() {
     setGuardandoDistrito
   ] = useState(false)
 
-  const [
-    creandoAdminDistrito,
-    setCreandoAdminDistrito
-  ] = useState('')
-
   /*
     HORARIOS
   */
@@ -283,7 +276,7 @@ export default function ConfiguracionPage() {
   ] = useState(false)
 
   /*
-    VALIDAR CONFIGURACIÓN
+    VALIDAR ADMIN
   */
 
   useEffect(() => {
@@ -314,7 +307,9 @@ export default function ConfiguracionPage() {
             'qiora_config_es_admin'
           )
 
-        if (e) throw e
+        if (e) {
+          throw e
+        }
 
         if (vivo) {
           setPermitido(
@@ -352,7 +347,9 @@ export default function ConfiguracionPage() {
     useCallback(
       async tipo => {
 
-        if (!tipo) return
+        if (!tipo) {
+          return
+        }
 
         setCargando(true)
         setError('')
@@ -389,7 +386,9 @@ export default function ConfiguracionPage() {
                   }
                 )
 
-          if (e) throw e
+          if (e) {
+            throw e
+          }
 
           setFilas(
             Array.isArray(
@@ -427,9 +426,9 @@ export default function ConfiguracionPage() {
     )
 
   /*
-    ==========================
-    HORARIOS
-    ==========================
+    ==============================
+    HORARIOS - CONFIG_HORARIOS
+    ==============================
   */
 
   async function cargarHorarios() {
@@ -444,7 +443,7 @@ export default function ConfiguracionPage() {
       } =
         await supabase
           .from(
-            'config_horarios'
+            'CONFIG_HORARIOS'
           )
           .select(`
             dia,
@@ -460,15 +459,10 @@ export default function ConfiguracionPage() {
                 false
             }
           )
-          .order(
-            'dia',
-            {
-              ascending:
-                true
-            }
-          )
 
-      if (e) throw e
+      if (e) {
+        throw e
+      }
 
       setHorarios(
         Array.isArray(data)
@@ -477,6 +471,11 @@ export default function ConfiguracionPage() {
       )
 
     } catch (e) {
+
+      console.error(
+        'ERROR CONFIG_HORARIOS:',
+        e
+      )
 
       setError(
         e.message ||
@@ -501,6 +500,7 @@ export default function ConfiguracionPage() {
     )
 
     setError('')
+    setAviso('')
   }
 
   function editarHorario(
@@ -508,10 +508,19 @@ export default function ConfiguracionPage() {
   ) {
     setHorarioEditando({
       dia:
-        horario.dia,
+        String(
+          horario.dia ||
+          ''
+        ),
 
       fecha:
-        horario.fecha
+        String(
+          horario.fecha ||
+          ''
+        ).slice(
+          0,
+          10
+        )
     })
 
     setHorarioForm({
@@ -566,7 +575,9 @@ export default function ConfiguracionPage() {
   }
 
   async function guardarHorario() {
-    if (guardandoHorario) {
+    if (
+      guardandoHorario
+    ) {
       return
     }
 
@@ -642,7 +653,9 @@ export default function ConfiguracionPage() {
 
       const registro = {
         dia,
+
         fecha,
+
         hora_inicio:
           horaInicio,
 
@@ -656,15 +669,18 @@ export default function ConfiguracionPage() {
       }
 
       /*
-        EDITAR REGISTRO EXISTENTE
+        SI ESTAMOS EDITANDO
       */
-      if (horarioEditando) {
+      if (
+        horarioEditando
+      ) {
         const {
-          error: updateError
+          error:
+            updateError
         } =
           await supabase
             .from(
-              'config_horarios'
+              'CONFIG_HORARIOS'
             )
             .update(
               registro
@@ -680,7 +696,9 @@ export default function ConfiguracionPage() {
                 .fecha
             )
 
-        if (updateError) {
+        if (
+          updateError
+        ) {
           throw updateError
         }
 
@@ -702,7 +720,7 @@ export default function ConfiguracionPage() {
         } =
           await supabase
             .from(
-              'config_horarios'
+              'CONFIG_HORARIOS'
             )
             .select(
               'dia,fecha'
@@ -718,22 +736,22 @@ export default function ConfiguracionPage() {
             .limit(1)
             .maybeSingle()
 
-        if (buscarError) {
+        if (
+          buscarError
+        ) {
           throw buscarError
         }
 
-        if (existente) {
-          /*
-            Si ya existe ese día y fecha,
-            actualizamos para evitar duplicados.
-          */
+        if (
+          existente
+        ) {
           const {
             error:
               updateError
           } =
             await supabase
               .from(
-                'config_horarios'
+                'CONFIG_HORARIOS'
               )
               .update(
                 registro
@@ -747,12 +765,14 @@ export default function ConfiguracionPage() {
                 fecha
               )
 
-          if (updateError) {
+          if (
+            updateError
+          ) {
             throw updateError
           }
 
           setAviso(
-            'El día y fecha ya existían. El horario fue actualizado.'
+            'El horario ya existía y fue actualizado.'
           )
 
         } else {
@@ -762,13 +782,15 @@ export default function ConfiguracionPage() {
           } =
             await supabase
               .from(
-                'config_horarios'
+                'CONFIG_HORARIOS'
               )
               .insert(
                 registro
               )
 
-          if (insertError) {
+          if (
+            insertError
+          ) {
             throw insertError
           }
 
@@ -790,6 +812,11 @@ export default function ConfiguracionPage() {
 
     } catch (e) {
 
+      console.error(
+        'ERROR GUARDANDO CONFIG_HORARIOS:',
+        e
+      )
+
       setError(
         e.message ||
         'No fue posible guardar el horario.'
@@ -804,9 +831,9 @@ export default function ConfiguracionPage() {
   }
 
   /*
-    ==========================
-    TELEGRAM DISTRITOS
-    ==========================
+    ==============================
+    DISTRITOS
+    ==============================
   */
 
   async function cargarTelegramDistritos() {
@@ -938,12 +965,6 @@ export default function ConfiguracionPage() {
     await cargarTelegramDistritos()
   }
 
-  /*
-    ==========================
-    DISTRITOS
-    ==========================
-  */
-
   async function cargarDistritos() {
     setCargando(true)
     setError('')
@@ -957,7 +978,9 @@ export default function ConfiguracionPage() {
           'qiora_distritos_listar'
         )
 
-      if (e) throw e
+      if (e) {
+        throw e
+      }
 
       setDistritos(
         Array.isArray(data)
@@ -977,308 +1000,6 @@ export default function ConfiguracionPage() {
     } finally {
 
       setCargando(false)
-    }
-  }
-
-  async function guardarDistrito() {
-    if (guardandoDistrito) {
-      return
-    }
-
-    setGuardandoDistrito(
-      true
-    )
-
-    setError('')
-    setAviso('')
-
-    try {
-      const centro =
-        String(
-          distritoForm.centro ||
-          ''
-        )
-          .trim()
-          .toUpperCase()
-
-      const nombre =
-        String(
-          distritoForm
-            .nombre_region ||
-          ''
-        ).trim()
-
-      if (
-        !/^[A-Z]{2,5}[0-9]{1,5}$/
-          .test(
-            centro
-          )
-      ) {
-        throw new Error(
-          'Centro inválido. Ejemplo: MG13, ME13 o MG19.'
-        )
-      }
-
-      if (!nombre) {
-        throw new Error(
-          'Captura Nombre o Región.'
-        )
-      }
-
-      if (!distritoEditando) {
-        const {
-          data: {
-            session
-          }
-        } =
-          await supabase.auth
-            .getSession()
-
-        if (
-          !session
-            ?.access_token
-        ) {
-          throw new Error(
-            'Sesión caducada.'
-          )
-        }
-
-        const respuesta =
-          await fetch(
-            '/api/distritos/crear',
-            {
-              method:
-                'POST',
-
-              headers: {
-                'Content-Type':
-                  'application/json',
-
-                Authorization:
-                  'Bearer ' +
-                  session.access_token
-              },
-
-              body:
-                JSON.stringify({
-                  centro,
-
-                  nombre_region:
-                    nombre,
-
-                  token_excel:
-                    distritoForm
-                      .token_excel ||
-                    null,
-
-                  activo:
-                    distritoForm
-                      .activo
-                })
-            }
-          )
-
-        const resultado =
-          await respuesta.json()
-
-        if (!respuesta.ok) {
-          throw new Error(
-            resultado.error ||
-            'No se pudo crear distrito y administrador'
-          )
-        }
-
-        setAviso(
-          'Distrito ' +
-          centro +
-          ' creado. Administrador: ' +
-          resultado.usuario +
-          '. Contraseña temporal: ' +
-          resultado.clave_temporal +
-          ' (cópiala ahora; no se mostrará otra vez).'
-        )
-
-      } else {
-        const {
-          error: e
-        } =
-          await supabase.rpc(
-            'qiora_distritos_guardar',
-            {
-              p_centro:
-                centro,
-
-              p_nombre_region:
-                nombre,
-
-              p_token_excel:
-                distritoForm
-                  .token_excel ||
-                null,
-
-              p_activo:
-                distritoForm
-                  .activo,
-
-              p_centro_original:
-                distritoEditando
-            }
-          )
-
-        if (e) throw e
-
-        setAviso(
-          'Distrito actualizado. TOKEN_EXCEL permanece oculto.'
-        )
-      }
-
-      try {
-        await guardarTelegramDistrito(
-          centro,
-          distritoForm
-            .token_traspasos,
-          distritoForm
-            .chat_traspasos
-        )
-
-      } catch (err) {
-
-        setAviso(
-          'Distrito guardado, pero TELEGRAM no se guardó: ' +
-          err.message
-        )
-      }
-
-      setDistritoEditando(
-        ''
-      )
-
-      setDistritoForm({
-        centro: '',
-        nombre_region: '',
-        token_excel: '',
-        token_traspasos: '',
-        chat_traspasos: '',
-        activo: true
-      })
-
-      await cargarDistritos()
-
-    } catch (e) {
-
-      setError(
-        e.message ||
-        'No se pudo guardar el distrito'
-      )
-
-    } finally {
-
-      setGuardandoDistrito(
-        false
-      )
-    }
-  }
-
-  async function crearAdminExistente(
-    centro
-  ) {
-    if (
-      creandoAdminDistrito
-    ) {
-      return
-    }
-
-    if (
-      !window.confirm(
-        '¿Crear ADMIN_' +
-        centro +
-        ' para el distrito ' +
-        centro +
-        '? La contraseña temporal se mostrará solo una vez.'
-      )
-    ) {
-      return
-    }
-
-    setCreandoAdminDistrito(
-      centro
-    )
-
-    setError('')
-    setAviso('')
-
-    try {
-      const {
-        data: {
-          session
-        }
-      } =
-        await supabase.auth
-          .getSession()
-
-      if (
-        !session
-          ?.access_token
-      ) {
-        throw new Error(
-          'Sesión caducada. Vuelve a iniciar sesión.'
-        )
-      }
-
-      const response =
-        await fetch(
-          '/api/distritos/crear-administrador',
-          {
-            method:
-              'POST',
-
-            headers: {
-              'Content-Type':
-                'application/json',
-
-              Authorization:
-                'Bearer ' +
-                session.access_token
-            },
-
-            body:
-              JSON.stringify({
-                centro
-              })
-          }
-        )
-
-      const result =
-        await response.json()
-
-      if (!response.ok) {
-        throw new Error(
-          result.error ||
-          'No se pudo crear administrador'
-        )
-      }
-
-      setAviso(
-        'Administrador creado: ' +
-        result.usuario +
-        '. CLAVE TEMPORAL: ' +
-        result.clave_temporal
-      )
-
-      await cargarDistritos()
-
-    } catch (e) {
-
-      setError(
-        e.message ||
-        'No fue posible crear el administrador'
-      )
-
-    } finally {
-
-      setCreandoAdminDistrito(
-        ''
-      )
     }
   }
 
@@ -1311,16 +1032,12 @@ export default function ConfiguracionPage() {
       activo:
         d.activo
     })
-
-    setAviso(
-      'Por seguridad, el token no se recupera.'
-    )
   }
 
   /*
-    ==========================
+    ==============================
     USUARIOS
-    ==========================
+    ==============================
   */
 
   async function cargarUsuarios() {
@@ -1337,7 +1054,9 @@ export default function ConfiguracionPage() {
           'qiora_usuarios_administracion_listar'
         )
 
-      if (e) throw e
+      if (e) {
+        throw e
+      }
 
       setUsuarios(
         Array.isArray(
@@ -1369,7 +1088,9 @@ export default function ConfiguracionPage() {
   }
 
   async function crearCuentaUsuario() {
-    if (guardandoFicha) {
+    if (
+      guardandoFicha
+    ) {
       return
     }
 
@@ -1399,20 +1120,17 @@ export default function ConfiguracionPage() {
       const {
         data: {
           session
-        },
-        error:
-          sessionError
+        }
       } =
         await supabase.auth
           .getSession()
 
       if (
-        sessionError ||
         !session
           ?.access_token
       ) {
         throw new Error(
-          'La sesión expiró.'
+          'Sesión expirada.'
         )
       }
 
@@ -1474,7 +1192,7 @@ export default function ConfiguracionPage() {
       await cargarUsuarios()
 
       setAviso(
-        'Cuenta creada correctamente.'
+        'Usuario creado correctamente.'
       )
 
     } catch (e) {
@@ -1516,16 +1234,9 @@ export default function ConfiguracionPage() {
         '',
 
       permisos: {
-        ...(u.permisos || {})
+        ...(u.permisos ||
+        {})
       }
-    })
-
-    setError('')
-    setAviso('')
-
-    window.scrollTo({
-      top: 0,
-      behavior: 'smooth'
     })
   }
 
@@ -1602,13 +1313,15 @@ export default function ConfiguracionPage() {
           }
         )
 
-      if (e) throw e
+      if (e) {
+        throw e
+      }
 
       if (
         data !== true
       ) {
         throw new Error(
-          'No se confirmó el guardado'
+          'No se confirmó el guardado.'
         )
       }
 
@@ -1652,8 +1365,6 @@ export default function ConfiguracionPage() {
       true
     )
 
-    setError('')
-
     try {
       const {
         error: e
@@ -1662,7 +1373,9 @@ export default function ConfiguracionPage() {
           'qiora_usuarios_administracion_guardar',
           {
             p_id:
-              String(u.id),
+              String(
+                u.id
+              ),
 
             p_datos: {
               activo:
@@ -1671,19 +1384,17 @@ export default function ConfiguracionPage() {
           }
         )
 
-      if (e) throw e
+      if (e) {
+        throw e
+      }
 
       await cargarUsuarios()
-
-      setAviso(
-        'Estado actualizado.'
-      )
 
     } catch (e) {
 
       setError(
         e.message ||
-        'No se pudo actualizar el estado'
+        'No se pudo actualizar'
       )
 
     } finally {
@@ -1707,24 +1418,13 @@ export default function ConfiguracionPage() {
         })
       )
 
-  const permisosActivos =
-    usuarioEditando
-      ? Object.values(
-          usuarioEditando
-            .permisos ||
-          {}
-        )
-          .filter(Boolean)
-          .length
-      : 0
-
   /*
-    ==========================
-    ABRIR OPCIONES
-    ==========================
+    ABRIR SECCIONES
   */
 
-  function abrir(tipo) {
+  function abrir(
+    tipo
+  ) {
     if (
       tipo ===
       'catalogos'
@@ -1736,8 +1436,10 @@ export default function ConfiguracionPage() {
       return
     }
 
-    setSeccion(tipo)
-    setForm(nuevo())
+    setSeccion(
+      tipo
+    )
+
     setBusqueda('')
     setPagina(1)
     setError('')
@@ -1745,15 +1447,15 @@ export default function ConfiguracionPage() {
 
     if (
       tipo ===
-      'usuarios'
-    ) {
-      cargarUsuarios()
-
-    } else if (
-      tipo ===
       'horarios'
     ) {
       cargarHorarios()
+
+    } else if (
+      tipo ===
+      'usuarios'
+    ) {
+      cargarUsuarios()
 
     } else if (
       tipo ===
@@ -1774,12 +1476,8 @@ export default function ConfiguracionPage() {
               data === true
             )
 
-            if (e) {
-              setError(
-                e.message
-              )
-
-            } else if (
+            if (
+              !e &&
               data === true
             ) {
               cargarDistritos()
@@ -1791,130 +1489,44 @@ export default function ConfiguracionPage() {
       tipo !==
       'herramienta_odoo_inventario'
     ) {
-      cargar(tipo)
-    }
-  }
-
-  function editar(
-    f
-  ) {
-    setForm({
-      sku:
-        f.sku ||
-        '',
-
-      material:
-        f.material ||
-        '',
-
-      herramienta:
-        f.herramienta ||
-        '',
-
-      costo:
-        String(
-          f.costo_unitario ??
-          f.costo ??
-          ''
-        ),
-
-      vida_util_meses:
-        String(
-          f.vida_util_meses ??
-          12
-        ),
-
-      activo:
-        f.activo !== false
-    })
-  }
-
-  async function guardar(e) {
-    e.preventDefault()
-
-    setError('')
-    setAviso('')
-    setCargando(true)
-
-    try {
-      if (
-        !form.sku.trim()
-      ) {
-        throw new Error(
-          'Captura SKU'
-        )
-      }
-
-      if (
-        form.costo === '' ||
-        !Number.isFinite(
-          Number(
-            form.costo
-          )
-        ) ||
-        Number(
-          form.costo
-        ) < 0
-      ) {
-        throw new Error(
-          'Captura un costo válido'
-        )
-      }
-
-      const {
-        error: x
-      } =
-        await supabase.rpc(
-          'qiora_config_guardar_costo',
-          {
-            p_catalogo:
-              seccion,
-
-            p_registro:
-              form
-          }
-        )
-
-      if (x) throw x
-
-      setAviso(
-        'Registro guardado en Supabase'
-      )
-
-      setForm(
-        nuevo()
-      )
-
-      await cargar(
-        seccion
-      )
-
-    } catch (x) {
-
-      setError(
-        x.message ||
-        'No se pudo guardar'
-      )
-
-    } finally {
-
-      setCargando(false)
-    }
-  }
-
-  useEffect(() => {
-    if (
-      seccion ===
-      'herramienta_odoo_inventario'
-    ) {
       cargar(
-        seccion
+        tipo
       )
     }
-  }, [
-    seccion,
-    cargar
-  ])
+  }
+
+  const usuariosFiltrados =
+    usuarios.filter(
+      u => {
+
+        const activo =
+          filtroActivos ===
+            'TODOS' ||
+          (
+            u.activo
+              ? 'SI'
+              : 'NO'
+          ) ===
+            filtroActivos
+
+        const texto =
+          normal([
+            u.usuario_almacen,
+            u.nombre,
+            u.telegram_chat_id
+          ].join(' '))
+            .includes(
+              normal(
+                busqueda
+              )
+            )
+
+        return (
+          activo &&
+          texto
+        )
+      }
+    )
 
   const disponibles =
     filas.filter(
@@ -1931,126 +1543,55 @@ export default function ConfiguracionPage() {
           )
     )
 
-  const editable =
-    seccion ===
-      'costos_sap' ||
-    seccion ===
-      'costos_odoo'
-
-  const usuariosFiltrados =
-    usuarios.filter(
-      u => {
-
-        const coincideActivo =
-          filtroActivos ===
-            'TODOS' ||
-          (
-            u.activo
-              ? 'SI'
-              : 'NO'
-          ) ===
-            filtroActivos
-
-        const coincideTexto =
-          normal([
-            u.usuario_almacen,
-            u.nombre,
-            u.telegram_chat_id
-          ].join(' '))
-            .includes(
-              normal(
-                busqueda
-              )
-            )
-
-        return (
-          coincideActivo &&
-          coincideTexto
-        )
-      }
-    )
-
-  /*
-    ==========================
-    RENDER
-    ==========================
-  */
-
   return (
-    <main style={sCss.base}>
+    <main style={css.base}>
 
-      <div style={sCss.marco}>
+      <div style={css.marco}>
 
-        <div style={sCss.cabeceraFija}>
+        <button
+          style={css.regresar}
 
-          <button
-            style={sCss.regresar}
-            onClick={() =>
+          onClick={() =>
+            seccion
+              ? setSeccion('')
+              : router.push('/')
+          }
+        >
+          ← {
+            seccion
+              ? 'Regresar a Configuración'
+              : 'Regresar a Acceso Almacén'
+          }
+        </button>
+
+        <header style={css.hero}>
+
+          <h1>
+            {
               seccion
-                ? setSeccion('')
-                : router.push('/')
+                ? nombres[
+                    seccion
+                  ]
+                : '⚙ Configuración'
             }
-          >
-            ← {
-              seccion
-                ? 'Regresar a Configuración'
-                : 'Regresar a Acceso Almacén'
-            }
-          </button>
+          </h1>
 
-          <header style={sCss.hero}>
-
-            <h1
-              style={{
-                margin: 0
-              }}
-            >
-              {
-                seccion
-                  ? nombres[
-                      seccion
-                    ]
-                  : '⚙ Configuración'
-              }
-            </h1>
-
-            <p
-              style={{
-                margin:
-                  '6px 0 0'
-              }}
-            >
-              {
-                seccion
-                  ? 'Administración de catálogos en Supabase'
-                  : 'Configuración del módulo Acceso Almacén'
-              }
-            </p>
-
-          </header>
-
-        </div>
-
-        {error && (
-
-          <p
-            role="alert"
-            style={sCss.error}
-          >
-            {error}
+          <p>
+            Administración de catálogos en Supabase
           </p>
 
+        </header>
+
+        {error && (
+          <div style={css.error}>
+            {error}
+          </div>
         )}
 
         {aviso && (
-
-          <p
-            role="status"
-            style={sCss.exito}
-          >
+          <div style={css.exito}>
             {aviso}
-          </p>
-
+          </div>
         )}
 
         {validando ? (
@@ -2062,22 +1603,18 @@ export default function ConfiguracionPage() {
         ) : !permitido ? (
 
           <p>
-            No tienes permisos administrativos para Configuración.
+            Sin permisos.
           </p>
 
         ) : !seccion ? (
 
-          /*
-            MENÚ PRINCIPAL
-          */
-
-          <section style={sCss.panel}>
+          <section style={css.panel}>
 
             <h3>
               Menú configuración
             </h3>
 
-            <div style={sCss.menu}>
+            <div style={css.menu}>
 
               {MENU.map(
                 (
@@ -2091,7 +1628,7 @@ export default function ConfiguracionPage() {
                     key={label}
 
                     style={{
-                      ...sCss.opcion,
+                      ...css.opcion,
 
                       opacity:
                         tipo
@@ -2105,13 +1642,9 @@ export default function ConfiguracionPage() {
                             tipo
                           )
                         : setAviso(
-                            'El módulo «' +
-                            label +
-                            '» todavía no está implementado en esta versión web.'
+                            `${label} todavía no está implementado.`
                           )
                     }
-
-                    type="button"
                   >
                     {label}
                   </button>
@@ -2126,35 +1659,23 @@ export default function ConfiguracionPage() {
         ) : seccion ===
           'horarios' ? (
 
-          /*
-            ==========================
-            HORARIOS
-            ==========================
-          */
-
-          <section style={sCss.panel}>
+          <section style={css.panel}>
 
             <h2>
               Configurar días y horarios
             </h2>
 
-            <p style={sCss.nota}>
-              Estos horarios habilitan el módulo Solicitud de Material. Deben coincidir Día + Fecha + Hora y estar activos.
+            <p style={css.nota}>
+              Estos horarios controlan Solicitud de Material. Deben coincidir día, fecha y hora y estar activos.
             </p>
 
-            <div style={sCss.cuadriculaUsuarios}>
+            <div style={css.grid}>
 
               <label>
                 Día
 
                 <select
-                  style={{
-                    ...sCss.input,
-                    width:
-                      '100%',
-                    boxSizing:
-                      'border-box'
-                  }}
+                  style={css.input}
 
                   value={
                     horarioForm.dia
@@ -2165,6 +1686,7 @@ export default function ConfiguracionPage() {
                       setHorarioForm(
                         f => ({
                           ...f,
+
                           dia:
                             e.target
                               .value
@@ -2172,7 +1694,6 @@ export default function ConfiguracionPage() {
                       )
                   }
                 >
-
                   {DIAS.map(
                     dia => (
 
@@ -2185,9 +1706,7 @@ export default function ConfiguracionPage() {
 
                     )
                   )}
-
                 </select>
-
               </label>
 
               <label>
@@ -2195,14 +1714,7 @@ export default function ConfiguracionPage() {
 
                 <input
                   type="date"
-
-                  style={{
-                    ...sCss.input,
-                    width:
-                      '100%',
-                    boxSizing:
-                      'border-box'
-                  }}
+                  style={css.input}
 
                   value={
                     horarioForm
@@ -2222,7 +1734,6 @@ export default function ConfiguracionPage() {
                       )
                   }
                 />
-
               </label>
 
               <label>
@@ -2230,14 +1741,7 @@ export default function ConfiguracionPage() {
 
                 <input
                   type="time"
-
-                  style={{
-                    ...sCss.input,
-                    width:
-                      '100%',
-                    boxSizing:
-                      'border-box'
-                  }}
+                  style={css.input}
 
                   value={
                     horarioForm
@@ -2257,7 +1761,6 @@ export default function ConfiguracionPage() {
                       )
                   }
                 />
-
               </label>
 
               <label>
@@ -2265,14 +1768,7 @@ export default function ConfiguracionPage() {
 
                 <input
                   type="time"
-
-                  style={{
-                    ...sCss.input,
-                    width:
-                      '100%',
-                    boxSizing:
-                      'border-box'
-                  }}
+                  style={css.input}
 
                   value={
                     horarioForm
@@ -2292,20 +1788,13 @@ export default function ConfiguracionPage() {
                       )
                   }
                 />
-
               </label>
 
               <label>
                 Activo
 
                 <select
-                  style={{
-                    ...sCss.input,
-                    width:
-                      '100%',
-                    boxSizing:
-                      'border-box'
-                  }}
+                  style={css.input}
 
                   value={
                     horarioForm
@@ -2335,18 +1824,15 @@ export default function ConfiguracionPage() {
                   <option value="NO">
                     NO
                   </option>
-
                 </select>
-
               </label>
 
             </div>
 
-            <div style={sCss.herramientas}>
+            <div style={css.botones}>
 
               <button
-                type="button"
-                style={sCss.boton}
+                style={css.boton}
 
                 disabled={
                   guardandoHorario
@@ -2366,8 +1852,7 @@ export default function ConfiguracionPage() {
               </button>
 
               <button
-                type="button"
-                style={sCss.regresar}
+                style={css.boton}
 
                 onClick={
                   limpiarHorario
@@ -2377,12 +1862,7 @@ export default function ConfiguracionPage() {
               </button>
 
               <button
-                type="button"
-                style={sCss.boton}
-
-                disabled={
-                  cargando
-                }
+                style={css.boton}
 
                 onClick={
                   cargarHorarios
@@ -2393,57 +1873,36 @@ export default function ConfiguracionPage() {
 
             </div>
 
-            <div
-              style={{
-                overflowX:
-                  'auto',
-                overflowY:
-                  'auto',
-                maxHeight:
-                  '60vh',
-                border:
-                  '1px solid #427466',
-                borderRadius:
-                  9
-              }}
-            >
+            <div style={css.scroll}>
 
-              <table
-                style={{
-                  ...sCss.tabla,
-                  minWidth:
-                    760
-                }}
-              >
+              <table style={css.tabla}>
 
                 <thead>
 
                   <tr>
-
-                    <th style={sCss.th}>
+                    <th style={css.th}>
                       Día
                     </th>
 
-                    <th style={sCss.th}>
+                    <th style={css.th}>
                       Fecha
                     </th>
 
-                    <th style={sCss.th}>
+                    <th style={css.th}>
                       Hora inicio
                     </th>
 
-                    <th style={sCss.th}>
+                    <th style={css.th}>
                       Hora fin
                     </th>
 
-                    <th style={sCss.th}>
+                    <th style={css.th}>
                       Activo
                     </th>
 
-                    <th style={sCss.th}>
+                    <th style={css.th}>
                       Acción
                     </th>
-
                   </tr>
 
                 </thead>
@@ -2464,13 +1923,11 @@ export default function ConfiguracionPage() {
                           }
                         >
 
-                          <td style={sCss.td}>
-                            {
-                              h.dia
-                            }
+                          <td style={css.td}>
+                            {h.dia}
                           </td>
 
-                          <td style={sCss.td}>
+                          <td style={css.td}>
                             {
                               String(
                                 h.fecha ||
@@ -2478,12 +1935,11 @@ export default function ConfiguracionPage() {
                               ).slice(
                                 0,
                                 10
-                              ) ||
-                              '-'
+                              )
                             }
                           </td>
 
-                          <td style={sCss.td}>
+                          <td style={css.td}>
                             {
                               String(
                                 h.hora_inicio ||
@@ -2495,7 +1951,7 @@ export default function ConfiguracionPage() {
                             }
                           </td>
 
-                          <td style={sCss.td}>
+                          <td style={css.td}>
                             {
                               String(
                                 h.hora_fin ||
@@ -2507,34 +1963,20 @@ export default function ConfiguracionPage() {
                             }
                           </td>
 
-                          <td style={sCss.td}>
-
-                            <strong
-                              style={{
-                                color:
-                                  horarioActivo(
-                                    h.activo
-                                  )
-                                    ? '#087e55'
-                                    : '#b91c1c'
-                              }}
-                            >
-                              {
-                                horarioActivo(
-                                  h.activo
-                                )
-                                  ? 'SI'
-                                  : 'NO'
-                              }
-                            </strong>
-
+                          <td style={css.td}>
+                            {
+                              horarioActivo(
+                                h.activo
+                              )
+                                ? 'SI'
+                                : 'NO'
+                            }
                           </td>
 
-                          <td style={sCss.td}>
+                          <td style={css.td}>
 
                             <button
-                              type="button"
-                              style={sCss.boton}
+                              style={css.boton}
 
                               onClick={() =>
                                 editarHorario(
@@ -2557,7 +1999,7 @@ export default function ConfiguracionPage() {
                     <tr>
 
                       <td
-                        style={sCss.td}
+                        style={css.td}
                         colSpan={6}
                       >
                         No hay horarios configurados.
@@ -2576,468 +2018,59 @@ export default function ConfiguracionPage() {
           </section>
 
         ) : seccion ===
-          'distritos' ? (
-
-          /*
-            ==========================
-            DISTRITOS
-            ==========================
-          */
-
-          <section style={sCss.panel}>
-
-            <h2>
-              Administrar Distritos
-            </h2>
-
-            {!esPadre ? (
-
-              <p style={sCss.error}>
-                Acceso restringido. Solo ADMIN_PADRE puede consultar y configurar distritos.
-              </p>
-
-            ) : (
-              <>
-
-                <div style={sCss.cuadriculaUsuarios}>
-
-                  <label>
-                    Centro
-
-                    <input
-                      style={{
-                        ...sCss.input,
-                        width:
-                          '100%',
-                        boxSizing:
-                          'border-box'
-                      }}
-
-                      value={
-                        distritoForm
-                          .centro
-                      }
-
-                      disabled={
-                        !!distritoEditando
-                      }
-
-                      onChange={
-                        e =>
-                          setDistritoForm(
-                            f => ({
-                              ...f,
-                              centro:
-                                e.target
-                                  .value
-                                  .toUpperCase()
-                            })
-                          )
-                      }
-                    />
-
-                  </label>
-
-                  <label>
-                    Nombre o Región
-
-                    <input
-                      style={{
-                        ...sCss.input,
-                        width:
-                          '100%',
-                        boxSizing:
-                          'border-box'
-                      }}
-
-                      value={
-                        distritoForm
-                          .nombre_region
-                      }
-
-                      onChange={
-                        e =>
-                          setDistritoForm(
-                            f => ({
-                              ...f,
-
-                              nombre_region:
-                                e.target
-                                  .value
-                            })
-                          )
-                      }
-                    />
-
-                  </label>
-
-                  <label>
-                    TOKEN_EXCEL
-
-                    <input
-                      type="password"
-
-                      style={{
-                        ...sCss.input,
-                        width:
-                          '100%',
-                        boxSizing:
-                          'border-box'
-                      }}
-
-                      value={
-                        distritoForm
-                          .token_excel
-                      }
-
-                      onChange={
-                        e =>
-                          setDistritoForm(
-                            f => ({
-                              ...f,
-
-                              token_excel:
-                                e.target
-                                  .value
-                            })
-                          )
-                      }
-                    />
-
-                  </label>
-
-                  <label>
-                    TOKEN_TRASPASOS
-
-                    <input
-                      type="password"
-
-                      style={{
-                        ...sCss.input,
-                        width:
-                          '100%',
-                        boxSizing:
-                          'border-box'
-                      }}
-
-                      value={
-                        distritoForm
-                          .token_traspasos
-                      }
-
-                      onChange={
-                        e =>
-                          setDistritoForm(
-                            f => ({
-                              ...f,
-
-                              token_traspasos:
-                                e.target
-                                  .value
-                            })
-                          )
-                      }
-                    />
-
-                  </label>
-
-                  <label>
-                    CHAT_TRASPASOS
-
-                    <input
-                      style={{
-                        ...sCss.input,
-                        width:
-                          '100%',
-                        boxSizing:
-                          'border-box'
-                      }}
-
-                      value={
-                        distritoForm
-                          .chat_traspasos
-                      }
-
-                      onChange={
-                        e =>
-                          setDistritoForm(
-                            f => ({
-                              ...f,
-
-                              chat_traspasos:
-                                e.target
-                                  .value
-                            })
-                          )
-                      }
-                    />
-
-                  </label>
-
-                </div>
-
-                <div style={sCss.herramientas}>
-
-                  <button
-                    style={sCss.boton}
-
-                    onClick={
-                      guardarDistrito
-                    }
-                  >
-                    Guardar distrito
-                  </button>
-
-                  <button
-                    style={sCss.boton}
-
-                    onClick={
-                      cargarDistritos
-                    }
-                  >
-                    Actualizar lista
-                  </button>
-
-                </div>
-
-                <div
-                  style={{
-                    overflowX:
-                      'auto'
-                  }}
-                >
-
-                  <table style={sCss.tabla}>
-
-                    <thead>
-
-                      <tr>
-
-                        {[
-                          'Centro',
-                          'Nombre',
-                          'Activo',
-                          'Administrador',
-                          'Acción'
-                        ].map(
-                          h => (
-
-                            <th
-                              key={h}
-                              style={sCss.th}
-                            >
-                              {h}
-                            </th>
-
-                          )
-                        )}
-
-                      </tr>
-
-                    </thead>
-
-                    <tbody>
-
-                      {distritos.map(
-                        d => (
-
-                          <tr
-                            key={
-                              d.centro
-                            }
-                          >
-
-                            <td style={sCss.td}>
-                              {d.centro}
-                            </td>
-
-                            <td style={sCss.td}>
-                              {d.nombre_region}
-                            </td>
-
-                            <td style={sCss.td}>
-                              {
-                                d.activo
-                                  ? 'SI'
-                                  : 'NO'
-                              }
-                            </td>
-
-                            <td style={sCss.td}>
-                              {
-                                d.tiene_admin
-                                  ? 'CREADO'
-                                  : 'SIN CREAR'
-                              }
-                            </td>
-
-                            <td style={sCss.td}>
-
-                              <button
-                                style={sCss.boton}
-
-                                onClick={() =>
-                                  editarDistrito(
-                                    d
-                                  )
-                                }
-                              >
-                                Editar
-                              </button>
-
-                              {!d.tiene_admin && (
-
-                                <button
-                                  style={sCss.boton}
-
-                                  onClick={() =>
-                                    crearAdminExistente(
-                                      d.centro
-                                    )
-                                  }
-                                >
-                                  Crear administrador
-                                </button>
-
-                              )}
-
-                            </td>
-
-                          </tr>
-
-                        )
-                      )}
-
-                    </tbody>
-
-                  </table>
-
-                </div>
-
-              </>
-            )}
-
-          </section>
-
-        ) : seccion ===
           'usuarios' ? (
 
-          /*
-            ==========================
-            USUARIOS
-            ==========================
-          */
-
-          <section style={sCss.panel}>
+          <section style={css.panel}>
 
             <h2>
               Gestión de Usuarios
             </h2>
 
-            <div style={sCss.herramientas}>
+            <button
+              style={css.boton}
 
-              <button
-                type="button"
-                style={sCss.boton}
+              onClick={() => {
+                setCreandoUsuario(
+                  x => !x
+                )
 
-                onClick={() => {
-                  setCreandoUsuario(
-                    x => !x
-                  )
-
-                  setUsuarioEditando(
-                    null
-                  )
-                }}
-              >
-                {
-                  creandoUsuario
-                    ? 'Cancelar creación'
-                    : '＋ Crear usuario'
-                }
-              </button>
-
-            </div>
+                setUsuarioEditando(
+                  null
+                )
+              }}
+            >
+              + Crear usuario
+            </button>
 
             {creandoUsuario && (
 
-              <div
-                style={{
-                  ...sCss.panel,
-                  marginBottom:
-                    18
-                }}
-              >
+              <div style={css.subpanel}>
 
                 <h3>
-                  Crear nuevo usuario
+                  Crear usuario
                 </h3>
 
-                <div style={sCss.cuadriculaUsuarios}>
+                <div style={css.grid}>
 
                   {[
-                    [
-                      'usuario_almacen',
-                      'Usuario / Almacén'
-                    ],
-                    [
-                      'clave',
-                      'Clave'
-                    ],
-                    [
-                      'nombre',
-                      'Nombre'
-                    ],
-                    [
-                      'telefono',
-                      'Teléfono'
-                    ],
-                    [
-                      'puesto',
-                      'Puesto'
-                    ],
-                    [
-                      'numero_empleado',
-                      'Número de empleado'
-                    ],
-                    [
-                      'correo',
-                      'Correo'
-                    ],
-                    [
-                      'coordinador',
-                      'Coordinador'
-                    ],
-                    [
-                      'usuario_ffm',
-                      'Usuario FFM'
-                    ],
-                    [
-                      'telegram_chat_id',
-                      'Telegram Chat ID'
-                    ]
+                    ['usuario_almacen', 'Usuario / Almacén'],
+                    ['clave', 'Clave'],
+                    ['nombre', 'Nombre'],
+                    ['telefono', 'Teléfono'],
+                    ['puesto', 'Puesto'],
+                    ['numero_empleado', 'Número empleado'],
+                    ['correo', 'Correo'],
+                    ['coordinador', 'Coordinador'],
+                    ['usuario_ffm', 'Usuario FFM'],
+                    ['telegram_chat_id', 'Telegram Chat ID']
                   ].map(
-                    (
-                      [
-                        campo,
-                        label
-                      ]
-                    ) => (
+                    ([campo, label]) => (
 
-                      <label
-                        key={campo}
-                      >
-
+                      <label key={campo}>
                         {label}
 
                         <input
-                          style={{
-                            ...sCss.input,
-                            width:
-                              '100%',
-                            boxSizing:
-                              'border-box'
-                          }}
+                          style={css.input}
 
                           type={
                             campo ===
@@ -3062,92 +2095,6 @@ export default function ConfiguracionPage() {
                               )
                           }
                         />
-
-                      </label>
-
-                    )
-                  )}
-
-                  <label>
-                    Fecha nacimiento
-
-                    <input
-                      type="date"
-
-                      style={{
-                        ...sCss.input,
-                        width:
-                          '100%'
-                      }}
-
-                      value={
-                        nuevoUsuario
-                          .fecha_nacimiento
-                      }
-
-                      onChange={
-                        e =>
-                          cambiarNuevo(
-                            'fecha_nacimiento',
-                            e.target
-                              .value
-                          )
-                      }
-                    />
-
-                  </label>
-
-                </div>
-
-                <h3>
-                  Permisos
-                </h3>
-
-                <div style={sCss.permisosGrid}>
-
-                  {permisosDisponibles.map(
-                    p => (
-
-                      <label
-                        key={
-                          p.campo
-                        }
-                        style={
-                          sCss.permiso
-                        }
-                      >
-
-                        <input
-                          type="checkbox"
-
-                          checked={
-                            nuevoUsuario
-                              .permisos?.[
-                                p.campo
-                              ] ===
-                            true
-                          }
-
-                          onChange={
-                            e =>
-                              setNuevoUsuario(
-                                u => ({
-                                  ...u,
-
-                                  permisos: {
-                                    ...u.permisos,
-
-                                    [p.campo]:
-                                      e.target
-                                        .checked
-                                  }
-                                })
-                              )
-                          }
-                        />
-
-                        {p.nombre}
-
                       </label>
 
                     )
@@ -3156,13 +2103,12 @@ export default function ConfiguracionPage() {
                 </div>
 
                 <button
-                  style={sCss.boton}
-
+                  style={css.boton}
                   onClick={
                     crearCuentaUsuario
                   }
                 >
-                  Guardar nuevo usuario
+                  Guardar usuario
                 </button>
 
               </div>
@@ -3171,75 +2117,34 @@ export default function ConfiguracionPage() {
 
             {usuarioEditando && (
 
-              <div
-                style={{
-                  ...sCss.panel,
-                  marginBottom:
-                    18
-                }}
-              >
+              <div style={css.subpanel}>
 
                 <h3>
-                  Editar: {
+                  Editar {
                     usuarioEditando
                       .usuario_almacen
                   }
                 </h3>
 
-                <div style={sCss.cuadriculaUsuarios}>
+                <div style={css.grid}>
 
                   {[
-                    [
-                      'nombre',
-                      'Nombre'
-                    ],
-                    [
-                      'telefono',
-                      'Teléfono'
-                    ],
-                    [
-                      'puesto',
-                      'Puesto'
-                    ],
-                    [
-                      'numero_empleado',
-                      'Número empleado'
-                    ],
-                    [
-                      'correo',
-                      'Correo'
-                    ],
-                    [
-                      'coordinador',
-                      'Coordinador'
-                    ],
-                    [
-                      'usuario_ffm',
-                      'Usuario FFM'
-                    ],
-                    [
-                      'telegram_chat_id',
-                      'Telegram Chat ID'
-                    ]
+                    ['nombre', 'Nombre'],
+                    ['telefono', 'Teléfono'],
+                    ['puesto', 'Puesto'],
+                    ['numero_empleado', 'Número empleado'],
+                    ['correo', 'Correo'],
+                    ['coordinador', 'Coordinador'],
+                    ['usuario_ffm', 'Usuario FFM'],
+                    ['telegram_chat_id', 'Telegram Chat ID']
                   ].map(
-                    (
-                      [
-                        campo,
-                        label
-                      ]
-                    ) => (
+                    ([campo, label]) => (
 
-                      <label
-                        key={campo}
-                      >
+                      <label key={campo}>
                         {label}
 
                         <input
-                          style={{
-                            ...sCss.input,
-                            width:
-                              '100%'
-                          }}
+                          style={css.input}
 
                           value={
                             usuarioEditando[
@@ -3257,7 +2162,6 @@ export default function ConfiguracionPage() {
                               )
                           }
                         />
-
                       </label>
 
                     )
@@ -3265,11 +2169,11 @@ export default function ConfiguracionPage() {
 
                 </div>
 
-                <p style={sCss.nota}>
-                  Permisos seleccionados: {permisosActivos}
-                </p>
+                <h3>
+                  Permisos
+                </h3>
 
-                <div style={sCss.permisosGrid}>
+                <div style={css.permisos}>
 
                   {permisosDisponibles.map(
                     p => (
@@ -3278,11 +2182,7 @@ export default function ConfiguracionPage() {
                         key={
                           p.campo
                         }
-                        style={
-                          sCss.permiso
-                        }
                       >
-
                         <input
                           type="checkbox"
 
@@ -3313,7 +2213,6 @@ export default function ConfiguracionPage() {
                         />
 
                         {p.nombre}
-
                       </label>
 
                     )
@@ -3322,25 +2221,24 @@ export default function ConfiguracionPage() {
                 </div>
 
                 <button
-                  style={sCss.boton}
-
+                  style={css.boton}
                   onClick={
                     guardarFichaUsuario
                   }
                 >
-                  Guardar usuario y permisos
+                  Guardar cambios
                 </button>
 
               </div>
 
             )}
 
-            <div style={sCss.herramientas}>
+            <div style={css.botones}>
 
               <input
-                style={sCss.input}
+                style={css.input}
 
-                placeholder="Buscar almacén, técnico o Telegram"
+                placeholder="Buscar técnico"
 
                 value={
                   busqueda
@@ -3349,14 +2247,13 @@ export default function ConfiguracionPage() {
                 onChange={
                   e =>
                     setBusqueda(
-                      e.target
-                        .value
+                      e.target.value
                     )
                 }
               />
 
               <select
-                style={sCss.input}
+                style={css.input}
 
                 value={
                   filtroActivos
@@ -3365,8 +2262,7 @@ export default function ConfiguracionPage() {
                 onChange={
                   e =>
                     setFiltroActivos(
-                      e.target
-                        .value
+                      e.target.value
                     )
                 }
               >
@@ -3381,54 +2277,32 @@ export default function ConfiguracionPage() {
                 <option value="NO">
                   No activos
                 </option>
-
               </select>
 
             </div>
 
-            <p style={sCss.nota}>
-              {usuariosFiltrados.length} usuario(s).
-            </p>
+            <div style={css.scroll}>
 
-            <div
-              style={{
-                overflowX:
-                  'auto',
-                maxHeight:
-                  '65vh',
-                overflowY:
-                  'auto'
-              }}
-            >
-
-              <table
-                style={{
-                  ...sCss.tabla,
-                  minWidth:
-                    700
-                }}
-              >
+              <table style={css.tabla}>
 
                 <thead>
 
                   <tr>
-
-                    <th style={sCss.th}>
+                    <th style={css.th}>
                       Almacén
                     </th>
 
-                    <th style={sCss.th}>
+                    <th style={css.th}>
                       Técnico
                     </th>
 
-                    <th style={sCss.th}>
+                    <th style={css.th}>
                       Activo
                     </th>
 
-                    <th style={sCss.th}>
+                    <th style={css.th}>
                       Acción
                     </th>
-
                   </tr>
 
                 </thead>
@@ -3440,15 +2314,19 @@ export default function ConfiguracionPage() {
 
                       <tr key={u.id}>
 
-                        <td style={sCss.td}>
-                          {u.usuario_almacen}
+                        <td style={css.td}>
+                          {
+                            u.usuario_almacen
+                          }
                         </td>
 
-                        <td style={sCss.td}>
-                          {u.nombre}
+                        <td style={css.td}>
+                          {
+                            u.nombre
+                          }
                         </td>
 
-                        <td style={sCss.td}>
+                        <td style={css.td}>
                           {
                             u.activo
                               ? 'SI'
@@ -3456,11 +2334,10 @@ export default function ConfiguracionPage() {
                           }
                         </td>
 
-                        <td style={sCss.td}>
+                        <td style={css.td}>
 
                           <button
-                            style={sCss.boton}
-
+                            style={css.boton}
                             onClick={() =>
                               editarUsuario(
                                 u
@@ -3472,7 +2349,7 @@ export default function ConfiguracionPage() {
 
                           <button
                             style={{
-                              ...sCss.boton,
+                              ...css.boton,
 
                               background:
                                 u.activo
@@ -3510,126 +2387,37 @@ export default function ConfiguracionPage() {
 
         ) : (
 
-          /*
-            CATÁLOGOS GENERALES
-          */
+          <section style={css.panel}>
 
-          <section style={sCss.panel}>
+            <input
+              style={css.input}
+              value={busqueda}
 
-            <div style={sCss.herramientas}>
-
-              <input
-                style={sCss.input}
-
-                value={
-                  busqueda
-                }
-
-                onChange={
-                  e => {
-                    setBusqueda(
-                      e.target
-                        .value
-                    )
-
-                    setPagina(1)
-                  }
-                }
-
-                placeholder="Buscar"
-              />
-
-              <button
-                style={sCss.boton}
-
-                onClick={() =>
-                  cargar(
-                    seccion
+              onChange={
+                e =>
+                  setBusqueda(
+                    e.target.value
                   )
-                }
-              >
-                Actualizar
-              </button>
+              }
 
-            </div>
+              placeholder="Buscar"
+            />
 
-            {editable && (
+            <button
+              style={css.boton}
 
-              <form
-                onSubmit={
-                  guardar
-                }
-
-                style={
-                  sCss.formulario
-                }
-              >
-
-                <label>
-                  SKU
-
-                  <input
-                    style={sCss.input}
-
-                    value={
-                      form.sku
-                    }
-
-                    onChange={
-                      e =>
-                        setForm({
-                          ...form,
-
-                          sku:
-                            e.target
-                              .value
-                        })
-                    }
-                  />
-                </label>
-
-                <label>
-                  Costo
-
-                  <input
-                    style={sCss.input}
-
-                    value={
-                      form.costo
-                    }
-
-                    onChange={
-                      e =>
-                        setForm({
-                          ...form,
-
-                          costo:
-                            e.target
-                              .value
-                        })
-                    }
-                  />
-                </label>
-
-                <button
-                  style={sCss.boton}
-                  type="submit"
-                >
-                  Guardar
-                </button>
-
-              </form>
-
-            )}
-
-            <div
-              style={{
-                overflowX:
-                  'auto'
-              }}
+              onClick={() =>
+                cargar(
+                  seccion
+                )
+              }
             >
+              Actualizar
+            </button>
 
-              <table style={sCss.tabla}>
+            <div style={css.scroll}>
+
+              <table style={css.tabla}>
 
                 <thead>
 
@@ -3639,18 +2427,13 @@ export default function ConfiguracionPage() {
                       seccion
                     ] || [])
                       .map(
-                        (
-                          [
-                            key,
-                            nombre
-                          ]
-                        ) => (
+                        ([key, label]) => (
 
                           <th
                             key={key}
-                            style={sCss.th}
+                            style={css.th}
                           >
-                            {nombre}
+                            {label}
                           </th>
 
                         )
@@ -3674,15 +2457,11 @@ export default function ConfiguracionPage() {
                           seccion
                         ] || [])
                           .map(
-                            (
-                              [
-                                key
-                              ]
-                            ) => (
+                            ([key]) => (
 
                               <td
                                 key={key}
-                                style={sCss.td}
+                                style={css.td}
                               >
                                 {
                                   String(
@@ -3718,291 +2497,167 @@ export default function ConfiguracionPage() {
   )
 }
 
-const sCss = {
+const css = {
   base: {
-    minHeight:
-      '100vh',
-    background:
-      '#062d23',
-    color:
-      '#fff',
-    padding:
-      16,
-    fontFamily:
-      'Arial,sans-serif'
+    minHeight: '100vh',
+    background: '#062d23',
+    color: '#fff',
+    padding: 16,
+    fontFamily: 'Arial,sans-serif'
   },
 
   marco: {
-    maxWidth:
-      1400,
-    margin:
-      'auto',
-    border:
-      '1px solid #487d6c',
-    borderRadius:
-      16,
-    padding:
-      20,
-    background:
-      '#06271f'
-  },
-
-  cabeceraFija: {
-    position:
-      'sticky',
-    top:
-      0,
-    zIndex:
-      30,
-    background:
-      '#06271f',
-    paddingTop:
-      8,
-    paddingBottom:
-      8,
-    borderBottom:
-      '1px solid #487d6c',
-    marginBottom:
-      18
-  },
-
-  regresar: {
-    border:
-      0,
-    borderRadius:
-      30,
-    padding:
-      '10px 15px',
-    background:
-      '#118366',
-    color:
-      '#fff',
-    fontWeight:
-      700,
-    cursor:
-      'pointer',
-    marginBottom:
-      12
+    maxWidth: 1400,
+    margin: 'auto',
+    border: '1px solid #487d6c',
+    borderRadius: 16,
+    padding: 20,
+    background: '#06271f'
   },
 
   hero: {
     background:
       'linear-gradient(120deg,#10533f,#18a67b)',
-    padding:
-      25,
-    textAlign:
-      'center',
-    borderRadius:
-      14,
-    marginBottom:
-      18
+    padding: 25,
+    textAlign: 'center',
+    borderRadius: 14,
+    marginBottom: 18
   },
 
   panel: {
-    border:
-      '1px solid #406f62',
-    padding:
-      16,
-    borderRadius:
-      14,
-    background:
-      '#0b3028'
+    border: '1px solid #406f62',
+    padding: 16,
+    borderRadius: 14,
+    background: '#0b3028',
+    marginBottom: 15
+  },
+
+  subpanel: {
+    border: '1px solid #406f62',
+    padding: 16,
+    borderRadius: 12,
+    background: '#082a23',
+    margin: '15px 0'
   },
 
   menu: {
-    display:
-      'grid',
+    display: 'grid',
     gridTemplateColumns:
-      'repeat(auto-fit,minmax(230px,1fr))',
-    gap:
-      12
+      'repeat(auto-fit,minmax(210px,1fr))',
+    gap: 12
   },
 
   opcion: {
-    background:
-      '#159b76',
-    color:
-      '#fff',
-    minHeight:
-      70,
-    border:
-      0,
-    borderRadius:
-      11,
-    fontWeight:
-      700,
-    cursor:
-      'pointer'
+    background: '#159b76',
+    color: '#fff',
+    minHeight: 70,
+    border: 0,
+    borderRadius: 11,
+    fontWeight: 700,
+    cursor: 'pointer'
   },
 
-  herramientas: {
-    display:
-      'flex',
-    gap:
-      8,
-    marginBottom:
-      12,
-    flexWrap:
-      'wrap'
+  regresar: {
+    border: 0,
+    borderRadius: 30,
+    padding: '10px 15px',
+    background: '#118366',
+    color: '#fff',
+    fontWeight: 700,
+    cursor: 'pointer',
+    marginBottom: 12
   },
 
-  formulario: {
-    display:
-      'flex',
-    flexWrap:
-      'wrap',
-    alignItems:
-      'end',
-    gap:
-      12,
-    margin:
-      '18px 0'
+  grid: {
+    display: 'grid',
+    gridTemplateColumns:
+      'repeat(auto-fit,minmax(190px,1fr))',
+    gap: 12,
+    marginBottom: 18
   },
 
   input: {
-    display:
-      'block',
-    padding:
-      10,
-    minWidth:
-      160,
-    background:
-      '#fff',
-    color:
-      '#142f24',
-    borderRadius:
-      7,
-    border:
-      '1px solid #bdd4ca',
-    marginTop:
-      5
+    display: 'block',
+    width: '100%',
+    boxSizing: 'border-box',
+    padding: 10,
+    background: '#fff',
+    color: '#142f24',
+    borderRadius: 7,
+    border: '1px solid #bdd4ca',
+    marginTop: 5
+  },
+
+  botones: {
+    display: 'flex',
+    gap: 8,
+    flexWrap: 'wrap',
+    margin: '15px 0'
   },
 
   boton: {
-    padding:
-      '10px 14px',
-    background:
-      '#118e6d',
-    color:
-      '#fff',
-    border:
-      0,
-    borderRadius:
-      8,
-    fontWeight:
-      700,
-    cursor:
-      'pointer',
-    margin:
-      3
+    padding: '10px 14px',
+    background: '#118e6d',
+    color: '#fff',
+    border: 0,
+    borderRadius: 8,
+    fontWeight: 700,
+    cursor: 'pointer',
+    margin: 3
+  },
+
+  scroll: {
+    overflowX: 'auto',
+    overflowY: 'auto',
+    maxHeight: '60vh'
   },
 
   tabla: {
-    borderCollapse:
-      'collapse',
-    width:
-      '100%',
-    minWidth:
-      700,
-    background:
-      '#f8fdfa',
-    color:
-      '#143126',
-    marginBottom:
-      12
+    borderCollapse: 'collapse',
+    width: '100%',
+    minWidth: 700,
+    background: '#f8fdfa',
+    color: '#143126'
   },
 
   th: {
-    padding:
-      9,
-    background:
-      '#0d7659',
-    color:
-      '#fff',
-    border:
-      '1px solid #add0c1',
-    position:
-      'sticky',
-    top:
-      0,
-    zIndex:
-      2,
-    whiteSpace:
-      'nowrap'
+    padding: 9,
+    background: '#0d7659',
+    color: '#fff',
+    border: '1px solid #add0c1'
   },
 
   td: {
-    padding:
-      9,
-    border:
-      '1px solid #c8ded4'
+    padding: 9,
+    border: '1px solid #c8ded4'
+  },
+
+  permisos: {
+    display: 'grid',
+    gridTemplateColumns:
+      'repeat(auto-fit,minmax(220px,1fr))',
+    gap: 10,
+    marginBottom: 15
   },
 
   nota: {
-    color:
-      '#cce5dc',
-    fontSize:
-      13
+    color: '#cce5dc',
+    fontSize: 13
   },
 
   error: {
-    background:
-      '#ffe1e1',
-    color:
-      '#822',
-    padding:
-      12,
-    borderRadius:
-      8
+    background: '#ffe1e1',
+    color: '#822',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 12
   },
 
   exito: {
-    background:
-      '#dbffdf',
-    color:
-      '#174a25',
-    padding:
-      12,
-    borderRadius:
-      8
-  },
-
-  cuadriculaUsuarios: {
-    display:
-      'grid',
-    gridTemplateColumns:
-      'repeat(auto-fit,minmax(240px,1fr))',
-    gap:
-      14,
-    marginBottom:
-      22
-  },
-
-  permisosGrid: {
-    display:
-      'grid',
-    gridTemplateColumns:
-      'repeat(auto-fit,minmax(240px,1fr))',
-    gap:
-      9,
-    marginBottom:
-      20
-  },
-
-  permiso: {
-    display:
-      'flex',
-    alignItems:
-      'center',
-    gap:
-      8,
-    background:
-      '#07291f',
-    border:
-      '1px solid #42685b',
-    padding:
-      9,
-    borderRadius:
-      7
+    background: '#dbffdf',
+    color: '#174a25',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 12
   }
 }
