@@ -32,6 +32,12 @@ export default function ValidacionBrmPage() {
   const [centro, setCentro] =
     useState('')
 
+  const [centroPerfil, setCentroPerfil] =
+    useState('')
+
+  const [puestoPerfil, setPuestoPerfil] =
+    useState('')
+
   const [almacen, setAlmacen] =
     useState('')
 
@@ -134,11 +140,14 @@ export default function ValidacionBrmPage() {
 
         setPerfil(data)
 
-        setCentro(
-          mayus(
-            data.distrito
-          )
-        )
+        const centroUsuario = mayus(data.distrito)
+        setPuestoPerfil(puesto)
+        setCentroPerfil(centroUsuario)
+        setCentro(puesto === 'ADMIN_PADRE' && !centroUsuario ? 'TODOS' : centroUsuario)
+
+        if (puesto !== 'ADMIN_PADRE' && !centroUsuario) {
+          throw new Error('El usuario no tiene centro/distrito configurado.')
+        }
 
         /*
           SI ES TECNICO:
@@ -202,10 +211,12 @@ export default function ValidacionBrmPage() {
       throw contextoError
     }
 
-    setCentro(
-      data?.centro ||
-      ''
-    )
+    const centroAlmacen = upper(data?.centro || data?.distrito)
+    if (puestoPerfil !== 'ADMIN_PADRE' && centroAlmacen !== upper(centroPerfil)) {
+      throw new Error(`Acceso denegado: el almacén pertenece a ${centroAlmacen || 'un centro sin configurar'} y tu centro activo es ${centroPerfil}.`)
+    }
+
+    setCentro(centroAlmacen || centroPerfil || 'TODOS')
 
     setTecnico(
       data?.tecnico ||
@@ -266,6 +277,11 @@ export default function ValidacionBrmPage() {
 
       if (buscarError) {
         throw buscarError
+      }
+
+      const centroSerie = upper(data?.centro || data?.distrito)
+      if (puestoPerfil !== 'ADMIN_PADRE' && centroSerie !== upper(centroPerfil)) {
+        throw new Error(`Acceso denegado: la serie pertenece a ${centroSerie || 'un centro sin configurar'} y tu centro activo es ${centroPerfil}.`)
       }
 
       setSerie(
@@ -533,6 +549,11 @@ export default function ValidacionBrmPage() {
         almacen
       )
 
+      const contextoValidado = await cargarContexto(almacen)
+      if (puestoPerfil !== 'ADMIN_PADRE' && upper(contextoValidado?.centro || contextoValidado?.distrito) !== upper(centroPerfil)) {
+        throw new Error('El almacén no pertenece al centro activo. No se guardó la validación.')
+      }
+
       rutaEvidencia =
         await subirEvidencia()
 
@@ -572,8 +593,13 @@ export default function ValidacionBrmPage() {
 
       limpiarCaptura()
 
+      const centroGuardado = upper(data?.centro || data?.distrito)
+      if (puestoPerfil !== 'ADMIN_PADRE' && centroGuardado && centroGuardado !== upper(centroPerfil)) {
+        throw new Error(`Supabase devolvió una validación de ${centroGuardado}; se esperaba ${centroPerfil}.`)
+      }
+
       setAviso(
-        `Validación BRM guardada correctamente. Folio: ${data?.folio || ''} · Centro: ${data?.centro || centro}`
+        `Validación BRM guardada correctamente. Folio: ${data?.folio || ''} · Centro: ${centroGuardado || centroPerfil || centro}`
       )
 
     } catch (e) {
