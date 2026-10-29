@@ -836,6 +836,62 @@ export default function ConfiguracionPage() {
     ==============================
   */
 
+  async function guardarDistrito() {
+    if (guardandoDistrito) return
+
+    setGuardandoDistrito(true)
+    setError('')
+    setAviso('')
+
+    try {
+      const centro = String(distritoForm.centro || '').trim().toUpperCase()
+      const nombreRegion = String(distritoForm.nombre_region || '').trim()
+      if (!centro) throw new Error('Captura el código del centro, por ejemplo MG13.')
+      if (!nombreRegion) throw new Error('Captura el nombre o región del distrito.')
+
+      const { data, error: e } = await supabase.rpc('qiora_distritos_guardar', {
+        p_centro: centro,
+        p_nombre_region: nombreRegion,
+        p_token_excel: String(distritoForm.token_excel || '').trim() || null,
+        p_activo: Boolean(distritoForm.activo),
+        p_centro_original: distritoEditando || null,
+      })
+
+      if (e) throw e
+      if (data !== true) throw new Error('Supabase no confirmó el guardado.')
+
+      setAviso(`Distrito ${centro} guardado correctamente.`)
+      setDistritoEditando('')
+      setDistritoForm({
+        centro: '',
+        nombre_region: '',
+        token_excel: '',
+        token_traspasos: '',
+        chat_traspasos: '',
+        activo: true,
+      })
+      await cargarDistritos()
+    } catch (e) {
+      setError(e?.message || 'No se pudo guardar el distrito.')
+    } finally {
+      setGuardandoDistrito(false)
+    }
+  }
+
+  function nuevoDistrito() {
+    setDistritoEditando('')
+    setDistritoForm({
+      centro: '',
+      nombre_region: '',
+      token_excel: '',
+      token_traspasos: '',
+      chat_traspasos: '',
+      activo: true,
+    })
+    setError('')
+    setAviso('')
+  }
+
   async function cargarTelegramDistritos() {
     try {
       const {
@@ -2015,6 +2071,146 @@ export default function ConfiguracionPage() {
 
             </div>
 
+          </section>
+
+        ) : seccion ===
+          'distritos' ? (
+
+          <section style={css.panel}>
+            <h2>Administrar Distritos</h2>
+            <p style={css.nota}>
+              Crea y actualiza distritos. Solo ADMIN_PADRE puede modificar este catálogo.
+            </p>
+
+            {!esPadre ? (
+              <div style={css.error}>
+                El usuario no está siendo reconocido por qiora_distritos_es_padre().
+                Verifica la sesión y vuelve a entrar.
+              </div>
+            ) : (
+              <>
+                <div style={css.grid}>
+                  <label>
+                    Código del centro
+                    <input
+                      style={css.input}
+                      value={distritoForm.centro}
+                      disabled={Boolean(distritoEditando)}
+                      placeholder="MG13"
+                      onChange={e => setDistritoForm(f => ({
+                        ...f,
+                        centro: e.target.value.toUpperCase()
+                      }))}
+                    />
+                  </label>
+
+                  <label>
+                    Nombre / región
+                    <input
+                      style={css.input}
+                      value={distritoForm.nombre_region}
+                      placeholder="Nombre de la región"
+                      onChange={e => setDistritoForm(f => ({
+                        ...f,
+                        nombre_region: e.target.value
+                      }))}
+                    />
+                  </label>
+
+                  <label>
+                    Token Excel (opcional)
+                    <input
+                      style={css.input}
+                      value={distritoForm.token_excel}
+                      placeholder={distritoEditando ? 'Dejar vacío para conservar el actual' : 'Token Excel'}
+                      onChange={e => setDistritoForm(f => ({
+                        ...f,
+                        token_excel: e.target.value
+                      }))}
+                    />
+                  </label>
+
+                  <label>
+                    Estado
+                    <select
+                      style={css.input}
+                      value={distritoForm.activo ? 'SI' : 'NO'}
+                      onChange={e => setDistritoForm(f => ({
+                        ...f,
+                        activo: e.target.value === 'SI'
+                      }))}
+                    >
+                      <option value="SI">Activo</option>
+                      <option value="NO">Inactivo</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div style={css.botones}>
+                  <button
+                    type="button"
+                    style={css.boton}
+                    disabled={guardandoDistrito}
+                    onClick={guardarDistrito}
+                  >
+                    {guardandoDistrito ? 'Guardando...' : distritoEditando ? 'Guardar cambios' : 'Crear distrito'}
+                  </button>
+                  <button
+                    type="button"
+                    style={css.boton}
+                    onClick={nuevoDistrito}
+                  >
+                    Nuevo / Limpiar
+                  </button>
+                  <button
+                    type="button"
+                    style={css.boton}
+                    disabled={cargando}
+                    onClick={cargarDistritos}
+                  >
+                    {cargando ? 'Actualizando...' : 'Actualizar lista'}
+                  </button>
+                </div>
+
+                <div style={css.scroll}>
+                  <table style={css.tabla}>
+                    <thead>
+                      <tr>
+                        {['Centro', 'Nombre / Región', 'Activo', 'Token Excel', 'Administrador', 'Acción'].map(x => (
+                          <th key={x} style={css.th}>{x}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {distritos.length ? distritos.map(d => (
+                        <tr key={d.centro}>
+                          <td style={css.td}>{d.centro}</td>
+                          <td style={css.td}>{d.nombre_region}</td>
+                          <td style={css.td}>{d.activo ? 'SI' : 'NO'}</td>
+                          <td style={css.td}>{d.tiene_token ? 'Configurado' : 'No configurado'}</td>
+                          <td style={css.td}>{d.tiene_admin ? 'SI' : 'NO'}</td>
+                          <td style={css.td}>
+                            <button
+                              type="button"
+                              style={css.boton}
+                              onClick={() => editarDistrito(d)}
+                            >
+                              Editar
+                            </button>
+                          </td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td style={css.td} colSpan={6}>
+                            {cargando ? 'Cargando distritos...' : 'No hay distritos devueltos por Supabase.'}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </section>
 
         ) : seccion ===
