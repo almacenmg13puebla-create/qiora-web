@@ -392,114 +392,177 @@ export default function Home() {
 
   if (loading) {
     return (
-      <main className="center">
-
-        <div className="card">
-
-          <div className="brand">
-            Q
+      <main className="sat-login-page">
+        <section className="sat-login-card sat-login-loading">
+          <header className="sat-login-header">
+            <img src="/logo-sat.png" alt="SAT — Sistema de Automatización de Traspasos" className="sat-login-logo" />
+          </header>
+          <div className="sat-login-body">
+            <p className="sat-login-subtitle">Validando sesión...</p>
           </div>
-
-          <h1>
-            QIORA
-          </h1>
-
-          <p className="sub">
-            Validando sesión...
-          </p>
-
-        </div>
-
+        </section>
+        <style jsx global>{`
+          .sat-login-page {
+            min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            padding: 24px 16px; box-sizing: border-box; color: #f4fff9;
+            background: radial-gradient(ellipse at 50% 0%, #0b654b 0%, #063d2f 42%, #031f19 100%);
+            font-family: Arial, Helvetica, sans-serif;
+          }
+          .sat-login-card {
+            width: min(100%, 460px); overflow: hidden; border: 1px solid rgba(183,255,224,.72);
+            border-radius: 22px; background: linear-gradient(180deg, rgba(4,54,41,.98), rgba(2,37,29,.99));
+            box-shadow: 0 22px 70px rgba(0,0,0,.38);
+          }
+          .sat-login-header {
+            min-height: 220px; display: flex; justify-content: center; align-items: center; padding: 20px;
+            box-sizing: border-box; border-bottom: 1px solid rgba(153,239,205,.5);
+            background: repeating-radial-gradient(circle at 50% 80%, transparent 0 13px, rgba(194,255,226,.09) 14px 15px),
+              radial-gradient(ellipse at 50% 0%, #eafff4 0%, #5d9b84 34%, #07533e 72%, #033326 100%);
+          }
+          .sat-login-logo { display: block; width: min(100%, 310px); max-height: 200px; object-fit: contain; }
+          .sat-login-body { padding: 24px 28px 28px; }
+          .sat-login-subtitle { text-align: center; margin: 0 0 24px; color: #e1f4eb; font-size: 14px; }
+          @media (max-width: 480px) {
+            .sat-login-header { min-height: 180px; }
+            .sat-login-body { padding: 22px 20px 24px; }
+          }
+        `}</style>
       </main>
     )
   }
 
   if (!perfil) {
     return (
-      <main className="center">
+      <main className="sat-login-page">
+        <form className="sat-login-card" onSubmit={login}>
+          <header className="sat-login-header">
+            <img
+              src="/logo-sat.png"
+              alt="SAT — Sistema de Automatización de Traspasos"
+              className="sat-login-logo"
+            />
+          </header>
 
-        <form
-          className="card"
-          onSubmit={login}
-        >
+          <div className="sat-login-body">
+            <p className="sat-login-subtitle">
+              Ingrese su usuario y contraseña para acceder
+            </p>
 
-          <div className="brand">
-            Q
-          </div>
-
-          <h1>
-            QIORA
-          </h1>
-
-          <p className="sub">
-            Sistema de gestión de almacén
-          </p>
-
-          <label htmlFor="qiora-usuario">
-            USUARIO / ALMACÉN
-          </label>
-
-          <input
-            id="qiora-usuario"
-            value={usuario}
-            onChange={
-              e =>
-                setUsuario(
-                  e.target.value
-                )
-            }
-            autoComplete="username"
-            autoCapitalize="none"
-            spellCheck={false}
-            placeholder="1903"
-            disabled={loading}
-            required
-          />
-
-          <label htmlFor="qiora-clave">
-            CLAVE
-          </label>
-
-          <input
-            id="qiora-clave"
-            type="password"
-            value={clave}
-            onChange={
-              e =>
-                setClave(
-                  e.target.value
-                )
-            }
-            autoComplete="current-password"
-            placeholder="********"
-            disabled={loading}
-            required
-          />
-
-          {msg && (
-
-            <div
-              className="error"
-              role="alert"
-            >
-              {msg}
+            <label className="sat-login-label" htmlFor="qiora-usuario">
+              Usuario
+            </label>
+            <div className="sat-login-input-wrap">
+              <span aria-hidden="true">👤</span>
+              <input
+                id="qiora-usuario"
+                className="sat-login-input"
+                value={usuario}
+                onChange={e => setUsuario(e.target.value)}
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
+                placeholder="Usuario"
+                disabled={loading}
+                required
+              />
             </div>
 
-          )}
+            <label className="sat-login-label" htmlFor="qiora-clave">
+              Contraseña
+            </label>
+            <div className="sat-login-input-wrap">
+              <span aria-hidden="true">🔒</span>
+              <input
+                id="qiora-clave"
+                className="sat-login-input"
+                type="password"
+                value={clave}
+                onChange={e => setClave(e.target.value)}
+                autoComplete="current-password"
+                placeholder="Contraseña"
+                disabled={loading}
+                required
+              />
+            </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-          >
-            {
-              loading
-                ? 'INGRESANDO...'
-                : 'INICIAR SESIÓN'
-            }
-          </button>
+            {msg && (
+              <div className="sat-login-error" role="alert">
+                {msg}
+              </div>
+            )}
 
+            <button className="sat-login-submit" type="submit" disabled={loading}>
+              {loading ? 'INGRESANDO...' : 'Ingresar'}
+            </button>
+
+            <div className="sat-login-security">
+              <div className="sat-login-lock" aria-hidden="true">🔒</div>
+              <div>
+                <strong>Plataforma protegida</strong>
+                <p>Acceso restringido a personal autorizado.</p>
+                <strong>Desarrollado y administrado por:</strong>
+                <p>Jaime Acosta</p>
+              </div>
+            </div>
+          </div>
         </form>
 
+        <style jsx global>{`
+          .sat-login-page {
+            min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            padding: 24px 16px; box-sizing: border-box; color: #f4fff9;
+            background: radial-gradient(ellipse at 50% 0%, #0b654b 0%, #063d2f 42%, #031f19 100%);
+            font-family: Arial, Helvetica, sans-serif;
+          }
+          .sat-login-card {
+            width: min(100%, 460px); overflow: hidden; border: 1px solid rgba(183,255,224,.72);
+            border-radius: 22px; background: linear-gradient(180deg, rgba(4,54,41,.98), rgba(2,37,29,.99));
+            box-shadow: 0 22px 70px rgba(0,0,0,.38); color: #f4fff9;
+          }
+          .sat-login-header {
+            min-height: 220px; display: flex; justify-content: center; align-items: center; padding: 20px;
+            box-sizing: border-box; border-bottom: 1px solid rgba(153,239,205,.5);
+            background: repeating-radial-gradient(circle at 50% 80%, transparent 0 13px, rgba(194,255,226,.09) 14px 15px),
+              radial-gradient(ellipse at 50% 0%, #eafff4 0%, #5d9b84 34%, #07533e 72%, #033326 100%);
+          }
+          .sat-login-logo { display: block; width: min(100%, 310px); max-height: 200px; object-fit: contain; }
+          .sat-login-body { padding: 24px 28px 28px; }
+          .sat-login-subtitle { text-align: center; margin: 0 0 24px; color: #e1f4eb; font-size: 14px; line-height: 1.5; }
+          .sat-login-label { display: block; margin: 16px 0 7px; color: #f7fffb; font-size: 14px; font-weight: 700; }
+          .sat-login-input-wrap {
+            display: flex; align-items: center; gap: 10px; padding: 0 13px; min-height: 48px;
+            border: 1px solid #168f69; border-radius: 13px; background: rgba(0,25,19,.5);
+            box-shadow: inset 0 1px 7px rgba(0,0,0,.22);
+          }
+          .sat-login-input-wrap span { flex: 0 0 auto; font-size: 17px; }
+          .sat-login-input {
+            display: block; min-width: 0; width: 100%; border: 0; outline: 0; background: transparent;
+            color: #f4fff9; font: inherit; font-size: 15px; padding: 12px 0;
+          }
+          .sat-login-input::placeholder { color: #a7c0b6; opacity: 1; }
+          .sat-login-input-wrap:focus-within { border-color: #39dba2; box-shadow: 0 0 0 3px rgba(57,219,162,.12); }
+          .sat-login-submit {
+            display: block; width: 100%; margin-top: 22px; padding: 13px 16px; border: 1px solid #31d69e;
+            border-radius: 13px; color: white; font-size: 18px; font-weight: 800; cursor: pointer;
+            background: linear-gradient(110deg, #08b77e, #4ccda1); box-shadow: 0 6px 18px rgba(0,0,0,.2);
+          }
+          .sat-login-submit:disabled { opacity: .7; cursor: wait; }
+          .sat-login-error { margin-top: 14px; padding: 11px 12px; color: #ffe5e5; background: #7d252b; border: 1px solid #b94b50; border-radius: 9px; font-size: 13px; }
+          .sat-login-security {
+            display: flex; gap: 13px; align-items: flex-start; margin-top: 22px; padding-top: 18px;
+            border-top: 1px solid rgba(120,201,169,.25); font-size: 12px; line-height: 1.5;
+          }
+          .sat-login-lock {
+            display: grid; place-items: center; flex: 0 0 48px; height: 48px; border: 1px solid #0eaa79;
+            border-radius: 12px; background: rgba(0,110,76,.2); font-size: 22px;
+          }
+          .sat-login-security strong { color: #25d99c; display: block; margin-bottom: 3px; }
+          .sat-login-security p { margin: 0 0 8px; color: #e1f4eb; }
+          @media (max-width: 480px) {
+            .sat-login-header { min-height: 180px; }
+            .sat-login-body { padding: 22px 20px 24px; }
+          }
+        `}</style>
       </main>
     )
   }
@@ -602,16 +665,16 @@ export default function Home() {
         <div className="qiora-sidebar-brand">
 
           <div className="qiora-logo">
-            Q
+            SAT
           </div>
 
           <div>
             <strong>
-              QIORA
+              SAT
             </strong>
 
             <small>
-              CONECTA
+              Sistema de Automatización de Traspasos
             </small>
           </div>
 
@@ -741,7 +804,7 @@ export default function Home() {
             <div>
 
               <strong>
-                QIORA CONECTA
+                SAT — Sistema de Automatización de Traspasos
               </strong>
 
               <span>
@@ -777,7 +840,7 @@ export default function Home() {
             <div>
 
               <p className="qiora-eyebrow">
-                BIENVENIDO A QIORA
+                SAT — SISTEMA DE AUTOMATIZACIÓN DE TRASPASOS
               </p>
 
               <h1>
