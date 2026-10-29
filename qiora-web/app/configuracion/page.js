@@ -220,6 +220,11 @@ export default function ConfiguracionPage() {
   const [esPadre, setEsPadre] =
     useState(false)
 
+  // Permisos que ADMIN_PADRE asigna al administrador de cada distrito.
+  const [centroPermisosSeleccionado, setCentroPermisosSeleccionado] = useState('')
+  const [permisosAdminDistrito, setPermisosAdminDistrito] = useState({})
+  const [guardandoPermisosDistrito, setGuardandoPermisosDistrito] = useState(false)
+
   const [distritos, setDistritos] =
     useState([])
 
@@ -1477,48 +1482,6 @@ export default function ConfiguracionPage() {
     }
   }
 
-  async function restablecerClaveUsuario(u) {
-    const usuario = String(u.usuario_almacen || u.nombre || 'este usuario')
-    if (!window.confirm(`¿Generar una nueva contraseña temporal para ${usuario}? La contraseña actual dejará de funcionar.`)) {
-      return
-    }
-
-    setGuardandoFicha(true)
-    setError('')
-    setAviso('')
-
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session?.access_token) {
-        throw new Error('Sesión caducada. Inicia sesión nuevamente.')
-      }
-
-      const response = await fetch('/api/usuarios/restablecer-clave', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ usuario_id: String(u.id) }),
-        cache: 'no-store',
-      })
-
-      const resultado = await response.json().catch(() => ({}))
-      if (!response.ok || !resultado.ok) {
-        throw new Error(resultado.error || 'No se pudo restablecer la contraseña.')
-      }
-
-      setAviso(
-        `Contraseña temporal de ${resultado.usuario}: ${resultado.clave_temporal}. ` +
-        'Cópiala y entrégala al usuario por un canal seguro; no se volverá a mostrar.'
-      )
-    } catch (e) {
-      setError(e?.message || 'No se pudo restablecer la contraseña.')
-    } finally {
-      setGuardandoFicha(false)
-    }
-  }
-
   async function cambiarEstadoUsuario(
     u
   ) {
@@ -1586,6 +1549,50 @@ export default function ConfiguracionPage() {
             valor
         })
       )
+
+  function seleccionarCentroPermisos(centro) {
+    const codigo = String(centro || '').trim().toUpperCase()
+    setCentroPermisosSeleccionado(codigo)
+    const admin = usuarios.find(u =>
+      String(u.distrito || '').trim().toUpperCase() === codigo &&
+      String(u.puesto || '').trim().toUpperCase() === `ADMIN_${codigo}`
+    ) || usuarios.find(u =>
+      String(u.distrito || '').trim().toUpperCase() === codigo &&
+      String(u.usuario_almacen || '').trim().toUpperCase() === `ADMIN_${codigo}`
+    )
+    setPermisosAdminDistrito({ ...(admin?.permisos || {}) })
+  }
+
+  async function guardarPermisosAdminDistrito() {
+    if (guardandoPermisosDistrito) return
+    const codigo = centroPermisosSeleccionado
+    const admin = usuarios.find(u =>
+      String(u.distrito || '').trim().toUpperCase() === codigo &&
+      (String(u.puesto || '').trim().toUpperCase() === `ADMIN_${codigo}` ||
+       String(u.usuario_almacen || '').trim().toUpperCase() === `ADMIN_${codigo}`)
+    )
+    if (!admin) {
+      setError(`No se encontró ADMIN_${codigo}. Crea primero el administrador del distrito.`)
+      return
+    }
+    setGuardandoPermisosDistrito(true)
+    setError('')
+    setAviso('')
+    try {
+      const { data, error: rpcError } = await supabase.rpc('qiora_usuarios_administracion_guardar', {
+        p_id: String(admin.id),
+        p_datos: { permisos: permisosAdminDistrito }
+      })
+      if (rpcError) throw rpcError
+      if (data !== true) throw new Error('Supabase no confirmó el guardado de permisos.')
+      await cargarUsuarios()
+      setAviso(`Permisos de ADMIN_${codigo} guardados correctamente.`)
+    } catch (e) {
+      setError(e?.message || 'No se pudieron guardar los permisos del administrador.')
+    } finally {
+      setGuardandoPermisosDistrito(false)
+    }
+  }
 
   /*
     ABRIR SECCIONES
@@ -1655,6 +1662,7 @@ export default function ConfiguracionPage() {
               data === true
             ) {
               cargarDistritos()
+              cargarUsuarios()
             }
           }
         )
@@ -2342,6 +2350,15 @@ export default function ConfiguracionPage() {
                             >
                               Editar
                             </button>
+                            {d.tiene_admin && (
+                              <button
+                                type="button"
+                                style={{ ...css.boton, background: '#0b765a' }}
+                                onClick={() => seleccionarCentroPermisos(d.centro)}
+                              >
+                                Permisos ADMIN_{d.centro}
+                              </button>
+                            )}
                             {!d.tiene_admin && d.activo && (
                               <button
                                 type="button"
@@ -2364,6 +2381,81 @@ export default function ConfiguracionPage() {
                     </tbody>
                   </table>
                 </div>
+
+                <section style={{ ...css.subpanel, marginTop: 18 }}>
+                  <h2>Permisos del administrador del centro</h2>
+                  <p style={css.nota}>ADMIN_PADRE define qué módulos tendrá habilitados cada administrador de distrito. Estos permisos limitan lo que el ADMIN_MG puede asignar a sus propios usuarios.</p>
+                  <div style={css.grid}>
+                    <label>
+                      Centro seleccionado
+                      <select
+                        style={css.input}
+                        value={centroPermisosSeleccionado}
+                        onChange={e => seleccionarCentroPermisos(e.target.value)}
+                      >
+                        <option value="">Selecciona un distrito</option>
+                        {distritos.filter(d => d.activo).map(d => (
+                          <option key={d.centro} value={d.centro}>{d.centro} — {d.nombre_region}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Administrador
+                      <input
+                        style={css.input}
+                        readOnly
+                        value={centroPermisosSeleccionado ? `ADMIN_${centroPermisosSeleccionado}` : ''}
+                        placeholder="Se asigna al seleccionar el centro"
+                      />
+                    </label>
+                  </div>
+
+                  {centroPermisosSeleccionado && !usuarios.some(u =>
+                    String(u.distrito || '').trim().toUpperCase() === centroPermisosSeleccionado &&
+                    (String(u.puesto || '').trim().toUpperCase() === `ADMIN_${centroPermisosSeleccionado}` ||
+                     String(u.usuario_almacen || '').trim().toUpperCase() === `ADMIN_${centroPermisosSeleccionado}`)
+                  ) && (
+                    <div style={css.error}>No se encontró el administrador de este distrito. Créalo primero desde la tabla de distritos.</div>
+                  )}
+
+                  <h3>Módulos y permisos</h3>
+                  <div style={css.permisos}>
+                    {permisosDisponibles.filter(p => !['administrar_distritos'].includes(p.campo)).map(p => (
+                      <label key={p.campo} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <input
+                          type="checkbox"
+                          checked={permisosAdminDistrito?.[p.campo] === true}
+                          disabled={!centroPermisosSeleccionado || !usuarios.some(u =>
+                            String(u.distrito || '').trim().toUpperCase() === centroPermisosSeleccionado &&
+                            (String(u.puesto || '').trim().toUpperCase() === `ADMIN_${centroPermisosSeleccionado}` ||
+                             String(u.usuario_almacen || '').trim().toUpperCase() === `ADMIN_${centroPermisosSeleccionado}`)
+                          )}
+                          onChange={e => setPermisosAdminDistrito(prev => ({ ...prev, [p.campo]: e.target.checked }))}
+                        />
+                        {p.nombre}
+                      </label>
+                    ))}
+                  </div>
+                  <div style={css.botones}>
+                    <button
+                      type="button"
+                      style={css.boton}
+                      disabled={guardandoPermisosDistrito || !centroPermisosSeleccionado}
+                      onClick={guardarPermisosAdminDistrito}
+                    >
+                      {guardandoPermisosDistrito ? 'Guardando...' : 'Guardar permisos'}
+                    </button>
+                    <button
+                      type="button"
+                      style={{ ...css.boton, background: '#315b50' }}
+                      disabled={!centroPermisosSeleccionado}
+                      onClick={() => seleccionarCentroPermisos(centroPermisosSeleccionado)}
+                    >
+                      Restablecer
+                    </button>
+                    {centroPermisosSeleccionado && <span style={{ alignSelf: 'center', color: '#bdebd9', fontSize: 13 }}>Permisos para ADMIN_{centroPermisosSeleccionado}</span>}
+                  </div>
+                </section>
               </>
             )}
           </section>
