@@ -116,13 +116,13 @@ const MODULOS = [
     disponible: false,
   },
 
-  {
-    permiso: 'bajas',
-    nombre: 'Bajas',
-    descripcion: 'Seguimiento de bajas de inventario.',
-    ruta: '/bajas',
-    disponible: true,
-  },
+ {
+  permiso: 'bajas',
+  nombre: 'Bajas',
+  descripcion: 'Seguimiento de bajas de inventario.',
+  ruta: '/bajas-cobros',
+  disponible: true,
+},
 
   {
     permiso: null,
