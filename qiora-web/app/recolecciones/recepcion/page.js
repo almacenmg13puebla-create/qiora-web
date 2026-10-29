@@ -107,6 +107,8 @@ export default function RecoleccionesPage() {
 
   const [recibe, setRecibe] = useState('')
   const [usuarioActivo, setUsuarioActivo] = useState('')
+  const [centroActivo, setCentroActivo] = useState('')
+  const [puestoActivo, setPuestoActivo] = useState('')
 
   const [captura, setCaptura] = useState('')
   const [entregadas, setEntregadas] = useState([])
@@ -163,6 +165,12 @@ export default function RecoleccionesPage() {
         if (perfilError) throw perfilError
 
         const nombre = clean(data?.nombre)
+        const centroPerfil = upper(data?.distrito)
+        const puestoPerfil = upper(data?.puesto)
+
+        if (puestoPerfil !== 'ADMIN_PADRE' && !centroPerfil) {
+          throw new Error('El usuario no tiene centro/distrito configurado.')
+        }
 
         if (!nombre) {
           throw new Error(
@@ -173,6 +181,8 @@ export default function RecoleccionesPage() {
         if (activo) {
           setUsuarioActivo(nombre)
           setRecibe(nombre)
+          setCentroActivo(centroPerfil || 'TODOS')
+          setPuestoActivo(puestoPerfil)
         }
 
       } catch (e) {
@@ -202,6 +212,28 @@ export default function RecoleccionesPage() {
     }
   }, [])
 
+  const validarAlmacenCentro = async almacenValor => {
+    const almacenLimpio = clean(almacenValor)
+    if (!almacenLimpio) throw new Error('Ingresa el almacén del técnico.')
+    if (puestoActivo === 'ADMIN_PADRE') return true
+    if (!centroActivo) throw new Error('No se pudo determinar el centro activo.')
+
+    const { data, error: errorAlmacen } = await supabase
+      .from('almacen_usuarios')
+      .select('usuario_almacen,distrito')
+      .eq('usuario_almacen', almacenLimpio)
+      .maybeSingle()
+
+    if (errorAlmacen) throw errorAlmacen
+    if (!data) throw new Error(`No se encontró el almacén ${almacenLimpio} en el catálogo de usuarios.`)
+
+    const centroAlmacen = upper(data.distrito)
+    if (centroAlmacen !== upper(centroActivo)) {
+      throw new Error(`Acceso denegado: el almacén ${almacenLimpio} pertenece a ${centroAlmacen || 'un centro sin configurar'} y tu centro activo es ${centroActivo}.`)
+    }
+    return true
+  }
+
   const ejecutar = async fn => {
     setError('')
     setBusy(true)
@@ -230,6 +262,8 @@ export default function RecoleccionesPage() {
         )
       }
 
+      await validarAlmacenCentro(almacenLimpio)
+
       const {
         data,
         error: e
@@ -246,6 +280,11 @@ export default function RecoleccionesPage() {
         throw new Error(
           'No se recibió información del almacén.'
         )
+      }
+
+      const centroDevuelto = upper(data.centro || data.distrito)
+      if (puestoActivo !== 'ADMIN_PADRE' && centroDevuelto && centroDevuelto !== upper(centroActivo)) {
+        throw new Error(`Supabase devolvió datos de ${centroDevuelto}, pero tu centro activo es ${centroActivo}. Se bloqueó la carga.`)
       }
 
       if (!clean(data.tecnico)) {
@@ -426,6 +465,8 @@ export default function RecoleccionesPage() {
         )
       }
 
+      await validarAlmacenCentro(datos.almacen)
+
       const pendientesAntesDeGuardar =
         Math.max(
           0,
@@ -449,6 +490,11 @@ export default function RecoleccionesPage() {
       )
 
       if (e) throw e
+
+      const centroGuardado = upper(data?.centro || data?.distrito)
+      if (puestoActivo !== 'ADMIN_PADRE' && centroGuardado && centroGuardado !== upper(centroActivo)) {
+        throw new Error(`Supabase devolvió una recolección de ${centroGuardado}; se esperaba ${centroActivo}.`)
+      }
 
       if (!data) {
         throw new Error(
