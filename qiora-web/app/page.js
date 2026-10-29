@@ -121,7 +121,7 @@ const MODULOS = [
     nombre: 'Bajas',
     descripcion: 'Seguimiento de bajas de inventario.',
     ruta: '/bajas',
-    disponible: false,
+    disponible: true,
   },
 
   {
@@ -1155,11 +1155,6 @@ export default function Home() {
                       }
                     </p>
 
-                    {/*
-                      VER SOLICITUD TIENE
-                      DOS ACCIONES
-                    */}
-
                     {
                       modulo.permiso ===
                         'ver_solicitud' &&
@@ -1248,12 +1243,6 @@ export default function Home() {
             )}
 
           </section>
-
-          {/*
-            ====================================================
-            NOTA FINAL
-            ====================================================
-          */}
 
           <p className="qiora-footnote">
 
