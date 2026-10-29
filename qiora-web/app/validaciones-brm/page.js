@@ -88,14 +88,14 @@ export default function ValidacionesBrmPage() {
 
         const centroPerfil = mayus(data.distrito)
 
-        if (!centroPerfil) {
+        if (puestoPerfil !== 'ADMIN_PADRE' && !centroPerfil) {
           throw new Error('El perfil no tiene centro/distrito configurado.')
         }
 
         if (!vivo) return
 
         setPerfil(data)
-        setCentro(centroPerfil)
+        setCentro(puestoPerfil === 'ADMIN_PADRE' ? 'TODOS' : centroPerfil)
 
         if (puestoPerfil === 'TECNICO') {
           setAlmacen(texto(data.usuario_almacen))
@@ -129,6 +129,7 @@ export default function ValidacionesBrmPage() {
     setAviso('')
 
     try {
+      const esAdminPadre = mayus(perfil.puesto) === 'ADMIN_PADRE'
       let consulta = supabase
         .from('validaciones_brm')
         .select(`
@@ -154,8 +155,11 @@ export default function ValidacionesBrmPage() {
           creado_por,
           creado_en
         `)
-        .eq('centro', centro)
         .order('fecha', { ascending: false })
+
+      if (!esAdminPadre) {
+        consulta = consulta.eq('centro', centro)
+      }
 
       const serieFiltro = texto(filtros.serie ?? serie)
       const almacenFiltro = texto(filtros.almacen ?? almacen)
