@@ -6,7 +6,6 @@ import { supabase } from '../../lib/supabase'
 
 const OPCIONES = [
   { id: 'STOCK_TECNICOS', titulo: 'Stock Técnicos', descripcion: 'Existencias asignadas a técnicos' },
-  { id: 'STOCK_ALMACEN', titulo: 'Stock Almacén', descripcion: 'Inventario del almacén del centro cargado desde SAP MB52' },
   { id: 'IQ09_EQUIPOS', titulo: 'Equipos IQ09', descripcion: 'Series, materiales y estados SAP' },
 ]
 const CAMPOS = {
@@ -260,7 +259,7 @@ export default function InventariosPage() {
   return <main style={s.pagina}><div style={s.marco}>
     <button type="button" style={s.regresar} onClick={regresar}>← {tipo ? 'Regresar a Inventarios' : 'Regresar al menú principal'}</button>
     <header style={s.hero}><h1 style={{margin:0,fontSize:29}}>{tipo ? (esMateriales ? 'Técnicos - Materiales' : esEquipos ? 'Equipos' : OPCIONES.find(o=>o.id===tipo)?.titulo) : 'INVENTARIOS'}</h1><p style={{margin:'8px 0 0'}}>{!tipo ? 'Seleccione una opción de inventarios' : esMateriales ? 'Consulta de materiales cargados por técnico y almacén.' : esEquipos ? 'Consulta general de equipos por almacén o todos los almacenes.' : esAlmacen ? 'Consulta de existencias del almacén del centro (MB52).' : 'Consulta de existencias del distrito ' + perfil.distrito}</p></header>
-    {!tipo ? <section style={s.menu}>{adminCatalogos && <><button type="button" style={s.opcion} onClick={()=>router.push('/inventarios/catalogos?tab=materiales')}><strong>Administrar Materiales</strong><small style={{display:'block',marginTop:9}}>Agregar, editar, activar y desactivar materiales</small></button><button type="button" style={s.opcion} onClick={()=>router.push('/inventarios/catalogos?tab=grupos')}><strong>Administrar Grupos</strong><small style={{display:'block',marginTop:9}}>Agregar, editar, activar y desactivar grupos</small></button></>}{OPCIONES.map(o => <button type="button" key={o.id} style={s.opcion} onClick={() => abrir(o.id)}><strong>{o.id==='STOCK_TECNICOS'?'Técnicos - Materiales':o.id==='IQ09_EQUIPOS'?'Equipos':o.titulo}</strong><small style={{display:'block',marginTop:9}}>{o.descripcion}</small></button>)}</section> : <>
+    {!tipo ? <section style={s.menu}>{OPCIONES.map(o => <button type="button" key={o.id} style={s.opcion} onClick={() => abrir(o.id)}><strong>{o.id==='STOCK_TECNICOS'?'Técnicos - Materiales':o.id==='IQ09_EQUIPOS'?'Equipos':o.titulo}</strong><small style={{display:'block',marginTop:9}}>{o.descripcion}</small></button>)}</section> : <>
       <section style={s.panelOscuro}>
         <div style={s.filtros}>
           <label style={s.campo}>Almacén (opcional)<input style={s.input} value={almacen} placeholder="Vacío = todos los autorizados" maxLength={10} onChange={e=>{setAlmacen(e.target.value.toUpperCase());setRespuesta(null);setPagina(1)}}/></label>
