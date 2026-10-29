@@ -10,7 +10,7 @@ const TIPOS = [
     descripcion: 'Material, Descripción del material, Centro, Almacén, Libre utilización, Lote, Trans./Trasl., Denominación almacén.' },
   { id: 'STOCK_TECNICOS', titulo: 'STOCK_TECNICOS', columnas: 9, accept: '.csv,.xlsx,.xls',
     descripcion: 'Los ocho campos de almacén más Solicita. Disponible se calcula automáticamente.' },
-  { id: 'HERRAMIENTA', titulo: 'Cargar herramienta', columnas: 3, accept: '.csv,.xlsx,.xls',
+  { id: 'HERRAMIENTA', titulo: 'Cargar herramienta', columnas: 13, accept: '.csv,.xlsx,.xls',
     descripcion: 'Producto, Ubicación y Cantidad.' },
   { id: 'IQ09', titulo: 'iq09_equipos', columnas: 10, accept: '.csv,.xlsx,.xls',
     descripcion: 'Material, Descripción material, Número de serie, Centro, Almacén, Fecha modificación, Lote, Lote de stock, Denom. status y Tp.stocks (contab.refer.).' },
@@ -67,44 +67,72 @@ function filasAObjetos(tipo, filas, distrito) {
     return { material: clean(r[0]), descripcion: clean(r[1]), centro: distrito, almacen: almacen4(r[3]), libre_utilizacion: libre, lote: clean(r[5]), trans_trasl: numero(r[6]), denominacion_almacen: clean(r[7]), solicita, disponible: Math.max(0, libre - solicita) }
   })
   if (tipo === 'HERRAMIENTA') {
-    // Este archivo es "Inventario por colaborador", no un archivo de 3 columnas.
-    // Identificar las columnas por encabezado evita leer SUCURSAL como CANTIDAD.
-    const encabezados = filas[0].map(v =>
-      clean(v)
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toUpperCase()
-        .replace(/\s+/g, ' ')
-    )
+    // Inventario por colaborador: mapear las 13 columnas por encabezado.
+    const normalizarEncabezado = (valor) => clean(valor)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9 ]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
 
-    const indice = (nombre) => encabezados.indexOf(nombre)
-    const iColaborador = indice('COLABORADOR')
-    const iSucursal = indice('SUCURSAL')
-    const iReferencia = indice('REFERENCIA')
-    const iProducto = indice('PRODUCTO')
-    const iCantidad = indice('CANTIDAD')
+    const encabezados = filas[0].map(normalizarEncabezado)
+    const indice = (...nombres) => encabezados.findIndex(h => nombres.includes(h))
+    const columnas = {
+      colaborador: indice('COLABORADOR'),
+      noEmpleado: indice('NO EMPLEADO', 'NUMERO EMPLEADO'),
+      sucursal: indice('SUCURSAL'),
+      referencia: indice('REFERENCIA'),
+      producto: indice('PRODUCTO'),
+      loteProveedor: indice('LOTE PROVEEDOR'),
+      loteQiora: indice('LOTE QIORA'),
+      serie: indice('SERIE'),
+      placaQiora: indice('PLACA QIORA'),
+      cantidad: indice('CANTIDAD'),
+      valorCompra: indice('VALOR COMPRA'),
+      valorActual: indice('VALOR ACTUAL'),
+      estado: indice('ESTADO'),
+    }
 
-    if ([iColaborador, iSucursal, iProducto, iCantidad].some(i => i < 0)) {
-      throw new Error(
-        'El archivo de herramienta debe incluir los encabezados COLABORADOR, SUCURSAL, PRODUCTO y CANTIDAD.'
-      )
+    const obligatorias = ['colaborador', 'sucursal', 'referencia', 'producto', 'cantidad']
+    const faltantes = obligatorias.filter(k => columnas[k] < 0)
+    if (faltantes.length) {
+      throw new Error(`Faltan encabezados en el Excel: ${faltantes.join(', ')}. Encabezados detectados: ${encabezados.join(' | ')}`)
+    }
+
+    const numeroOpcional = (valor, nombre, fila) => {
+      if (clean(valor) === '') return null
+      const n = numero(valor)
+      if (!Number.isFinite(n)) throw new Error(`${nombre} inválido en la fila ${fila}.`)
+      return n
     }
 
     return datos.map((r, i) => {
-      const colaborador = clean(r[iColaborador])
-      const sucursal = clean(r[iSucursal])
-      const referencia = iReferencia >= 0 ? clean(r[iReferencia]) : ''
-      const nombreProducto = clean(r[iProducto])
-      const cantidad = numero(r[iCantidad])
+      const filaExcel = i + 2
+      const colaborador = clean(r[columnas.colaborador])
+      const sucursal = clean(r[columnas.sucursal])
+      const producto = clean(r[columnas.producto])
+      const referencia = clean(r[columnas.referencia])
+      const cantidad = numeroOpcional(r[columnas.cantidad], 'CANTIDAD', filaExcel)
 
-      if (!colaborador || !sucursal || !nombreProducto) {
-        throw new Error(`Faltan COLABORADOR, SUCURSAL o PRODUCTO en la fila ${i + 2}.`)
+      if (!colaborador || !sucursal || !producto || cantidad === null) {
+        throw new Error(`Faltan COLABORADOR, SUCURSAL, PRODUCTO o CANTIDAD en la fila ${filaExcel}.`)
       }
 
       return {
-        producto: referencia ? `${referencia} - ${nombreProducto}` : nombreProducto,
-        ubicacion: `${sucursal}/Stock/${colaborador}`,
+        colaborador,
+        no_empleado: columnas.noEmpleado >= 0 ? clean(r[columnas.noEmpleado]) || null : null,
+        sucursal,
+        referencia: referencia || null,
+        producto,
+        lote_proveedor: columnas.loteProveedor >= 0 ? clean(r[columnas.loteProveedor]) || null : null,
+        lote_qiora: columnas.loteQiora >= 0 ? clean(r[columnas.loteQiora]) || null : null,
+        serie: columnas.serie >= 0 ? clean(r[columnas.serie]) || null : null,
+        placa_qiora: columnas.placaQiora >= 0 ? clean(r[columnas.placaQiora]) || null : null,
         cantidad,
+        valor_compra: columnas.valorCompra >= 0 ? numeroOpcional(r[columnas.valorCompra], 'VALOR COMPRA', filaExcel) : null,
+        valor_actual: columnas.valorActual >= 0 ? numeroOpcional(r[columnas.valorActual], 'VALOR ACTUAL', filaExcel) : null,
+        estado: columnas.estado >= 0 ? clean(r[columnas.estado]) || null : null,
         distrito,
       }
     })
