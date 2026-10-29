@@ -16,8 +16,8 @@ function passwordSupabase(clave) {
 
   REGLA:
   - ADMIN_PADRE ve todos.
-  - ADMIN_<DISTRITO> ve únicamente los módulos autorizados por ADMIN_PADRE.
-  - Los demás usuarios ven únicamente los módulos autorizados por su ADMIN_<DISTRITO>.
+  - ADMIN_MG11 / ADMIN_MG13 / ADMIN_MG18 / etc. ven todos.
+  - Los demás usuarios ven únicamente los módulos autorizados.
   - El aislamiento de datos por centro se valida dentro de cada
     módulo y en Supabase/RPC/RLS.
 
@@ -37,8 +37,7 @@ const MODULOS = [
   },
 
   {
-    permiso: 'materiales',
-    permisosAlternativos: ['equipos', 'stock_tecnicos', 'ver_brm'],
+    permiso: null,
     nombre: 'Inventarios',
     descripcion: 'Consulta de materiales, equipos IQ09 y catálogos.',
     ruta: '/inventarios',
@@ -46,7 +45,7 @@ const MODULOS = [
   },
 
   {
-    permiso: 'cargar_stocks',
+    permiso: 'carga_stocks',
     nombre: 'Cargar stocks',
     descripcion: 'Carga y reemplazo de STOCK_ALMACEN, STOCK_TECNICOS, herramienta e IQ09 por distrito.',
     ruta: '/cargar-stocks',
@@ -54,8 +53,7 @@ const MODULOS = [
   },
 
   {
-    permiso: 'configuracion',
-    permisosAlternativos: ['administrar_permisos', 'usuarios'],
+    permiso: null,
     nombre: 'Configuración',
     descripcion: 'Usuarios, números de empleado y catálogos de costos.',
     ruta: '/configuracion',
@@ -135,8 +133,7 @@ const MODULOS = [
   },
 
   {
-    permiso: 'traspasos',
-    permisosAlternativos: ['capturar_traspaso', 'ver_traspasos'],
+    permiso: null,
     nombre: 'Traspasos',
     descripcion: 'Solicitudes y seguimiento de traspasos SAP.',
     ruta: '/traspasos',
@@ -160,6 +157,7 @@ export default function Home() {
   const [msg, setMsg] = useState('')
   const [loading, setLoading] = useState(true)
   const [menuAbierto, setMenuAbierto] = useState(false)
+  const [busquedaModulo, setBusquedaModulo] = useState('')
 
   useEffect(() => {
     let montado = true
@@ -599,22 +597,52 @@ export default function Home() {
       .trim()
       .toUpperCase()
 
-  // ADMIN_PADRE es el único rol con acceso global automático.
-  // ADMIN_MG y usuarios normales respetan sus permisos guardados.
   const puedeVerSolicitudes =
-    esAdminPadre || perfil.ver_solicitud === true
+    esAdministrador ||
+    perfil.ver_solicitud === true ||
+    perfil.administrar_permisos === true ||
+    perfil.acceso_almacen === true ||
+    perfil.acceso_coordinador === true
 
-  function tienePermisoModulo(modulo) {
-    if (esAdminPadre) return true
-    const claves = [modulo.permiso, ...(modulo.permisosAlternativos || [])]
-      .filter(Boolean)
-    return claves.some(clave => perfil[clave] === true) ||
-      (modulo.permiso === 'ver_solicitud' && puedeVerSolicitudes)
-  }
+  const modulos =
+    esAdministrador
+      ? MODULOS
+      : MODULOS.filter(
+          modulo =>
+            modulo.permiso === null ||
 
-  // Si no tiene permiso, el módulo no se renderiza en el menú ni en el panel.
-  const modulos = MODULOS.filter(tienePermisoModulo)
-  const modulosAutorizados = MODULOS.filter(tienePermisoModulo)
+            perfil[
+              modulo.permiso
+            ] === true ||
+
+            (
+              modulo.permiso ===
+                'ver_solicitud' &&
+
+              puedeVerSolicitudes
+            )
+        )
+
+  const modulosAutorizados =
+    esAdministrador
+      ? MODULOS
+      : MODULOS.filter(
+          modulo =>
+            modulo.permiso !== null &&
+
+            (
+              perfil[
+                modulo.permiso
+              ] === true ||
+
+              (
+                modulo.permiso ===
+                  'ver_solicitud' &&
+
+                puedeVerSolicitudes
+              )
+            )
+        )
 
   const disponibles =
     modulos.filter(
@@ -622,6 +650,14 @@ export default function Home() {
         modulo.disponible ===
         true
     )
+
+  const modulosFiltrados = modulos.filter(modulo => {
+    const termino = busquedaModulo.trim().toLocaleLowerCase('es-MX')
+    if (!termino) return true
+    return `${modulo.nombre} ${modulo.descripcion}`
+      .toLocaleLowerCase('es-MX')
+      .includes(termino)
+  })
 
   return (
     <main className="qiora-app">
@@ -808,6 +844,24 @@ export default function Home() {
 
         <div className="qiora-content">
 
+          <style jsx global>{`
+            /* Panel principal más compacto */
+            .qiora-hero { padding: 18px 22px !important; min-height: 0 !important; }
+            .qiora-hero h1 { font-size: clamp(22px, 2.2vw, 29px) !important; margin: 5px 0 !important; }
+            .qiora-hero .qiora-eyebrow { font-size: 10px !important; margin: 0 0 5px !important; letter-spacing: 1.2px; }
+            .qiora-hero p:not(.qiora-eyebrow) { font-size: 12px !important; margin: 5px 0 0 !important; }
+            .qiora-district-badge { padding: 10px 15px !important; font-size: 14px !important; }
+            .qiora-stats { gap: 10px !important; margin-top: 12px !important; }
+            .qiora-stat { padding: 11px 14px !important; min-height: 0 !important; }
+            .qiora-stat span { font-size: 10px !important; }
+            .qiora-stat strong { font-size: 15px !important; }
+            .qiora-module-search { display:flex; align-items:center; gap:10px; margin: 12px 0 16px; max-width: 520px; }
+            .qiora-module-search input { width:100%; min-width:0; box-sizing:border-box; padding:11px 14px; border:1px solid rgba(75,190,150,.45); border-radius:10px; background:#f7fbf9; color:#123b30; font-size:14px; outline:none; }
+            .qiora-module-search input:focus { border-color:#19b887; box-shadow:0 0 0 3px rgba(25,184,135,.14); }
+            .qiora-module-search-count { color:#b8e8d6; font-size:12px; white-space:nowrap; }
+            @media (max-width: 700px) { .qiora-hero { padding:15px !important; } .qiora-stats { grid-template-columns: repeat(2,minmax(0,1fr)) !important; } }
+          `}</style>
+
           <section className="qiora-hero">
 
             <div>
@@ -933,11 +987,24 @@ export default function Home() {
 
           </div>
 
+          <div className="qiora-module-search">
+            <input
+              type="search"
+              value={busquedaModulo}
+              onChange={e => setBusquedaModulo(e.target.value)}
+              placeholder="Buscar módulo..."
+              aria-label="Buscar módulos"
+            />
+            <span className="qiora-module-search-count">
+              {modulosFiltrados.length} de {modulos.length}
+            </span>
+          </div>
+
           <section className="qiora-modules">
 
-            {modulos.length ? (
+            {modulosFiltrados.length ? (
 
-              modulos.map(
+              modulosFiltrados.map(
                 modulo => (
 
                   <article
@@ -1014,11 +1081,13 @@ export default function Home() {
               <article className="qiora-module">
 
                 <h3>
-                  Sin módulos habilitados
+                  {modulos.length ? 'No se encontraron módulos' : 'Sin módulos habilitados'}
                 </h3>
 
                 <p>
-                  El usuario inició sesión correctamente, pero todavía no tiene permisos activos para estos módulos.
+                  {modulos.length
+                    ? 'No hay módulos que coincidan con tu búsqueda.'
+                    : 'El usuario inició sesión correctamente, pero todavía no tiene permisos activos para estos módulos.'}
                 </p>
 
               </article>
