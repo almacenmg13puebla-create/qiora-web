@@ -930,54 +930,26 @@ export default function Home() {
                     </p>
 
                     {
-                      modulo.permiso ===
-                        'ver_solicitud' &&
+                      modulo.permiso === 'ver_solicitud' &&
                       modulo.disponible
                         ? (
-
-                          <div
-                            className="qiora-solicitudes-actions"
-                            style={{
-                              display:
-                                'grid',
-
-                              gap:
-                                8,
-                            }}
+                          <a
+                            className="qiora-module-action"
+                            href="/ver-solicitudes"
                           >
-
-                            <a
-                              className="qiora-module-action"
-                              href="/ver-solicitudes"
-                            >
-                              Ver solicitudes
-                            </a>
-
-                            <a
-                              className="qiora-module-action"
-                              href="/entrega-material"
-                            >
-                              Entrega de material
-                            </a>
-
-                          </div>
-
+                            Ver solicitudes
+                          </a>
                         )
                         : modulo.disponible
                           ? (
-
                             <a
                               className="qiora-module-action"
-                              href={
-                                modulo.ruta
-                              }
+                              href={modulo.ruta}
                             >
                               Abrir módulo
                             </a>
-
                           )
                           : (
-
                             <button
                               className="qiora-module-action"
                               type="button"
@@ -985,7 +957,6 @@ export default function Home() {
                             >
                               En preparación
                             </button>
-
                           )
                     }
 
