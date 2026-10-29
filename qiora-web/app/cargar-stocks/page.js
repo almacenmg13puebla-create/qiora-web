@@ -126,7 +126,16 @@ export default function CargarStocksPage() {
       const registros = filasAObjetos(tipo, filas, distrito)
       const confirmar = window.confirm(`Se reemplazarán los registros actuales de ${tipo} del distrito ${distrito} por ${registros.length} filas del archivo. Los demás distritos no se modificarán. ¿Deseas continuar?`)
       if (!confirmar) return
-      const { data, error: rpcError } = await supabase.rpc('qiora_stock_reemplazar', { p_tipo: tipo, p_filas: registros })
+      const { data, error: rpcError } =
+        tipo === 'HERRAMIENTA'
+          ? await supabase.rpc('qiora_stock_herramienta_reemplazar', {
+              p_filas: registros,
+            })
+          : await supabase.rpc('qiora_stock_reemplazar', {
+              p_tipo: tipo,
+              p_filas: registros,
+            })
+
       if (rpcError) throw rpcError
       setMensaje(`${tipo}: se reemplazaron ${Number(data?.total ?? registros.length)} registros para ${distrito}.`)
       setArchivos(prev => ({ ...prev, [tipo]: null }))
