@@ -1,25 +1,9 @@
-{
-  modulo.permiso === 'ver_solicitud' && modulo.disponible ? (
-    <a
-      className="qiora-module-action"
-      href="/ver-solicitudes"
-    >
-      Ver solicitudes
-    </a>
-  ) : modulo.disponible ? (
-    <a
-      className="qiora-module-action"
-      href={modulo.ruta}
-    >
-      Abrir módulo
-    </a>
-  ) : (
-    <button
-      className="qiora-module-action"
-      type="button"
-      disabled
-    >
-      En preparación
-    </button>
-  )
-}
+'use client'
+import {useEffect,useState} from 'react'
+import {useRouter} from 'next/navigation'
+import {supabase} from '../../lib/supabase'
+export default function VerSolicitudes(){const router=useRouter();const [folio,F]=useState(''),[almacen,A]=useState(''),[estatus,E]=useState(''),[desde,D]=useState(''),[hasta,H]=useState(''),[filas,S]=useState([]),[error,X]=useState(''),[detalle,Q]=useState(null),[busy,B]=useState(false)
+ const cargar=async(clear=false)=>{B(true);X('');try{const {data,error}=await supabase.rpc('qiora_material_listar',{p_folio:clear?'':folio,p_almacen:clear?'':almacen,p_estatus:clear?'':estatus,p_desde:clear||!desde?null:desde,p_hasta:clear||!hasta?null:hasta});if(error)throw error;S(data||[])}catch(e){X(e.message)}finally{B(false)}}
+ useEffect(()=>{cargar(true)},[])
+ return <main className="vs"><div className="wrap"><button onClick={()=>router.push('/')}>← Regresar a Acceso Almacén</button><header><h1>Ver Solicitudes</h1><small>Consulta solicitudes por almacén, folio, estatus y rango de fechas.</small></header><section><div className="filters"><label>Folio (opcional)<input value={folio} onChange={e=>F(e.target.value)}/></label><label>Almacén (opcional)<input value={almacen} onChange={e=>A(e.target.value)}/></label><label>Estatus<select value={estatus} onChange={e=>E(e.target.value)}>{['','PENDIENTE','EN_PREPARACION','EN_PROCESO_SAP','ENTREGADO','CANCELADO'].map(x=><option key={x}>{x}</option>)}</select></label><label>Fecha inicial<input type="date" value={desde} onChange={e=>D(e.target.value)}/></label><label>Fecha final<input type="date" value={hasta} onChange={e=>H(e.target.value)}/></label><div><button disabled={busy} onClick={()=>cargar()}>Buscar</button><button onClick={()=>cargar(true)}>Ver todo</button><button className="red" onClick={()=>{F('');A('');E('');D('');H('');cargar(true)}}>Limpiar</button></div></div></section><section><h3>Total solicitudes: {filas.length}</h3><div className="scroll"><table><thead><tr>{['Folio','Fecha','Técnico','Almacén','Fecha de retiro','Cantidad total','Estatus','Acción'].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{filas.map(x=><tr key={x.folio}><td>{x.folio}</td><td>{new Date(x.fecha).toLocaleString('es-MX')}</td><td>{x.tecnico}</td><td>{x.almacen}</td><td>{x.fecha_retiro}</td><td>{x.cantidad_total}</td><td>{x.estatus}</td><td><button onClick={()=>Q(x)}>Ver todo</button><button disabled={!['PENDIENTE','EN_PREPARACION'].includes(x.estatus)} onClick={()=>router.push('/entrega-material?folio='+encodeURIComponent(x.folio))}>Entregar</button></td></tr>)}</tbody></table></div></section>{detalle&&<section><button onClick={()=>Q(null)}>Cerrar detalle</button><h3>{detalle.folio} — {detalle.tecnico}</h3><table><thead><tr><th>SKU</th><th>Material</th><th>Cantidad</th><th>Lote asignado</th></tr></thead><tbody>{detalle.materiales.map((x,i)=><tr key={i}><td>{x.sku}</td><td>{x.material}</td><td>{x.cantidad}</td><td>{x.lote}</td></tr>)}</tbody></table></section>}{error&&<p role="alert" className="warn">{error}</p>}</div><style jsx>{css}</style></main>}
+const css=`.vs{background:#03251d;color:#fff;min-height:100vh;padding:20px;font:13px Arial}.wrap{max-width:1100px;margin:auto}.vs header{text-align:center;background:linear-gradient(120deg,#08523d,#17a47c)}.vs header,.vs section{border:1px solid #346c5a;border-radius:12px;padding:17px;margin:12px 0;background-color:#09332a}.vs h1{margin:0 0 7px}.filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.vs label{font-weight:bold}.vs input,.vs select{display:block;width:100%;background:#f6f7f9;color:#123;border:0;border-radius:8px;padding:11px;margin-top:5px}.vs button{background:#0e9570;color:#fff;border:0;border-radius:8px;padding:9px;margin:3px;cursor:pointer}.vs button:disabled{opacity:.5}.vs .red{background:#cb2e37}.scroll{overflow:auto}.vs table{width:100%;border-collapse:collapse;background:#f8faf9;color:#234}.vs td,.vs th{padding:9px;border:1px solid #becfc8}.vs th{background:#047854;color:#fff}.warn{color:#ffb1a8}@media(max-width:700px){.filters{grid-template-columns:1fr}}`
