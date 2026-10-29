@@ -45,6 +45,14 @@ const MODULOS = [
   },
 
   {
+    permiso: 'carga_stocks',
+    nombre: 'Cargar stocks',
+    descripcion: 'Carga y reemplazo de STOCK_ALMACEN, STOCK_TECNICOS, herramienta e IQ09 por distrito.',
+    ruta: '/cargar-stocks',
+    disponible: true,
+  },
+
+  {
     permiso: null,
     nombre: 'Configuración',
     descripcion: 'Usuarios, números de empleado y catálogos de costos.',
