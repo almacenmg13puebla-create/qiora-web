@@ -66,7 +66,49 @@ function filasAObjetos(tipo, filas, distrito) {
     const solicita = numero(r[8])
     return { material: clean(r[0]), descripcion: clean(r[1]), centro: distrito, almacen: almacen4(r[3]), libre_utilizacion: libre, lote: clean(r[5]), trans_trasl: numero(r[6]), denominacion_almacen: clean(r[7]), solicita, disponible: Math.max(0, libre - solicita) }
   })
-  if (tipo === 'HERRAMIENTA') return datos.map(r => ({ producto: clean(r[0]), ubicacion: clean(r[1]), cantidad: numero(r[2]), distrito }))
+  if (tipo === 'HERRAMIENTA') {
+    // Este archivo es "Inventario por colaborador", no un archivo de 3 columnas.
+    // Identificar las columnas por encabezado evita leer SUCURSAL como CANTIDAD.
+    const encabezados = filas[0].map(v =>
+      clean(v)
+        .normalize('NFD')
+        .replace(/[\\u0300-\\u036f]/g, '')
+        .toUpperCase()
+        .replace(/\\s+/g, ' ')
+    )
+
+    const indice = (nombre) => encabezados.indexOf(nombre)
+    const iColaborador = indice('COLABORADOR')
+    const iSucursal = indice('SUCURSAL')
+    const iReferencia = indice('REFERENCIA')
+    const iProducto = indice('PRODUCTO')
+    const iCantidad = indice('CANTIDAD')
+
+    if ([iColaborador, iSucursal, iProducto, iCantidad].some(i => i < 0)) {
+      throw new Error(
+        'El archivo de herramienta debe incluir los encabezados COLABORADOR, SUCURSAL, PRODUCTO y CANTIDAD.'
+      )
+    }
+
+    return datos.map((r, i) => {
+      const colaborador = clean(r[iColaborador])
+      const sucursal = clean(r[iSucursal])
+      const referencia = iReferencia >= 0 ? clean(r[iReferencia]) : ''
+      const nombreProducto = clean(r[iProducto])
+      const cantidad = numero(r[iCantidad])
+
+      if (!colaborador || !sucursal || !nombreProducto) {
+        throw new Error(`Faltan COLABORADOR, SUCURSAL o PRODUCTO en la fila ${i + 2}.`)
+      }
+
+      return {
+        producto: referencia ? `${referencia} - ${nombreProducto}` : nombreProducto,
+        ubicacion: `${sucursal}/Stock/${colaborador}`,
+        cantidad,
+        distrito,
+      }
+    })
+  }
   if (tipo === 'IQ09') return datos.map((r, i) => {
     const centro = upper(r[3])
     if (centro && centro !== distrito) throw new Error(`La fila ${i + 2} pertenece a ${centro}, no a ${distrito}. No se cargó el archivo.`)
@@ -126,16 +168,7 @@ export default function CargarStocksPage() {
       const registros = filasAObjetos(tipo, filas, distrito)
       const confirmar = window.confirm(`Se reemplazarán los registros actuales de ${tipo} del distrito ${distrito} por ${registros.length} filas del archivo. Los demás distritos no se modificarán. ¿Deseas continuar?`)
       if (!confirmar) return
-      const { data, error: rpcError } =
-        tipo === 'HERRAMIENTA'
-          ? await supabase.rpc('qiora_stock_herramienta_reemplazar', {
-              p_filas: registros,
-            })
-          : await supabase.rpc('qiora_stock_reemplazar', {
-              p_tipo: tipo,
-              p_filas: registros,
-            })
-
+      const { data, error: rpcError } = await supabase.rpc('qiora_stock_reemplazar', { p_tipo: tipo, p_filas: registros })
       if (rpcError) throw rpcError
       setMensaje(`${tipo}: se reemplazaron ${Number(data?.total ?? registros.length)} registros para ${distrito}.`)
       setArchivos(prev => ({ ...prev, [tipo]: null }))
