@@ -105,7 +105,7 @@ const MODULOS = [
     nombre: 'Devoluciones',
     descripcion: 'Registro y control de devoluciones.',
     ruta: '/devoluciones',
-    disponible: false,
+    disponible: true,
   },
 
   {
@@ -116,13 +116,13 @@ const MODULOS = [
     disponible: false,
   },
 
- {
-  permiso: 'bajas',
-  nombre: 'Bajas',
-  descripcion: 'Seguimiento de bajas de inventario.',
-  ruta: '/bajas-cobros',
-  disponible: true,
-},
+  {
+    permiso: 'bajas',
+    nombre: 'Bajas',
+    descripcion: 'Seguimiento de bajas de inventario.',
+    ruta: '/bajas-cobros',
+    disponible: true,
+  },
 
   {
     permiso: null,
@@ -150,12 +150,6 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
   const [menuAbierto, setMenuAbierto] = useState(false)
 
-  /*
-    ============================================================
-    VALIDAR SESION EXISTENTE
-    ============================================================
-  */
-
   useEffect(() => {
     let montado = true
 
@@ -172,15 +166,10 @@ export default function Home() {
 
         await cargarPerfil(() => montado)
       } catch (error) {
-        console.error(
-          'ERROR VALIDANDO SESIÓN:',
-          error
-        )
+        console.error('ERROR VALIDANDO SESIÓN:', error)
 
         if (montado) {
-          setMsg(
-            'Error al validar la sesión.'
-          )
+          setMsg('Error al validar la sesión.')
         }
       } finally {
         if (montado) {
@@ -195,12 +184,6 @@ export default function Home() {
       montado = false
     }
   }, [])
-
-  /*
-    ============================================================
-    CARGAR PERFIL
-    ============================================================
-  */
 
   async function cargarPerfil(
     sigueActivo = () => true
@@ -237,15 +220,6 @@ export default function Home() {
 
         return false
       }
-
-      /*
-        Consultar el número de empleado
-        asociado a la sesión autenticada.
-
-        No usar perfil.odoo:
-        ese campo corresponde al
-        identificador antiguo.
-      */
 
       const {
         data: empleadoNumero,
@@ -296,12 +270,6 @@ export default function Home() {
       return false
     }
   }
-
-  /*
-    ============================================================
-    LOGIN
-    ============================================================
-  */
 
   async function login(e) {
     e.preventDefault()
@@ -383,12 +351,6 @@ export default function Home() {
     }
   }
 
-  /*
-    ============================================================
-    CERRAR SESION
-    ============================================================
-  */
-
   async function salir() {
     try {
       const {
@@ -420,12 +382,6 @@ export default function Home() {
     }
   }
 
-  /*
-    ============================================================
-    CARGANDO
-    ============================================================
-  */
-
   if (loading) {
     return (
       <main className="center">
@@ -449,12 +405,6 @@ export default function Home() {
       </main>
     )
   }
-
-  /*
-    ============================================================
-    LOGIN
-    ============================================================
-  */
 
   if (!perfil) {
     return (
@@ -483,26 +433,18 @@ export default function Home() {
 
           <input
             id="qiora-usuario"
-
             value={usuario}
-
             onChange={
               e =>
                 setUsuario(
                   e.target.value
                 )
             }
-
             autoComplete="username"
-
             autoCapitalize="none"
-
             spellCheck={false}
-
             placeholder="1903"
-
             disabled={loading}
-
             required
           />
 
@@ -512,24 +454,17 @@ export default function Home() {
 
           <input
             id="qiora-clave"
-
             type="password"
-
             value={clave}
-
             onChange={
               e =>
                 setClave(
                   e.target.value
                 )
             }
-
             autoComplete="current-password"
-
             placeholder="********"
-
             disabled={loading}
-
             required
           />
 
@@ -546,7 +481,6 @@ export default function Home() {
 
           <button
             type="submit"
-
             disabled={loading}
           >
             {
@@ -562,29 +496,6 @@ export default function Home() {
     )
   }
 
-  /*
-    ============================================================
-    ADMINISTRADORES
-    ============================================================
-
-    ADMIN_PADRE
-      -> todos los módulos
-
-    ADMIN_MG11
-      -> todos los módulos
-      -> datos únicamente MG11
-
-    ADMIN_MG13
-      -> todos los módulos
-      -> datos únicamente MG13
-
-    ADMIN_MG18
-      -> todos los módulos
-      -> datos únicamente MG18
-
-    etc.
-  */
-
   const puestoActual =
     String(
       perfil.puesto ?? ''
@@ -595,16 +506,6 @@ export default function Home() {
   const esAdminPadre =
     puestoActual ===
     'ADMIN_PADRE'
-
-  /*
-    Reconoce automáticamente:
-
-    ADMIN_MG11
-    ADMIN_MG13
-    ADMIN_MG18
-    ADMIN_MG19
-    etc.
-  */
 
   const esAdminCentro =
     puestoActual.startsWith(
@@ -617,19 +518,6 @@ export default function Home() {
     esAdminPadre ||
     esAdminCentro
 
-  /*
-    ============================================================
-    CENTRO ACTIVO
-    ============================================================
-
-    En QIORA el distrito del perfil
-    identifica el centro operativo.
-
-    MG11 -> MG11
-    MG13 -> MG13
-    MG18 -> MG18
-  */
-
   const centroActivo =
     String(
       perfil.distrito ?? ''
@@ -637,30 +525,12 @@ export default function Home() {
       .trim()
       .toUpperCase()
 
-  /*
-    ============================================================
-    VER SOLICITUDES
-    ============================================================
-  */
-
   const puedeVerSolicitudes =
     esAdministrador ||
     perfil.ver_solicitud === true ||
     perfil.administrar_permisos === true ||
     perfil.acceso_almacen === true ||
     perfil.acceso_coordinador === true
-
-  /*
-    ============================================================
-    MODULOS VISIBLES
-    ============================================================
-
-    ADMIN:
-      ve todos.
-
-    USUARIO NORMAL:
-      se filtra por permiso.
-  */
 
   const modulos =
     esAdministrador
@@ -680,12 +550,6 @@ export default function Home() {
               puedeVerSolicitudes
             )
         )
-
-  /*
-    ============================================================
-    MODULOS AUTORIZADOS
-    ============================================================
-  */
 
   const modulosAutorizados =
     esAdministrador
@@ -708,12 +572,6 @@ export default function Home() {
             )
         )
 
-  /*
-    ============================================================
-    MODULOS DISPONIBLES
-    ============================================================
-  */
-
   const disponibles =
     modulos.filter(
       modulo =>
@@ -721,20 +579,8 @@ export default function Home() {
         true
     )
 
-  /*
-    ============================================================
-    PANEL PRINCIPAL
-    ============================================================
-  */
-
   return (
     <main className="qiora-app">
-
-      {/*
-        ========================================================
-        SIDEBAR
-        ========================================================
-      */}
 
       <aside
         className={`qiora-sidebar ${
@@ -742,7 +588,6 @@ export default function Home() {
             ? 'qiora-sidebar-open'
             : ''
         }`}
-
         aria-label="Navegación principal"
       >
 
@@ -770,9 +615,7 @@ export default function Home() {
 
         <a
           className="qiora-nav-item qiora-nav-active"
-
           href="/"
-
           onClick={() =>
             setMenuAbierto(false)
           }
@@ -796,13 +639,10 @@ export default function Home() {
                     modulo.permiso ||
                     modulo.nombre
                   }
-
                   className="qiora-nav-item"
-
                   href={
                     modulo.ruta
                   }
-
                   onClick={() =>
                     setMenuAbierto(
                       false
@@ -820,9 +660,7 @@ export default function Home() {
                     modulo.permiso ||
                     modulo.nombre
                   }
-
                   className="qiora-nav-item qiora-nav-disabled"
-
                   title="Módulo pendiente de implementación"
                 >
                   {modulo.nombre}
@@ -860,21 +698,12 @@ export default function Home() {
 
       </aside>
 
-      {/*
-        ========================================================
-        FONDO MENU MOVIL
-        ========================================================
-      */}
-
       {menuAbierto && (
 
         <button
           type="button"
-
           className="qiora-backdrop"
-
           aria-label="Cerrar menú"
-
           onClick={() =>
             setMenuAbierto(false)
           }
@@ -882,19 +711,7 @@ export default function Home() {
 
       )}
 
-      {/*
-        ========================================================
-        CONTENIDO
-        ========================================================
-      */}
-
       <div className="qiora-main">
-
-        {/*
-          ======================================================
-          TOPBAR
-          ======================================================
-        */}
 
         <header className="qiora-topbar">
 
@@ -902,15 +719,12 @@ export default function Home() {
 
             <button
               type="button"
-
               className="qiora-menu-toggle"
-
               onClick={() =>
                 setMenuAbierto(
                   !menuAbierto
                 )
               }
-
               aria-label="Mostrar u ocultar menú"
             >
               ☰
@@ -938,9 +752,7 @@ export default function Home() {
 
             <button
               type="button"
-
               className="out"
-
               onClick={salir}
             >
               Cerrar sesión
@@ -950,19 +762,7 @@ export default function Home() {
 
         </header>
 
-        {/*
-          ======================================================
-          CUERPO
-          ======================================================
-        */}
-
         <div className="qiora-content">
-
-          {/*
-            ====================================================
-            HERO
-            ====================================================
-          */}
 
           <section className="qiora-hero">
 
@@ -991,15 +791,8 @@ export default function Home() {
 
           </section>
 
-          {/*
-            ====================================================
-            INFORMACION USUARIO
-            ====================================================
-          */}
-
           <section
             className="qiora-stats"
-
             aria-label="Información del usuario"
           >
 
@@ -1063,12 +856,6 @@ export default function Home() {
 
           </section>
 
-          {/*
-            ====================================================
-            MENSAJE ERROR
-            ====================================================
-          */}
-
           {msg && (
 
             <div
@@ -1079,12 +866,6 @@ export default function Home() {
             </div>
 
           )}
-
-          {/*
-            ====================================================
-            TITULO MIS MODULOS
-            ====================================================
-          */}
 
           <div className="qiora-section-heading">
 
@@ -1108,12 +889,6 @@ export default function Home() {
 
           </div>
 
-          {/*
-            ====================================================
-            TARJETAS
-            ====================================================
-          */}
-
           <section className="qiora-modules">
 
             {modulos.length ? (
@@ -1123,7 +898,6 @@ export default function Home() {
 
                   <article
                     className="qiora-module"
-
                     key={
                       modulo.ruta ||
                       modulo.permiso ||
@@ -1163,7 +937,6 @@ export default function Home() {
 
                           <div
                             className="qiora-solicitudes-actions"
-
                             style={{
                               display:
                                 'grid',
@@ -1175,7 +948,6 @@ export default function Home() {
 
                             <a
                               className="qiora-module-action"
-
                               href="/ver-solicitudes"
                             >
                               Ver solicitudes
@@ -1183,7 +955,6 @@ export default function Home() {
 
                             <a
                               className="qiora-module-action"
-
                               href="/entrega-material"
                             >
                               Entrega de material
@@ -1197,7 +968,6 @@ export default function Home() {
 
                             <a
                               className="qiora-module-action"
-
                               href={
                                 modulo.ruta
                               }
@@ -1210,9 +980,7 @@ export default function Home() {
 
                             <button
                               className="qiora-module-action"
-
                               type="button"
-
                               disabled
                             >
                               En preparación
