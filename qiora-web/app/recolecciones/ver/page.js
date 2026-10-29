@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../../lib/supabase'
 
@@ -94,6 +94,56 @@ export default function VerRecoleccionesPage() {
   const [detalle, setDetalle] =
     useState(null)
 
+  const [perfil, setPerfil] = useState(null)
+  const [centroActivo, setCentroActivo] = useState('')
+  const [almacenesCentro, setAlmacenesCentro] = useState([])
+  const [cargandoPerfil, setCargandoPerfil] = useState(true)
+
+  useEffect(() => {
+    let vivo = true
+
+    async function iniciar() {
+      try {
+        const { data, error: perfilError } = await supabase.rpc('qiora_mi_perfil')
+        if (perfilError) throw perfilError
+        if (!data || data.activo !== true) throw new Error('No existe un perfil activo.')
+
+        const puesto = limpiar(data.puesto).toUpperCase()
+        const esAdminPadre = puesto === 'ADMIN_PADRE'
+        const centro = limpiar(data.distrito).toUpperCase()
+
+        if (!esAdminPadre && !centro) throw new Error('El usuario no tiene centro/distrito configurado.')
+
+        let permitidos = []
+        if (!esAdminPadre) {
+          const { data: almacenesData, error: almacenesError } = await supabase
+            .from('almacen_usuarios')
+            .select('usuario_almacen,distrito')
+            .eq('distrito', centro)
+
+          if (almacenesError) throw almacenesError
+          permitidos = (almacenesData || [])
+            .filter(a => limpiar(a.distrito).toUpperCase() === centro)
+            .map(a => limpiar(a.usuario_almacen))
+            .filter(Boolean)
+          permitidos = [...new Set(permitidos)]
+        }
+
+        if (!vivo) return
+        setPerfil(data)
+        setCentroActivo(esAdminPadre ? 'TODOS' : centro)
+        setAlmacenesCentro(permitidos)
+      } catch (e) {
+        if (vivo) setError(e?.message || 'No fue posible validar el centro activo.')
+      } finally {
+        if (vivo) setCargandoPerfil(false)
+      }
+    }
+
+    iniciar()
+    return () => { vivo = false }
+  }, [])
+
   /*
     ================================
     BUSCAR
@@ -109,6 +159,16 @@ export default function VerRecoleccionesPage() {
     setDetalle(null)
 
     try {
+      if (cargandoPerfil) throw new Error('Espera a que se valide el usuario y su centro.')
+      if (!perfil) throw new Error('No existe perfil activo.')
+      const puestoActual = limpiar(perfil.puesto).toUpperCase()
+      const adminPadre = puestoActual === 'ADMIN_PADRE'
+      if (!adminPadre && !almacenesCentro.length) {
+        setResultados([])
+        setAviso(`No hay almacenes configurados para el centro ${centroActivo}.`)
+        return
+      }
+
       let consulta =
         supabase
           .from('recolecciones_equipos')
@@ -140,6 +200,12 @@ export default function VerRecoleccionesPage() {
               ascending: false
             }
           )
+
+      // No se confía en un filtro de centro introducido por el usuario.
+      // Los almacenes permitidos proceden del perfil y catálogo del distrito.
+      if (!adminPadre) {
+        consulta = consulta.in('almacen', almacenesCentro)
+      }
 
       /*
         FECHA INICIAL
@@ -487,10 +553,14 @@ export default function VerRecoleccionesPage() {
           </h1>
 
           <p style={css.subtitulo}>
-            Consulta por fecha, folio, almacén o serie y descarga Excel.
+            Consulta por fecha, folio, almacén o serie y descarga Excel. Centro activo: {centroActivo || 'CARGANDO'}.
           </p>
 
         </header>
+
+        {cargandoPerfil && (
+          <div style={css.aviso}>Validando usuario y centro...</div>
+        )}
 
         {error && (
           <div style={css.error}>
