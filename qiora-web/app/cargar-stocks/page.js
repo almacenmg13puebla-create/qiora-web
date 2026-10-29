@@ -10,7 +10,7 @@ const TIPOS = [
     descripcion: 'Material, Descripción del material, Centro, Almacén, Libre utilización, Lote, Trans./Trasl., Denominación almacén.' },
   { id: 'STOCK_TECNICOS', titulo: 'STOCK_TECNICOS', columnas: 9, accept: '.csv,.xlsx,.xls',
     descripcion: 'Los ocho campos de almacén más Solicita. Disponible se calcula automáticamente.' },
-  { id: 'HERRAMIENTA', titulo: 'Cargar herramienta', columnas: 13, accept: '.csv,.xlsx,.xls',
+  { id: 'HERRAMIENTA', titulo: 'Cargar herramienta', columnas: 3, accept: '.csv,.xlsx,.xls',
     descripcion: 'Producto, Ubicación y Cantidad.' },
   { id: 'IQ09', titulo: 'iq09_equipos', columnas: 10, accept: '.csv,.xlsx,.xls',
     descripcion: 'Material, Descripción material, Número de serie, Centro, Almacén, Fecha modificación, Lote, Lote de stock, Denom. status y Tp.stocks (contab.refer.).' },
@@ -57,86 +57,22 @@ function filasAObjetos(tipo, filas, distrito) {
     const centro = upper(r[2])
     if (centro && centro !== distrito) throw new Error(`La fila ${i + 2} pertenece a ${centro}, no a ${distrito}. No se cargó el archivo.`)
     const libre = numero(r[4])
-    return { material: clean(r[0]), descripcion: clean(r[1]), centro: distrito, almacen: almacen4(r[3]), libre_utilizacion: libre, lote: clean(r[5]), trans_trasl: numero(r[6]), denominacion_almacen: clean(r[7]), entrega: 0, disponible: Math.max(0, libre) }
+    // Columna I = Entrega, si viene en el archivo; si no viene, se genera en 0.
+    const entrega = r.length > 8 && clean(r[8]) !== '' ? numero(r[8]) : 0
+    // Equivalente a la fórmula de Excel: DISPONIBLE = E - I.
+    const disponible = libre - entrega
+    return { material: clean(r[0]), descripcion: clean(r[1]), centro: distrito, almacen: almacen4(r[3]), libre_utilizacion: libre, lote: clean(r[5]), trans_trasl: numero(r[6]), denominacion_almacen: clean(r[7]), entrega, disponible }
   })
   if (tipo === 'STOCK_TECNICOS') return datos.map((r, i) => {
     const centro = upper(r[2])
     if (centro && centro !== distrito) throw new Error(`La fila ${i + 2} pertenece a ${centro}, no a ${distrito}. No se cargó el archivo.`)
     const libre = numero(r[4])
     const solicita = numero(r[8])
-    return { material: clean(r[0]), descripcion: clean(r[1]), centro: distrito, almacen: almacen4(r[3]), libre_utilizacion: libre, lote: clean(r[5]), trans_trasl: numero(r[6]), denominacion_almacen: clean(r[7]), solicita, disponible: Math.max(0, libre - solicita) }
+    // Equivalente a la fórmula solicitada: DISPONIBLE = E + I.
+    const disponible = libre + solicita
+    return { material: clean(r[0]), descripcion: clean(r[1]), centro: distrito, almacen: almacen4(r[3]), libre_utilizacion: libre, lote: clean(r[5]), trans_trasl: numero(r[6]), denominacion_almacen: clean(r[7]), solicita, disponible }
   })
-  if (tipo === 'HERRAMIENTA') {
-    // Inventario por colaborador: mapear las 13 columnas por encabezado.
-    const normalizarEncabezado = (valor) => clean(valor)
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
-      .replace(/[^A-Z0-9 ]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-
-    const encabezados = filas[0].map(normalizarEncabezado)
-    const indice = (...nombres) => encabezados.findIndex(h => nombres.includes(h))
-    const columnas = {
-      colaborador: indice('COLABORADOR'),
-      noEmpleado: indice('NO EMPLEADO', 'NUMERO EMPLEADO'),
-      sucursal: indice('SUCURSAL'),
-      referencia: indice('REFERENCIA'),
-      producto: indice('PRODUCTO'),
-      loteProveedor: indice('LOTE PROVEEDOR'),
-      loteQiora: indice('LOTE QIORA'),
-      serie: indice('SERIE'),
-      placaQiora: indice('PLACA QIORA'),
-      cantidad: indice('CANTIDAD'),
-      valorCompra: indice('VALOR COMPRA'),
-      valorActual: indice('VALOR ACTUAL'),
-      estado: indice('ESTADO'),
-    }
-
-    const obligatorias = ['colaborador', 'sucursal', 'referencia', 'producto', 'cantidad']
-    const faltantes = obligatorias.filter(k => columnas[k] < 0)
-    if (faltantes.length) {
-      throw new Error(`Faltan encabezados en el Excel: ${faltantes.join(', ')}. Encabezados detectados: ${encabezados.join(' | ')}`)
-    }
-
-    const numeroOpcional = (valor, nombre, fila) => {
-      if (clean(valor) === '') return null
-      const n = numero(valor)
-      if (!Number.isFinite(n)) throw new Error(`${nombre} inválido en la fila ${fila}.`)
-      return n
-    }
-
-    return datos.map((r, i) => {
-      const filaExcel = i + 2
-      const colaborador = clean(r[columnas.colaborador])
-      const sucursal = clean(r[columnas.sucursal])
-      const producto = clean(r[columnas.producto])
-      const referencia = clean(r[columnas.referencia])
-      const cantidad = numeroOpcional(r[columnas.cantidad], 'CANTIDAD', filaExcel)
-
-      if (!colaborador || !sucursal || !producto || cantidad === null) {
-        throw new Error(`Faltan COLABORADOR, SUCURSAL, PRODUCTO o CANTIDAD en la fila ${filaExcel}.`)
-      }
-
-      return {
-        colaborador,
-        no_empleado: columnas.noEmpleado >= 0 ? clean(r[columnas.noEmpleado]) || null : null,
-        sucursal,
-        referencia: referencia || null,
-        producto,
-        lote_proveedor: columnas.loteProveedor >= 0 ? clean(r[columnas.loteProveedor]) || null : null,
-        lote_qiora: columnas.loteQiora >= 0 ? clean(r[columnas.loteQiora]) || null : null,
-        serie: columnas.serie >= 0 ? clean(r[columnas.serie]) || null : null,
-        placa_qiora: columnas.placaQiora >= 0 ? clean(r[columnas.placaQiora]) || null : null,
-        cantidad,
-        valor_compra: columnas.valorCompra >= 0 ? numeroOpcional(r[columnas.valorCompra], 'VALOR COMPRA', filaExcel) : null,
-        valor_actual: columnas.valorActual >= 0 ? numeroOpcional(r[columnas.valorActual], 'VALOR ACTUAL', filaExcel) : null,
-        estado: columnas.estado >= 0 ? clean(r[columnas.estado]) || null : null,
-        distrito,
-      }
-    })
-  }
+  if (tipo === 'HERRAMIENTA') return datos.map(r => ({ producto: clean(r[0]), ubicacion: clean(r[1]), cantidad: numero(r[2]), distrito }))
   if (tipo === 'IQ09') return datos.map((r, i) => {
     const centro = upper(r[3])
     if (centro && centro !== distrito) throw new Error(`La fila ${i + 2} pertenece a ${centro}, no a ${distrito}. No se cargó el archivo.`)
@@ -196,15 +132,7 @@ export default function CargarStocksPage() {
       const registros = filasAObjetos(tipo, filas, distrito)
       const confirmar = window.confirm(`Se reemplazarán los registros actuales de ${tipo} del distrito ${distrito} por ${registros.length} filas del archivo. Los demás distritos no se modificarán. ¿Deseas continuar?`)
       if (!confirmar) return
-      const { data, error: rpcError } =
-        tipo === 'HERRAMIENTA'
-          ? await supabase.rpc('qiora_herramienta_inventario_reemplazar', {
-              p_filas: registros,
-            })
-          : await supabase.rpc('qiora_stock_reemplazar', {
-              p_tipo: tipo,
-              p_filas: registros,
-            })
+      const { data, error: rpcError } = await supabase.rpc('qiora_stock_reemplazar', { p_tipo: tipo, p_filas: registros })
       if (rpcError) throw rpcError
       setMensaje(`${tipo}: se reemplazaron ${Number(data?.total ?? registros.length)} registros para ${distrito}.`)
       setArchivos(prev => ({ ...prev, [tipo]: null }))
@@ -245,7 +173,7 @@ export default function CargarStocksPage() {
             ))}
           </div>
           <div style={s.note}>
-            <strong>Importante:</strong> cada carga reemplaza únicamente los datos de ese tipo dentro del distrito activo. En STOCK_ALMACEN se genera Entrega = 0 y Disponible = Libre utilización. En STOCK_TECNICOS, Disponible = Libre utilización − Solicita. Disponible queda al final.
+            <strong>Importante:</strong> cada carga reemplaza únicamente los datos de ese tipo dentro del distrito activo. En STOCK_ALMACEN, Disponible = Libre utilización − Entrega (E − I). En STOCK_TECNICOS, Disponible = Libre utilización + Solicita (E + I). Disponible queda al final.
           </div>
         </section>
       </div>
