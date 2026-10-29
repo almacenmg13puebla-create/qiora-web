@@ -1477,6 +1477,48 @@ export default function ConfiguracionPage() {
     }
   }
 
+  async function restablecerClaveUsuario(u) {
+    const usuario = String(u.usuario_almacen || u.nombre || 'este usuario')
+    if (!window.confirm(`¿Generar una nueva contraseña temporal para ${usuario}? La contraseña actual dejará de funcionar.`)) {
+      return
+    }
+
+    setGuardandoFicha(true)
+    setError('')
+    setAviso('')
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) {
+        throw new Error('Sesión caducada. Inicia sesión nuevamente.')
+      }
+
+      const response = await fetch('/api/usuarios/restablecer-clave', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ usuario_id: String(u.id) }),
+        cache: 'no-store',
+      })
+
+      const resultado = await response.json().catch(() => ({}))
+      if (!response.ok || !resultado.ok) {
+        throw new Error(resultado.error || 'No se pudo restablecer la contraseña.')
+      }
+
+      setAviso(
+        `Contraseña temporal de ${resultado.usuario}: ${resultado.clave_temporal}. ` +
+        'Cópiala y entrégala al usuario por un canal seguro; no se volverá a mostrar.'
+      )
+    } catch (e) {
+      setError(e?.message || 'No se pudo restablecer la contraseña.')
+    } finally {
+      setGuardandoFicha(false)
+    }
+  }
+
   async function cambiarEstadoUsuario(
     u
   ) {
