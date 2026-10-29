@@ -16,8 +16,8 @@ function passwordSupabase(clave) {
 
   REGLA:
   - ADMIN_PADRE ve todos.
-  - ADMIN_MG11 / ADMIN_MG13 / ADMIN_MG18 / etc. ven todos.
-  - Los demás usuarios ven únicamente los módulos autorizados.
+  - ADMIN_<DISTRITO> ve únicamente los módulos autorizados por ADMIN_PADRE.
+  - Los demás usuarios ven únicamente los módulos autorizados por su ADMIN_<DISTRITO>.
   - El aislamiento de datos por centro se valida dentro de cada
     módulo y en Supabase/RPC/RLS.
 
@@ -37,7 +37,8 @@ const MODULOS = [
   },
 
   {
-    permiso: null,
+    permiso: 'materiales',
+    permisosAlternativos: ['equipos', 'stock_tecnicos', 'ver_brm'],
     nombre: 'Inventarios',
     descripcion: 'Consulta de materiales, equipos IQ09 y catálogos.',
     ruta: '/inventarios',
@@ -45,7 +46,7 @@ const MODULOS = [
   },
 
   {
-    permiso: 'carga_stocks',
+    permiso: 'cargar_stocks',
     nombre: 'Cargar stocks',
     descripcion: 'Carga y reemplazo de STOCK_ALMACEN, STOCK_TECNICOS, herramienta e IQ09 por distrito.',
     ruta: '/cargar-stocks',
@@ -53,7 +54,8 @@ const MODULOS = [
   },
 
   {
-    permiso: null,
+    permiso: 'configuracion',
+    permisosAlternativos: ['administrar_permisos', 'usuarios'],
     nombre: 'Configuración',
     descripcion: 'Usuarios, números de empleado y catálogos de costos.',
     ruta: '/configuracion',
@@ -133,7 +135,8 @@ const MODULOS = [
   },
 
   {
-    permiso: null,
+    permiso: 'traspasos',
+    permisosAlternativos: ['capturar_traspaso', 'ver_traspasos'],
     nombre: 'Traspasos',
     descripcion: 'Solicitudes y seguimiento de traspasos SAP.',
     ruta: '/traspasos',
@@ -596,52 +599,22 @@ export default function Home() {
       .trim()
       .toUpperCase()
 
+  // ADMIN_PADRE es el único rol con acceso global automático.
+  // ADMIN_MG y usuarios normales respetan sus permisos guardados.
   const puedeVerSolicitudes =
-    esAdministrador ||
-    perfil.ver_solicitud === true ||
-    perfil.administrar_permisos === true ||
-    perfil.acceso_almacen === true ||
-    perfil.acceso_coordinador === true
+    esAdminPadre || perfil.ver_solicitud === true
 
-  const modulos =
-    esAdministrador
-      ? MODULOS
-      : MODULOS.filter(
-          modulo =>
-            modulo.permiso === null ||
+  function tienePermisoModulo(modulo) {
+    if (esAdminPadre) return true
+    const claves = [modulo.permiso, ...(modulo.permisosAlternativos || [])]
+      .filter(Boolean)
+    return claves.some(clave => perfil[clave] === true) ||
+      (modulo.permiso === 'ver_solicitud' && puedeVerSolicitudes)
+  }
 
-            perfil[
-              modulo.permiso
-            ] === true ||
-
-            (
-              modulo.permiso ===
-                'ver_solicitud' &&
-
-              puedeVerSolicitudes
-            )
-        )
-
-  const modulosAutorizados =
-    esAdministrador
-      ? MODULOS
-      : MODULOS.filter(
-          modulo =>
-            modulo.permiso !== null &&
-
-            (
-              perfil[
-                modulo.permiso
-              ] === true ||
-
-              (
-                modulo.permiso ===
-                  'ver_solicitud' &&
-
-                puedeVerSolicitudes
-              )
-            )
-        )
+  // Si no tiene permiso, el módulo no se renderiza en el menú ni en el panel.
+  const modulos = MODULOS.filter(tienePermisoModulo)
+  const modulosAutorizados = MODULOS.filter(tienePermisoModulo)
 
   const disponibles =
     modulos.filter(
