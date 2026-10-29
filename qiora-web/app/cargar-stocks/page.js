@@ -72,9 +72,9 @@ function filasAObjetos(tipo, filas, distrito) {
     const encabezados = filas[0].map(v =>
       clean(v)
         .normalize('NFD')
-        .replace(/[\\u0300-\\u036f]/g, '')
+        .replace(/[\u0300-\u036f]/g, '')
         .toUpperCase()
-        .replace(/\\s+/g, ' ')
+        .replace(/\s+/g, ' ')
     )
 
     const indice = (nombre) => encabezados.indexOf(nombre)
