@@ -15,6 +15,10 @@ const texto = valor =>
 const mayus = valor =>
   texto(valor).toUpperCase()
 
+// Compatibilidad con las llamadas existentes a upper()
+const upper = valor =>
+  texto(valor).toUpperCase()
+
 function archivoSeguro(valor) {
   return mayus(valor)
     .replace(/[^A-Z0-9_-]/g, '')
