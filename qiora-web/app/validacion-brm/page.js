@@ -6,137 +6,84 @@ import {
   useState
 } from 'react'
 
-import {
-  useRouter
-} from 'next/navigation'
+import { useRouter } from 'next/navigation'
+import { supabase } from '../../lib/supabase'
 
-import {
-  supabase
-} from '../../lib/supabase'
+const texto = valor =>
+  String(valor ?? '').trim()
 
-const limpio = valor =>
-  String(
-    valor ?? ''
-  ).trim()
+const mayus = valor =>
+  texto(valor).toUpperCase()
 
-const upper = valor =>
-  limpio(valor)
-    .toUpperCase()
+function archivoSeguro(valor) {
+  return mayus(valor)
+    .replace(/[^A-Z0-9_-]/g, '')
+}
 
 export default function ValidacionBrmPage() {
-  const router =
-    useRouter()
+  const router = useRouter()
 
-  const serieRef =
-    useRef(null)
+  const serieRef = useRef(null)
+  const fileRef = useRef(null)
 
-  const archivoRef =
-    useRef(null)
+  const [perfil, setPerfil] =
+    useState(null)
 
-  const [
-    cargando,
-    setCargando
-  ] = useState(false)
+  const [centro, setCentro] =
+    useState('')
 
-  const [
-    guardando,
-    setGuardando
-  ] = useState(false)
+  const [almacen, setAlmacen] =
+    useState('')
 
-  const [
-    subiendo,
-    setSubiendo
-  ] = useState(false)
+  const [tecnico, setTecnico] =
+    useState('')
 
-  const [
-    error,
-    setError
-  ] = useState('')
+  const [serie, setSerie] =
+    useState('')
 
-  const [
-    aviso,
-    setAviso
-  ] = useState('')
+  const [sku, setSku] =
+    useState('')
 
-  const [
-    usuarioActivo,
-    setUsuarioActivo
-  ] = useState('')
+  const [descripcion, setDescripcion] =
+    useState('')
 
-  const [
-    almacen,
-    setAlmacen
-  ] = useState('')
+  const [lote, setLote] =
+    useState('')
 
-  const [
-    distrito,
-    setDistrito
-  ] = useState('')
+  const [cuenta, setCuenta] =
+    useState('')
 
-  const [
-    centro,
-    setCentro
-  ] = useState('')
+  const [mac, setMac] =
+    useState('')
 
-  const [
-    tecnico,
-    setTecnico
-  ] = useState('')
+  const [ot, setOt] =
+    useState('')
 
-  const [
-    serie,
-    setSerie
-  ] = useState('')
+  const [os, setOs] =
+    useState('')
 
-  const [
-    sku,
-    setSku
-  ] = useState('')
+  const [evidencia, setEvidencia] =
+    useState(null)
 
-  const [
-    descripcion,
-    setDescripcion
-  ] = useState('')
+  const [preview, setPreview] =
+    useState('')
 
-  const [
-    lote,
-    setLote
-  ] = useState('')
+  const [buscando, setBuscando] =
+    useState(false)
 
-  const [
-    cuenta,
-    setCuenta
-  ] = useState('')
+  const [guardando, setGuardando] =
+    useState(false)
 
-  const [
-    mac,
-    setMac
-  ] = useState('')
+  const [error, setError] =
+    useState('')
 
-  const [
-    ot,
-    setOt
-  ] = useState('')
-
-  const [
-    os,
-    setOs
-  ] = useState('')
-
-  const [
-    evidencia,
-    setEvidencia
-  ] = useState(null)
-
-  const [
-    preview,
-    setPreview
-  ] = useState('')
+  const [aviso, setAviso] =
+    useState('')
 
   /*
-    =============================
-    USUARIO ACTIVO
-    =============================
+    ==============================
+    PERFIL ACTIVO
+    ==============================
   */
 
   useEffect(() => {
@@ -156,56 +103,65 @@ export default function ValidacionBrmPage() {
           throw perfilError
         }
 
+        if (
+          !data ||
+          data.activo !== true
+        ) {
+          throw new Error(
+            'No existe un perfil activo.'
+          )
+        }
+
+        const puesto =
+          mayus(data.puesto)
+
+        const esAdmin =
+          puesto === 'ADMIN_PADRE' ||
+          puesto.startsWith('ADMIN_')
+
+        if (
+          !esAdmin &&
+          data.validacion_brm !== true
+        ) {
+          throw new Error(
+            'No tienes permiso VALIDACION_BRM.'
+          )
+        }
+
         if (!vivo) {
           return
         }
 
-        /*
-          SOPORTA OBJETO O ARRAY
-        */
-        const perfil =
-          Array.isArray(data)
-            ? data[0]
-            : data
+        setPerfil(data)
 
-        if (!perfil) {
-          throw new Error(
-            'No fue posible obtener el perfil activo.'
+        setCentro(
+          mayus(
+            data.distrito
           )
-        }
-
-        const usuario =
-          perfil.nombre ||
-          perfil.usuario_almacen ||
-          perfil.usuario ||
-          ''
-
-        setUsuarioActivo(
-          usuario
         )
 
         /*
-          SI EL PERFIL TRAE ALMACÉN,
-          LO COLOCAMOS AUTOMÁTICAMENTE.
+          SI ES TECNICO:
+          SU ALMACEN SE CARGA
+          AUTOMATICAMENTE.
         */
-        const almacenPerfil =
-          perfil.usuario_almacen ||
-          perfil.almacen ||
-          ''
-
-        if (almacenPerfil) {
+        if (
+          puesto === 'TECNICO'
+        ) {
           setAlmacen(
-            upper(
-              almacenPerfil
+            texto(
+              data.usuario_almacen
             )
           )
         }
 
       } catch (e) {
-        setError(
-          e?.message ||
-          'No se pudo cargar el usuario.'
-        )
+        if (vivo) {
+          setError(
+            e?.message ||
+            'No fue posible cargar el perfil.'
+          )
+        }
       }
     })()
 
@@ -215,53 +171,36 @@ export default function ValidacionBrmPage() {
   }, [])
 
   /*
-    =============================
-    CONTEXTO POR DISTRITO
-    =============================
+    ==============================
+    CONTEXTO
+    ==============================
   */
 
   async function cargarContexto(
     almacenValor
   ) {
     const a =
-      upper(
-        almacenValor
-      )
+      texto(almacenValor)
 
     if (!a) {
-      setDistrito('')
-      setCentro('')
       setTecnico('')
-
       return null
     }
 
     const {
       data,
-      error:
-        contextoError
+      error: contextoError
     } =
       await supabase.rpc(
         'qiora_brm_contexto',
         {
-          p_almacen:
-            a
+          p_almacen: a
         }
       )
 
     if (contextoError) {
       throw contextoError
     }
-
-    setAlmacen(
-      data?.almacen ||
-      a
-    )
-
-    setDistrito(
-      data?.distrito ||
-      ''
-    )
 
     setCentro(
       data?.centro ||
@@ -277,13 +216,13 @@ export default function ValidacionBrmPage() {
   }
 
   /*
-    =============================
+    ==============================
     BUSCAR SERIE
-    =============================
+    ==============================
   */
 
-  async function consultarSerie() {
-    if (cargando) {
+  async function buscarSerie() {
+    if (buscando) {
       return
     }
 
@@ -291,20 +230,15 @@ export default function ValidacionBrmPage() {
     setAviso('')
 
     const a =
-      upper(
-        almacen
-      )
+      texto(almacen)
 
     const s =
-      upper(
-        serie
-      )
+      mayus(serie)
 
     if (!a) {
       setError(
         'Captura el almacén.'
       )
-
       return
     }
 
@@ -312,35 +246,26 @@ export default function ValidacionBrmPage() {
       setError(
         'Captura o escanea la serie.'
       )
-
       return
     }
 
-    setCargando(true)
+    setBuscando(true)
 
     try {
-      await cargarContexto(
-        a
-      )
-
       const {
         data,
-        error:
-          serieError
+        error: buscarError
       } =
         await supabase.rpc(
           'qiora_brm_buscar_serie',
           {
-            p_almacen:
-              a,
-
-            p_serie:
-              s
+            p_almacen: a,
+            p_serie: s
           }
         )
 
-      if (serieError) {
-        throw serieError
+      if (buscarError) {
+        throw buscarError
       }
 
       setSerie(
@@ -350,6 +275,7 @@ export default function ValidacionBrmPage() {
 
       setSku(
         data?.sku ||
+        data?.material ||
         ''
       )
 
@@ -363,8 +289,8 @@ export default function ValidacionBrmPage() {
         ''
       )
 
-      setDistrito(
-        data?.distrito ||
+      setTecnico(
+        data?.tecnico ||
         ''
       )
 
@@ -373,13 +299,8 @@ export default function ValidacionBrmPage() {
         ''
       )
 
-      setTecnico(
-        data?.tecnico ||
-        ''
-      )
-
       setAviso(
-        'Serie encontrada correctamente.'
+        `Serie encontrada correctamente en ${data?.centro || centro}.`
       )
 
     } catch (e) {
@@ -393,124 +314,113 @@ export default function ValidacionBrmPage() {
       )
 
     } finally {
-      setCargando(false)
+      setBuscando(false)
     }
   }
 
   /*
-    =============================
-    EVIDENCIA
-    =============================
+    ==============================
+    ARCHIVO
+    ==============================
   */
 
-  function seleccionarEvidencia(
+  function seleccionarArchivo(
     archivo
   ) {
-    setEvidencia(
-      archivo ||
-      null
-    )
-
     if (preview) {
       URL.revokeObjectURL(
         preview
       )
     }
 
-    if (archivo) {
-      setPreview(
-        URL.createObjectURL(
-          archivo
-        )
-      )
-    } else {
-      setPreview('')
-    }
-  }
+    setEvidencia(
+      archivo ||
+      null
+    )
 
-  async function subirEvidencia() {
-    if (!evidencia) {
-      return ''
-    }
-
-    setSubiendo(true)
-
-    try {
-      const extension =
-        evidencia.name
-          ?.split('.')
-          .pop()
-          ?.toLowerCase() ||
-        'jpg'
-
-      const nombreSeguro =
-        `${Date.now()}_${upper(serie)
-          .replace(
-            /[^A-Z0-9_-]/g,
-            ''
-          )}.${extension}`
-
-      /*
-        IMPORTANTE:
-        LA RUTA TAMBIÉN QUEDA
-        SEPARADA POR DISTRITO.
-      */
-      const ruta =
-        `${upper(distrito)}/${upper(almacen)}/${nombreSeguro}`
-
-      const {
-        error:
-          uploadError
-      } =
-        await supabase.storage
-          .from(
-            'brm-evidencias'
+    setPreview(
+      archivo
+        ? URL.createObjectURL(
+            archivo
           )
-          .upload(
-            ruta,
-            evidencia,
-            {
-              cacheControl:
-                '3600',
-
-              upsert:
-                false
-            }
-          )
-
-      if (uploadError) {
-        throw uploadError
-      }
-
-      const {
-        data
-      } =
-        supabase.storage
-          .from(
-            'brm-evidencias'
-          )
-          .getPublicUrl(
-            ruta
-          )
-
-      return (
-        data
-          ?.publicUrl ||
-        ''
-      )
-
-    } finally {
-      setSubiendo(false)
-    }
+        : ''
+    )
   }
 
   /*
-    =============================
-    LIMPIAR
-    =============================
+    ==============================
+    SUBIR EVIDENCIA
+    ==============================
   */
 
-  function limpiarFormulario() {
+  async function subirEvidencia() {
+    if (!evidencia) {
+      throw new Error(
+        'Selecciona la evidencia.'
+      )
+    }
+
+    if (!centro) {
+      throw new Error(
+        'No existe centro activo.'
+      )
+    }
+
+    const extension =
+      texto(
+        evidencia.name
+          ?.split('.')
+          .pop()
+      )
+        .toLowerCase() ||
+      'jpg'
+
+    const nombre =
+      `${Date.now()}_${archivoSeguro(
+        serie
+      )}.${extension}`
+
+    /*
+      ESTRUCTURA:
+      MG13/0009/archivo.jpg
+      MG18/xxxx/archivo.jpg
+    */
+    const ruta =
+      `${mayus(centro)}/${texto(
+        almacen
+      )}/${nombre}`
+
+    const {
+      error: uploadError
+    } =
+      await supabase.storage
+        .from(
+          'brm-evidencias'
+        )
+        .upload(
+          ruta,
+          evidencia,
+          {
+            upsert: false,
+            cacheControl:
+              '3600'
+          }
+        )
+
+    if (uploadError) {
+      throw uploadError
+    }
+
+    return ruta
+  }
+
+  /*
+    ==============================
+    LIMPIAR
+    ==============================
+  */
+
+  function limpiarCaptura() {
     setSerie('')
     setSku('')
     setDescripcion('')
@@ -519,10 +429,7 @@ export default function ValidacionBrmPage() {
     setMac('')
     setOt('')
     setOs('')
-
-    setEvidencia(
-      null
-    )
+    setEvidencia(null)
 
     if (preview) {
       URL.revokeObjectURL(
@@ -532,49 +439,50 @@ export default function ValidacionBrmPage() {
 
     setPreview('')
 
-    if (
-      archivoRef.current
-    ) {
-      archivoRef.current.value =
+    if (fileRef.current) {
+      fileRef.current.value =
         ''
     }
 
-    setError('')
-
     setTimeout(
-      () => {
+      () =>
         serieRef.current
-          ?.focus()
-      },
+          ?.focus(),
       100
     )
   }
 
   /*
-    =============================
+    ==============================
     GUARDAR
-    =============================
+    ==============================
   */
 
   async function guardar() {
-    if (
-      guardando ||
-      subiendo
-    ) {
+    if (guardando) {
       return
     }
 
     setError('')
     setAviso('')
 
+    let rutaEvidencia =
+      ''
+
     try {
-      if (!upper(almacen)) {
+      if (!perfil) {
+        throw new Error(
+          'No existe perfil activo.'
+        )
+      }
+
+      if (!texto(almacen)) {
         throw new Error(
           'Captura el almacén.'
         )
       }
 
-      if (!upper(serie)) {
+      if (!mayus(serie)) {
         throw new Error(
           'Captura la serie.'
         )
@@ -582,41 +490,29 @@ export default function ValidacionBrmPage() {
 
       if (!sku) {
         throw new Error(
-          'Primero consulta una serie válida.'
+          'Primero busca una serie válida.'
         )
       }
 
-      if (!upper(distrito)) {
-        throw new Error(
-          'No se pudo determinar el distrito.'
-        )
-      }
-
-      if (!upper(centro)) {
-        throw new Error(
-          'No se pudo determinar el centro del distrito.'
-        )
-      }
-
-      if (!limpio(cuenta)) {
+      if (!texto(cuenta)) {
         throw new Error(
           'Captura la cuenta.'
         )
       }
 
-      if (!limpio(mac)) {
+      if (!texto(mac)) {
         throw new Error(
           'Captura la MAC.'
         )
       }
 
-      if (!limpio(ot)) {
+      if (!texto(ot)) {
         throw new Error(
           'Captura la OT.'
         )
       }
 
-      if (!limpio(os)) {
+      if (!texto(os)) {
         throw new Error(
           'Captura la OS.'
         )
@@ -624,54 +520,49 @@ export default function ValidacionBrmPage() {
 
       if (!evidencia) {
         throw new Error(
-          'Agrega la evidencia.'
+          'Selecciona una evidencia.'
         )
       }
 
       setGuardando(true)
 
       /*
-        VOLVEMOS A VALIDAR CONTEXTO
-        ANTES DE GUARDAR.
+        REVALIDAR CENTRO
       */
       await cargarContexto(
         almacen
       )
 
-      const evidenciaUrl =
+      rutaEvidencia =
         await subirEvidencia()
 
       const {
         data,
-        error:
-          guardarError
+        error: guardarError
       } =
         await supabase.rpc(
           'qiora_brm_guardar',
           {
             p_almacen:
-              upper(almacen),
+              texto(almacen),
 
             p_serie:
-              upper(serie),
+              mayus(serie),
 
             p_cuenta:
-              upper(cuenta),
+              mayus(cuenta),
 
             p_mac:
-              upper(mac),
+              mayus(mac),
 
             p_ot:
-              upper(ot),
+              mayus(ot),
 
             p_os:
-              upper(os),
+              mayus(os),
 
-            p_evidencia_url:
-              evidenciaUrl,
-
-            p_validado_por:
-              usuarioActivo
+            p_evidencia_path:
+              rutaEvidencia
           }
         )
 
@@ -679,33 +570,45 @@ export default function ValidacionBrmPage() {
         throw guardarError
       }
 
-      setAviso(
-        `BRM guardado correctamente. Distrito: ${data?.distrito || distrito} · Centro: ${data?.centro || centro}`
-      )
+      limpiarCaptura()
 
-      /*
-        LIMPIAMOS SOLO LA CAPTURA.
-        ALMACÉN / DISTRITO / CENTRO
-        SE CONSERVAN PARA SIGUIENTE
-        EQUIPO.
-      */
-      limpiarFormulario()
+      setAviso(
+        `Validación BRM guardada correctamente. Folio: ${data?.folio || ''} · Centro: ${data?.centro || centro}`
+      )
 
     } catch (e) {
-      console.error(
-        'ERROR BRM:',
-        e
-      )
+      /*
+        SI SUBIO LA FOTO,
+        PERO NO GUARDO BRM,
+        ELIMINAR ARCHIVO.
+      */
+      if (rutaEvidencia) {
+        try {
+          await supabase.storage
+            .from(
+              'brm-evidencias'
+            )
+            .remove([
+              rutaEvidencia
+            ])
+        } catch {}
+      }
 
       setError(
         e?.message ||
-        'No fue posible guardar la validación BRM.'
+        'No fue posible guardar la validación.'
       )
 
     } finally {
       setGuardando(false)
     }
   }
+
+  const tecnicoActivo =
+    mayus(
+      perfil?.puesto
+    ) ===
+    'TECNICO'
 
   return (
     <main style={css.base}>
@@ -715,21 +618,29 @@ export default function ValidacionBrmPage() {
         <button
           type="button"
           style={css.regresar}
+
           onClick={() =>
-            router.back()
+            router.push('/')
           }
         >
-          ← Regresar a Técnicos
+          ← Regresar
         </button>
 
         <header style={css.hero}>
+
           <h1 style={css.titulo}>
             Validación BRM
           </h1>
 
           <p style={css.subtitulo}>
-            Validación por Distrito
+            Validación por centro
+            {
+              centro
+                ? ` · ${centro}`
+                : ''
+            }
           </p>
+
         </header>
 
         {error && (
@@ -751,28 +662,38 @@ export default function ValidacionBrmPage() {
             <label style={css.label}>
               Serie
 
-              <div style={css.filaSerie}>
+              <div style={css.serieFila}>
 
                 <input
                   ref={serieRef}
+
                   style={css.input}
-                  placeholder="Escanear serie"
+
+                  placeholder="Escanee o escriba la serie"
+
                   value={serie}
+
                   onChange={
-                    e =>
+                    e => {
                       setSerie(
-                        upper(
+                        mayus(
                           e.target.value
                         )
                       )
+
+                      setSku('')
+                      setDescripcion('')
+                      setLote('')
+                    }
                   }
+
                   onKeyDown={
                     e => {
                       if (
                         e.key ===
                         'Enter'
                       ) {
-                        consultarSerie()
+                        buscarSerie()
                       }
                     }
                   }
@@ -780,50 +701,68 @@ export default function ValidacionBrmPage() {
 
                 <button
                   type="button"
-                  style={css.buscar}
-                  disabled={cargando}
+
+                  style={css.buscarIcono}
+
+                  disabled={
+                    buscando
+                  }
+
                   onClick={
-                    consultarSerie
+                    buscarSerie
                   }
                 >
-                  {
-                    cargando
-                      ? '...'
-                      : '🔍'
-                  }
+                  🔍
                 </button>
 
               </div>
+
             </label>
 
             <label style={css.label}>
               Almacén
 
               <input
-                style={css.input}
-                placeholder="1906"
+                style={{
+                  ...css.input,
+
+                  ...(tecnicoActivo
+                    ? css.readonly
+                    : {})
+                }}
+
                 value={almacen}
+
+                readOnly={
+                  tecnicoActivo
+                }
+
+                placeholder="0000"
+
                 onChange={
                   e => {
+                    if (
+                      tecnicoActivo
+                    ) {
+                      return
+                    }
+
                     setAlmacen(
-                      upper(
+                      texto(
                         e.target.value
                       )
                     )
 
-                    setDistrito('')
-                    setCentro('')
                     setTecnico('')
                     setSku('')
                     setDescripcion('')
                     setLote('')
                   }
                 }
+
                 onBlur={() => {
                   if (
-                    upper(
-                      almacen
-                    )
+                    texto(almacen)
                   ) {
                     cargarContexto(
                       almacen
@@ -836,68 +775,73 @@ export default function ValidacionBrmPage() {
                   }
                 }}
               />
+
             </label>
 
             <label style={css.label}>
               Distrito
 
               <input
-                style={css.bloqueado}
-                value={distrito}
+                style={css.readonlyInput}
+                value={centro}
                 readOnly
-                placeholder="Automático"
               />
+
             </label>
 
             <label style={css.label}>
               Centro
 
               <input
-                style={css.bloqueado}
+                style={css.readonlyInput}
                 value={centro}
                 readOnly
-                placeholder="Automático por distrito"
               />
+
             </label>
 
             <label style={css.label}>
               Técnico
 
               <input
-                style={css.bloqueado}
+                style={css.readonlyInput}
                 value={tecnico}
                 readOnly
               />
+
             </label>
 
             <label style={css.label}>
               SKU
 
               <input
-                style={css.bloqueado}
+                style={css.readonlyInput}
                 value={sku}
                 readOnly
               />
+
             </label>
 
             <label style={css.label}>
               Descripción
 
               <input
-                style={css.bloqueado}
+                style={css.readonlyInput}
                 value={descripcion}
                 readOnly
               />
+
             </label>
 
             <label style={css.label}>
               Lote
 
               <input
-                style={css.bloqueado}
+                style={css.readonlyInput}
                 value={lote}
                 readOnly
               />
+
             </label>
 
             <label style={css.label}>
@@ -905,16 +849,21 @@ export default function ValidacionBrmPage() {
 
               <input
                 style={css.input}
+
+                placeholder="Capturar cuenta"
+
                 value={cuenta}
+
                 onChange={
                   e =>
                     setCuenta(
-                      upper(
+                      mayus(
                         e.target.value
                       )
                     )
                 }
               />
+
             </label>
 
             <label style={css.label}>
@@ -922,16 +871,21 @@ export default function ValidacionBrmPage() {
 
               <input
                 style={css.input}
+
+                placeholder="Capturar MAC"
+
                 value={mac}
+
                 onChange={
                   e =>
                     setMac(
-                      upper(
+                      mayus(
                         e.target.value
                       )
                     )
                 }
               />
+
             </label>
 
             <label style={css.label}>
@@ -939,16 +893,21 @@ export default function ValidacionBrmPage() {
 
               <input
                 style={css.input}
+
+                placeholder="Capturar OT"
+
                 value={ot}
+
                 onChange={
                   e =>
                     setOt(
-                      upper(
+                      mayus(
                         e.target.value
                       )
                     )
                 }
               />
+
             </label>
 
             <label style={css.label}>
@@ -956,69 +915,77 @@ export default function ValidacionBrmPage() {
 
               <input
                 style={css.input}
+
+                placeholder="Capturar OS"
+
                 value={os}
+
                 onChange={
                   e =>
                     setOs(
-                      upper(
+                      mayus(
                         e.target.value
                       )
                     )
                 }
               />
+
             </label>
 
           </div>
 
-          <div style={css.evidenciaBox}>
+          <label style={css.label}>
+            Evidencia
 
-            <label style={css.label}>
-              Evidencia
+            <input
+              ref={fileRef}
 
-              <input
-                ref={archivoRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                style={css.archivo}
-                onChange={
-                  e =>
-                    seleccionarEvidencia(
-                      e.target
-                        .files?.[0]
-                    )
-                }
-              />
+              type="file"
 
-            </label>
+              accept="image/*"
 
-            {preview && (
+              capture="environment"
 
-              <img
-                src={preview}
-                alt="Evidencia BRM"
-                style={css.preview}
-              />
+              style={css.file}
 
-            )}
+              onChange={
+                e =>
+                  seleccionarArchivo(
+                    e.target
+                      .files?.[0]
+                  )
+              }
+            />
 
-          </div>
+          </label>
+
+          {preview && (
+
+            <img
+              src={preview}
+
+              alt="Evidencia BRM"
+
+              style={css.preview}
+            />
+
+          )}
 
           <button
             type="button"
+
             style={css.guardar}
+
             disabled={
-              guardando ||
-              subiendo
+              guardando
             }
+
             onClick={guardar}
           >
             {
               guardando
                 ? 'Guardando...'
-                : subiendo
-                  ? 'Subiendo evidencia...'
-                  : 'GUARDAR'
+                : 'GUARDAR'
             }
           </button>
 
@@ -1033,60 +1000,70 @@ export default function ValidacionBrmPage() {
 const css = {
   base: {
     minHeight: '100vh',
-    padding: 16,
     background:
-      'linear-gradient(180deg,#087b95,#07485b)',
+      'linear-gradient(180deg,#062d23,#031d17)',
+    color: '#fff',
+    padding: 16,
     fontFamily:
       'Arial, Helvetica, sans-serif',
-    color: '#fff'
   },
 
   marco: {
-    maxWidth: 1000,
-    margin: '0 auto'
+    maxWidth: 1200,
+    margin: '0 auto',
+    border: '1px solid #376b5c',
+    borderRadius: 16,
+    padding: 20,
+    background: '#04251d',
   },
 
   regresar: {
-    background: '#0e6075',
-    border: '1px solid #77b7c5',
+    border: 0,
+    borderRadius: 30,
+    padding: '10px 16px',
+    background: '#118366',
     color: '#fff',
-    padding: '10px 18px',
-    borderRadius: 24,
     fontWeight: 700,
     cursor: 'pointer',
-    marginBottom: 12
+    marginBottom: 15,
   },
 
   hero: {
+    background:
+      'linear-gradient(120deg,#10533f,#18a67b)',
+    border:
+      '1px solid #48a58a',
+    borderRadius: 14,
+    padding: 25,
     textAlign: 'center',
-    marginBottom: 18
+    marginBottom: 18,
   },
 
   titulo: {
     margin: 0,
-    fontSize: 32
+    fontSize: 32,
   },
 
   subtitulo: {
-    margin:
-      '5px 0 0',
-    opacity: .9
+    margin: '7px 0 0',
+    color: '#e4fff6',
   },
 
   panel: {
-    background: '#f5f7f8',
-    color: '#23343a',
-    borderRadius: 12,
+    background: '#0b3028',
+    color: '#fff',
+    border: '1px solid #406f62',
+    borderRadius: 14,
     padding: 18,
-    boxShadow:
-      '0 8px 25px rgba(0,0,0,.18)'
+    marginBottom: 18,
   },
 
   grid: {
     display: 'grid',
     gridTemplateColumns:
-      'repeat(auto-fit,minmax(260px,1fr))',
-    gap: 16
+      'repeat(auto-fit,minmax(250px,1fr))',
+    gap: 15,
+    marginBottom: 18,
   },
 
   label: {
@@ -1094,97 +1071,94 @@ const css = {
     flexDirection: 'column',
     gap: 6,
     fontSize: 13,
-    fontWeight: 700
+    fontWeight: 700,
+  },
+
+  serieFila: {
+    display: 'flex',
+    gap: 8,
   },
 
   input: {
     width: '100%',
     boxSizing: 'border-box',
     padding: 11,
-    borderRadius: 7,
-    border: '1px solid #b8c3c8',
+    borderRadius: 8,
+    border: '1px solid #c9d7d2',
     background: '#fff',
-    color: '#1d3238',
-    textTransform: 'uppercase'
+    color: '#19342a',
   },
 
-  bloqueado: {
+  readonly: {
+    background: '#e3e9e7',
+    cursor: 'not-allowed',
+  },
+
+  readonlyInput: {
     width: '100%',
     boxSizing: 'border-box',
     padding: 11,
-    borderRadius: 7,
-    border: '1px solid #cad4d7',
-    background: '#e4e8ea',
-    color: '#44565b',
-    fontWeight: 700
+    borderRadius: 8,
+    border: '1px solid #b9c9c4',
+    background: '#e4e9e8',
+    color: '#263f36',
+    fontWeight: 700,
   },
 
-  filaSerie: {
-    display: 'flex',
-    gap: 5
-  },
-
-  buscar: {
-    minWidth: 45,
+  buscarIcono: {
+    minWidth: 46,
     border: 0,
-    borderRadius: 7,
-    background: '#0787a1',
+    borderRadius: 8,
+    background: '#159b76',
     color: '#fff',
+    fontWeight: 700,
     cursor: 'pointer',
-    fontSize: 18
   },
 
-  evidenciaBox: {
-    marginTop: 18
-  },
-
-  archivo: {
-    background: '#fff',
-    color: '#263a40',
+  file: {
     padding: 10,
-    border:
-      '1px solid #bdc9cd',
-    borderRadius: 7
+    background: '#fff',
+    color: '#263f36',
+    borderRadius: 8,
+    width: '100%',
+    boxSizing: 'border-box',
   },
 
   preview: {
-    marginTop: 12,
+    display: 'block',
     width: '100%',
-    maxHeight: 340,
+    maxHeight: 350,
     objectFit: 'contain',
-    background: '#ddd',
-    borderRadius: 8
+    borderRadius: 10,
+    marginTop: 15,
+    background: '#d9dfdd',
   },
 
   guardar: {
-    display: 'block',
     width: '100%',
-    marginTop: 22,
     border: 0,
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 14,
-    background: '#078aa4',
+    marginTop: 18,
+    background: '#16a34a',
     color: '#fff',
     fontWeight: 800,
-    fontSize: 16,
-    cursor: 'pointer'
+    cursor: 'pointer',
   },
 
   error: {
-    marginBottom: 12,
-    background: '#ffe1e1',
-    color: '#8d2525',
+    background: '#ffe0e0',
+    color: '#8e2525',
     padding: 12,
     borderRadius: 8,
-    fontWeight: 700
+    marginBottom: 15,
   },
 
   exito: {
-    marginBottom: 12,
-    background: '#dffbea',
-    color: '#13643c',
+    background: '#dff9e9',
+    color: '#17623e',
     padding: 12,
     borderRadius: 8,
-    fontWeight: 700
-  }
+    marginBottom: 15,
+  },
 }
