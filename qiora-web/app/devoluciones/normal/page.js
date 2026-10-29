@@ -1,4 +1,4 @@
-import DevolucionEquipos from '../_components/DevolucionEquipos'
+import DevolucionEquipos from '../components/DevolucionEquipos'
 
 export default function DevolucionNormalPage() {
   return <DevolucionEquipos tipo="NORMAL" />
