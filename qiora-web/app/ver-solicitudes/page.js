@@ -73,6 +73,7 @@ export default function VerSolicitudes() {
             Consulta solicitudes por almacén, folio, estatus y rango de fechas.
           </p>
         </header>
+
         <div className="acciones-principales">
           <button
             type="button"
@@ -81,6 +82,7 @@ export default function VerSolicitudes() {
             Entrega de material
           </button>
         </div>
+
         {error && (
           <div className="warn" role="alert">
             {error}
@@ -397,6 +399,18 @@ const css = `
     margin-bottom: 10px;
   }
 
+  .acciones-principales {
+    display: flex;
+    justify-content: flex-end;
+    margin: 12px 0;
+  }
+
+  .acciones-principales button {
+    min-width: 190px;
+    padding: 12px 18px;
+    background: #19a77c;
+  }
+
   .actions {
     display: flex;
     flex-wrap: wrap;
@@ -460,14 +474,4 @@ const css = `
       padding: 10px;
     }
   }
-  .acciones-principales {
-    display: flex;
-    justify-content: flex-end;
-    margin: 12px 0;
-  }
-
-  .acciones-principales button {
-    min-width: 190px;
-    padding: 12px 18px;
-    background: #19a77c;
-  }
+`
