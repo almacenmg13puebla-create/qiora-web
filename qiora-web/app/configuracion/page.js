@@ -108,6 +108,7 @@ const nuevo = () => ({
 })
 
 const nuevoUsuarioVacio = () => ({
+  distrito: '',
   usuario_almacen: '',
   clave: '',
   nombre: '',
@@ -846,21 +847,69 @@ export default function ConfiguracionPage() {
     try {
       const centro = String(distritoForm.centro || '').trim().toUpperCase()
       const nombreRegion = String(distritoForm.nombre_region || '').trim()
-      if (!centro) throw new Error('Captura el código del centro, por ejemplo MG13.')
+      const tokenExcel = String(distritoForm.token_excel || '').trim()
+      const tokenTraspasos = String(distritoForm.token_traspasos || '').trim()
+      const chatTraspasos = String(distritoForm.chat_traspasos || '').trim()
+
+      if (!centro) throw new Error('Captura el código del centro, por ejemplo MG22.')
       if (!nombreRegion) throw new Error('Captura el nombre o región del distrito.')
 
-      const { data, error: e } = await supabase.rpc('qiora_distritos_guardar', {
-        p_centro: centro,
-        p_nombre_region: nombreRegion,
-        p_token_excel: String(distritoForm.token_excel || '').trim() || null,
-        p_activo: Boolean(distritoForm.activo),
-        p_centro_original: distritoEditando || null,
-      })
+      if (!distritoEditando) {
+        if (!distritoForm.activo) {
+          throw new Error('El distrito debe crearse activo. Puedes desactivarlo después.')
+        }
 
-      if (e) throw e
-      if (data !== true) throw new Error('Supabase no confirmó el guardado.')
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.access_token) throw new Error('Sesión caducada. Inicia sesión nuevamente.')
 
-      setAviso(`Distrito ${centro} guardado correctamente.`)
+        const response = await fetch('/api/distritos/crear', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            centro,
+            nombre_region: nombreRegion,
+            activo: true,
+            token_excel: tokenExcel || null,
+          }),
+        })
+        const resultado = await response.json().catch(() => ({}))
+        if (!response.ok || !resultado.ok) {
+          throw new Error(resultado.error || 'No se pudo crear el distrito.')
+        }
+
+        // El endpoint crea el distrito y su ADMIN_CENTRO con clave temporal.
+        setAviso(
+          `Distrito ${centro} y usuario ${resultado.usuario} creados. ` +
+          `Clave temporal: ${resultado.clave_temporal}. Guarda esta clave ahora.`
+        )
+
+        try {
+          await guardarTelegramDistrito(centro, tokenTraspasos, chatTraspasos)
+        } catch (telegramError) {
+          throw new Error(
+            `El distrito y su administrador ya se crearon. ` +
+            `Usuario: ${resultado.usuario}. Clave temporal: ${resultado.clave_temporal}. ` +
+            `No se guardó la configuración de traspasos: ${telegramError.message}`
+          )
+        }
+      } else {
+        const { data, error: e } = await supabase.rpc('qiora_distritos_guardar', {
+          p_centro: centro,
+          p_nombre_region: nombreRegion,
+          p_token_excel: tokenExcel || null,
+          p_activo: Boolean(distritoForm.activo),
+          p_centro_original: distritoEditando,
+        })
+        if (e) throw e
+        if (data !== true) throw new Error('Supabase no confirmó el guardado.')
+
+        await guardarTelegramDistrito(centro, tokenTraspasos, chatTraspasos)
+        setAviso(`Distrito ${centro} actualizado correctamente.`)
+      }
+
       setDistritoEditando('')
       setDistritoForm({
         centro: '',
@@ -873,6 +922,41 @@ export default function ConfiguracionPage() {
       await cargarDistritos()
     } catch (e) {
       setError(e?.message || 'No se pudo guardar el distrito.')
+    } finally {
+      setGuardandoDistrito(false)
+    }
+  }
+
+  async function crearAdminDistrito(centro) {
+    if (!window.confirm(`¿Crear el administrador ADMIN_${centro}?`)) return
+    setError('')
+    setAviso('')
+    setGuardandoDistrito(true)
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) throw new Error('Sesión caducada. Inicia sesión nuevamente.')
+
+      const response = await fetch('/api/distritos/crear-administrador', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ centro }),
+      })
+      const resultado = await response.json().catch(() => ({}))
+      if (!response.ok || !resultado.ok) {
+        throw new Error(resultado.error || 'No se pudo crear el administrador.')
+      }
+
+      setAviso(
+        `Administrador creado: ${resultado.usuario}. Centro: ${resultado.centro}. ` +
+        `Clave temporal: ${resultado.clave_temporal}. Guarda esta clave ahora.`
+      )
+      await cargarDistritos()
+    } catch (e) {
+      setError(e?.message || 'No se pudo crear el administrador del distrito.')
     } finally {
       setGuardandoDistrito(false)
     }
@@ -1059,35 +1143,18 @@ export default function ConfiguracionPage() {
     }
   }
 
-  function editarDistrito(
-    d
-  ) {
-    setDistritoEditando(
-      d.centro
-    )
-
+  function editarDistrito(d) {
+    setDistritoEditando(d.centro)
     setDistritoForm({
-      centro:
-        d.centro,
-
-      nombre_region:
-        d.nombre_region,
-
-      token_excel:
-        '',
-
-      token_traspasos:
-        '',
-
-      chat_traspasos:
-        configTelegram[
-          d.centro
-        ]?.chat_traspasos ||
-        '',
-
-      activo:
-        d.activo
+      centro: d.centro,
+      nombre_region: d.nombre_region || '',
+      token_excel: '',
+      token_traspasos: '',
+      chat_traspasos: configTelegram[d.centro]?.chat_traspasos || '',
+      activo: d.activo === true,
     })
+    setError('')
+    setAviso('')
   }
 
   /*
@@ -1158,6 +1225,10 @@ export default function ConfiguracionPage() {
     setAviso('')
 
     try {
+      if (esPadre && !String(nuevoUsuario.distrito || '').trim()) {
+        throw new Error('Selecciona el distrito donde se creará el usuario.')
+      }
+
       if (
         !textoNumero(
           nuevoUsuario
@@ -1512,6 +1583,11 @@ export default function ConfiguracionPage() {
       'usuarios'
     ) {
       cargarUsuarios()
+      supabase.rpc('qiora_distritos_es_padre').then(({ data, error: e }) => {
+        const padre = !e && data === true
+        setEsPadre(padre)
+        if (padre) cargarDistritos()
+      })
 
     } else if (
       tipo ===
@@ -2131,6 +2207,33 @@ export default function ConfiguracionPage() {
                   </label>
 
                   <label>
+                    TOKEN_TRASPASOS (opcional)
+                    <input
+                      style={css.input}
+                      type="password"
+                      value={distritoForm.token_traspasos}
+                      placeholder="Dejar vacío para conservar el actual"
+                      onChange={e => setDistritoForm(f => ({
+                        ...f,
+                        token_traspasos: e.target.value
+                      }))}
+                    />
+                  </label>
+
+                  <label>
+                    CHAT_TRASPASOS (opcional)
+                    <input
+                      style={css.input}
+                      value={distritoForm.chat_traspasos}
+                      placeholder="ID del chat"
+                      onChange={e => setDistritoForm(f => ({
+                        ...f,
+                        chat_traspasos: e.target.value
+                      }))}
+                    />
+                  </label>
+
+                  <label>
                     Estado
                     <select
                       style={css.input}
@@ -2197,6 +2300,16 @@ export default function ConfiguracionPage() {
                             >
                               Editar
                             </button>
+                            {!d.tiene_admin && d.activo && (
+                              <button
+                                type="button"
+                                style={css.boton}
+                                disabled={guardandoDistrito}
+                                onClick={() => crearAdminDistrito(d.centro)}
+                              >
+                                Crear ADMIN_{d.centro}
+                              </button>
+                            )}
                           </td>
                         </tr>
                       )) : (
@@ -2248,6 +2361,25 @@ export default function ConfiguracionPage() {
 
                 <div style={css.grid}>
 
+                  {esPadre && (
+                    <label>
+                      Distrito del usuario
+                      <select
+                        style={css.input}
+                        value={nuevoUsuario.distrito || ''}
+                        onChange={e => cambiarNuevo('distrito', e.target.value)}
+                        required
+                      >
+                        <option value="">Selecciona un distrito</option>
+                        {distritos.filter(d => d.activo).map(d => (
+                          <option key={d.centro} value={d.centro}>
+                            {d.centro} — {d.nombre_region}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+
                   {[
                     ['usuario_almacen', 'Usuario / Almacén'],
                     ['clave', 'Clave'],
@@ -2298,11 +2430,29 @@ export default function ConfiguracionPage() {
 
                 </div>
 
+                <h3>Permisos de módulos</h3>
+                <div style={css.permisos}>
+                  {permisosDisponibles.map(p => (
+                    <label key={p.campo}>
+                      <input
+                        type="checkbox"
+                        checked={nuevoUsuario.permisos?.[p.campo] === true}
+                        onChange={e => setNuevoUsuario(u => ({
+                          ...u,
+                          permisos: {
+                            ...(u.permisos || {}),
+                            [p.campo]: e.target.checked,
+                          },
+                        }))}
+                      />
+                      {' '}{p.nombre}
+                    </label>
+                  ))}
+                </div>
+
                 <button
                   style={css.boton}
-                  onClick={
-                    crearCuentaUsuario
-                  }
+                  onClick={crearCuentaUsuario}
                 >
                   Guardar usuario
                 </button>
