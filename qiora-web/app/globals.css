@@ -1,15 +1,5 @@
-
-import './globals.css'
-
-export const metadata = {
-  title: 'Sistema de Traspasos',
-  description: 'Sistema de gestión de inventarios y traspasos'
-}
-
-export default function RootLayout({ children }) {
-  return (
-    <html lang="es">
-      <body>{children}</body>
-    </html>
-  )
-}
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#071f19;color:#eef7f3}
+button,input{font:inherit}
+a{color:inherit;text-decoration:none}
