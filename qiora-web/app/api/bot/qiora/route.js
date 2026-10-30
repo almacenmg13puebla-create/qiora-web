@@ -64,6 +64,45 @@ function fechaLocalMX() {
   return { mmdd: `${get('month')}-${get('day')}`, dia: `${get('year')}-${get('month')}-${get('day')}` }
 }
 
+async function consultarMiPerfil(admin, payload) {
+  const chatId = clean(payload.telegram_chat_id)
+  if (!/^\d{5,20}$/.test(chatId)) throw new Error('No se recibió una cuenta de Telegram válida.')
+  const { data: perfil, error } = await admin.from('almacen_usuarios')
+    .select('usuario_almacen,nombre,telefono,puesto,distrito,odoo,ffm,usuario_ffm,coordinador,supervisor,correo,activo,telegram_chat_id,ultima_conexion,fecha_nacimiento,ausente,fecha_regreso')
+    .eq('telegram_chat_id', chatId).eq('activo', true).limit(1).maybeSingle()
+  if (error) throw new Error(`No se pudo consultar tu perfil: ${error.message}`)
+  if (!perfil) throw new Error('Tu Telegram no está vinculado a un usuario activo. Envía REGISTRAR DISTRITO USUARIO para vincularlo.')
+
+  const ahora = new Date().toISOString()
+  const { error: updateError } = await admin.from('almacen_usuarios')
+    .update({ ultima_conexion: ahora, actualizado_en: ahora })
+    .eq('telegram_chat_id', chatId).eq('activo', true)
+  if (updateError) throw new Error(`No se pudo actualizar la última conexión: ${updateError.message}`)
+
+  return perfil
+}
+
+function textoMiPerfil(perfil) {
+  const dato = (v) => clean(v) || 'NO REGISTRADO'
+  return [
+    '👤 MI PERFIL QIORA',
+    '',
+    `🏢 Almacén/Usuario: ${dato(perfil.usuario_almacen)}`,
+    `👷 Nombre: ${dato(perfil.nombre)}`,
+    `💼 Puesto: ${dato(perfil.puesto)}`,
+    `🏬 Distrito: ${dato(perfil.distrito)}`,
+    `📱 Teléfono: ${dato(perfil.telefono)}`,
+    `🆔 Odoo: ${dato(perfil.odoo)}`,
+    `🪪 Usuario FFM: ${dato(perfil.usuario_ffm || perfil.ffm)}`,
+    `👥 Coordinador: ${dato(perfil.coordinador)}`,
+    `👤 Supervisor: ${dato(perfil.supervisor)}`,
+    `✉️ Correo: ${dato(perfil.correo)}`,
+    `🎂 Fecha de nacimiento: ${dato(perfil.fecha_nacimiento)}`,
+    `📌 Estado: ${perfil.activo ? 'ACTIVO' : 'INACTIVO'}`,
+    `📅 Última conexión: ${dato(perfil.ultima_conexion)}`
+  ].join('\n')
+}
+
 async function registrarTelegram(admin, payload) {
   const distrito = upper(payload.distrito)
   const usuario = upper(payload.usuario_almacen)
@@ -97,67 +136,17 @@ async function registrarTelegram(admin, payload) {
 
   if (clean(perfil.telegram_chat_id) !== chatId) {
     const ahora = new Date().toISOString()
-    const { data: actualizado, error: updateError } = await admin.from('almacen_usuarios').update({
-      telegram_chat_id: chatId,
-      bot_confirmado: true,
-      fecha_confirmacion_bot: ahora,
-      ultima_conexion: ahora,
-      actualizado_en: ahora
-    }).eq('id', perfil.id).eq('activo', true)
-      .or('telegram_chat_id.is.null,telegram_chat_id.eq.')
-      .select('id,telegram_chat_id').maybeSingle()
+    const { error: updateError } = await admin.from('almacen_usuarios').update({
+      telegram_chat_id: chatId, bot_confirmado: true,
+      fecha_confirmacion_bot: ahora, actualizado_en: ahora
+    }).eq('id', perfil.id).eq('activo', true).or('telegram_chat_id.is.null,telegram_chat_id.eq.')
     if (updateError) throw new Error(updateError.message)
-    if (!actualizado || clean(actualizado.telegram_chat_id) !== chatId) {
-      throw new Error('No se pudo confirmar la vinculación. El usuario pudo ser vinculado desde otra sesión; solicita apoyo al administrador.')
-    }
-  } else {
-    const ahora = new Date().toISOString()
-    const { error: touchError } = await admin.from('almacen_usuarios').update({
-      ultima_conexion: ahora, actualizado_en: ahora, bot_confirmado: true
-    }).eq('id', perfil.id).eq('activo', true)
-    if (touchError) throw new Error(`No se pudo actualizar la conexión: ${touchError.message}`)
   }
   return {
     ok: true, registrado: true, usuario: perfil.usuario_almacen, distrito: perfil.distrito,
     puesto: perfil.puesto || '', nombre: perfil.nombre || '', faltantes: [],
     mensaje: `Registro completado.\nUsuario: ${usuario}\nDistrito: ${distrito}\nPuesto: ${perfil.puesto || 'No indicado'}`
   }
-}
-
-async function consultarMiPerfilTelegram(admin, payload, modo = 'PERFIL') {
-  const chatId = clean(payload.telegram_chat_id)
-  if (!/^\d{5,20}$/.test(chatId)) throw new Error('No se recibió un identificador de Telegram válido.')
-
-  const columnas = [
-    'id','usuario_almacen','nombre','telefono','puesto','distrito','odoo',
-    'supervisor','coordinador','correo','ffm','usuario_ffm','numero_empleado',
-    'numero_empleado_odoo','fecha_nacimiento','fecha_alta','fecha_baja',
-    'activo','bot_confirmado','ultima_conexion','notificaciones_activas',
-    'acceso_tecnico','acceso_almacen','acceso_traspasos','acceso_coordinador',
-    'auditorias_multialmacen','recolecciones','ver_recolecciones','equipos',
-    'ver_solicitudes','traspasos','capturar_traspaso','ver_traspasos',
-    'solicitud_material','materiales','stock_tecnicos','administrar_distritos',
-    'administrar_permisos','devoluciones','configuracion','usuarios','dashboard',
-    'auditoria','ver_auditorias','programar_auditorias','avisos','bajas','asignaciones'
-  ].join(',')
-  const { data: p, error } = await admin.from('almacen_usuarios')
-    .select(columnas).eq('telegram_chat_id', chatId).eq('activo', true)
-    .limit(1).maybeSingle()
-  if (error) throw new Error(`Consultar perfil de Telegram: ${error.message}`)
-  if (!p) throw new Error('Tu Telegram no está vinculado a un usuario activo de SAT. Envía REGISTRAR DISTRITO USUARIO.')
-
-  const ahora = new Date().toISOString()
-  const { error: touchError } = await admin.from('almacen_usuarios')
-    .update({ ultima_conexion: ahora, actualizado_en: ahora })
-    .eq('id', p.id).eq('activo', true)
-  if (touchError) throw new Error(`No se pudo actualizar última conexión: ${touchError.message}`)
-
-  const valor = (v) => clean(v) || 'NO REGISTRADO'
-  const mensaje = modo === 'ALMACEN'
-    ? `MI ALMACÉN\n\nAlmacén: ${valor(p.usuario_almacen)}\nTécnico: ${valor(p.nombre)}\nPuesto: ${valor(p.puesto)}\nDistrito: ${valor(p.distrito)}\nCoordinador: ${valor(p.coordinador)}\nSupervisor: ${valor(p.supervisor)}`
-    : `MI PERFIL\n\nUsuario/Almacén: ${valor(p.usuario_almacen)}\nNombre: ${valor(p.nombre)}\nPuesto: ${valor(p.puesto)}\nDistrito: ${valor(p.distrito)}\nTeléfono: ${valor(p.telefono)}\nCorreo: ${valor(p.correo)}\nUsuario FFM: ${valor(p.usuario_ffm || p.ffm)}\nCoordinador: ${valor(p.coordinador)}\nSupervisor: ${valor(p.supervisor)}\nTelegram: VINCULADO\nEstado: ACTIVO`
-
-  return { ok: true, usuario: p.usuario_almacen, distrito: p.distrito, puesto: p.puesto, perfil: p, mensaje }
 }
 
 function estadoComando(estado) {
@@ -305,8 +294,10 @@ async function trasladosActivosMarcar(admin, payload) {
 async function accionMigrada(admin, payload) {
   const accion = clean(payload.accion || payload.action).toLowerCase()
   if (accion === 'telegram_registrar') return registrarTelegram(admin, payload)
-  if (accion === 'telegram_mi_perfil') return consultarMiPerfilTelegram(admin, payload, 'PERFIL')
-  if (accion === 'telegram_mi_almacen') return consultarMiPerfilTelegram(admin, payload, 'ALMACEN')
+  if (accion === 'telegram_mi_perfil' || accion === 'telegram_mi_almacen') {
+    const perfil = await consultarMiPerfil(admin, payload)
+    return { ok: true, perfil, mensaje: textoMiPerfil(perfil) }
+  }
 
   if (accion === 'telegram_config_permiso' || accion === 'telegram_sap_permiso') {
     const p = await perfilTelegram(admin, payload.telegram_chat_id)
