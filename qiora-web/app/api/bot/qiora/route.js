@@ -140,6 +140,68 @@ async function marcarEntrada(admin, payload) {
   return { ok: true, marcado: Boolean(data) }
 }
 
+
+// ======================================================
+// NOTIFICACIONES PROGRAMADAS DE TELEGRAM
+// Lee únicamente avisos cuya fecha ya llegó y cuyo estado
+// sigue PENDIENTE. El bot marca cada aviso tras procesarlo.
+// ======================================================
+async function notificacionesProgramadas(admin) {
+  const ahora = new Date().toISOString()
+  const { data, error } = await admin
+    .from('qiora_telegram_notificaciones')
+    .select('id,clave,telegram_chat_id,distrito,tipo,mensaje,fecha_programada')
+    .eq('estado', 'PENDIENTE')
+    .lte('fecha_programada', ahora)
+    .order('fecha_programada', { ascending: true })
+    .limit(100)
+
+  if (error) throw new Error(error.message)
+
+  const avisos = []
+  for (const aviso of data || []) {
+    // Validar que el destinatario siga activo y permita notificaciones.
+    const { data: usuario, error: usuarioError } = await admin
+      .from('almacen_usuarios')
+      .select('telegram_chat_id,activo,notificaciones_activas,distrito')
+      .eq('telegram_chat_id', clean(aviso.telegram_chat_id))
+      .eq('activo', true)
+      .limit(1)
+      .maybeSingle()
+
+    if (usuarioError) throw new Error(usuarioError.message)
+    if (!usuario || usuario.notificaciones_activas === false) continue
+    if (clean(aviso.distrito) && upper(usuario.distrito) !== upper(aviso.distrito)) continue
+
+    avisos.push({
+      clave: aviso.clave,
+      telegram_chat_id: usuario.telegram_chat_id,
+      distrito: aviso.distrito || usuario.distrito || '',
+      tipo: aviso.tipo,
+      mensaje: aviso.mensaje || '',
+      fecha_programada: aviso.fecha_programada,
+    })
+  }
+
+  return { ok: true, avisos }
+}
+
+async function marcarNotificacionProgramada(admin, payload) {
+  const clave = clean(payload.clave)
+  if (!clave) return { ok: false, error: 'Falta la clave de la notificación.' }
+
+  const { data, error } = await admin
+    .from('qiora_telegram_notificaciones')
+    .update({ estado: 'ENVIADO', enviado_en: new Date().toISOString() })
+    .eq('clave', clave)
+    .eq('estado', 'PENDIENTE')
+    .select('id,clave,estado,enviado_en')
+    .maybeSingle()
+
+  if (error) throw new Error(error.message)
+  return { ok: true, marcado: Boolean(data), notificacion: data || null }
+}
+
 async function accionMigrada(admin, payload) {
   const accion = clean(payload.accion || payload.action)
   if (accion === 'telegram_registrar') return registrarTelegram(admin, payload)
@@ -149,6 +211,8 @@ async function accionMigrada(admin, payload) {
   if (accion === 'telegram_traspaso_marcar_notificado') return marcarTraspaso(admin, payload)
   if (accion === 'telegram_traslados_activos_avisos') return entradasPendientes(admin)
   if (accion === 'telegram_traslados_activos_marcar') return marcarEntrada(admin, payload)
+  if (accion === 'telegram_notificaciones_programadas') return notificacionesProgramadas(admin)
+  if (accion === 'telegram_notificacion_marcar') return marcarNotificacionProgramada(admin, payload)
 
   const perfil = await perfilTelegram(admin, payload.telegram_chat_id)
   if (accion === 'telegram_config_permiso') {
