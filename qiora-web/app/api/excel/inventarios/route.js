@@ -5,11 +5,22 @@ import { createClient } from '@supabase/supabase-js'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const response = (data: unknown, status = 200) =>
-  NextResponse.json(data, {
+// ==========================================
+// RESPUESTA JSON
+// ==========================================
+
+const response = (data, status = 200) => {
+  return NextResponse.json(data, {
     status,
-    headers: { 'Cache-Control': 'no-store' }
+    headers: {
+      'Cache-Control': 'no-store'
+    }
   })
+}
+
+// ==========================================
+// INVENTARIOS PERMITIDOS
+// ==========================================
 
 const TIPOS = [
   'STOCK_TECNICOS',
@@ -17,8 +28,15 @@ const TIPOS = [
   'IQ09_EQUIPOS'
 ]
 
-export async function POST(req: Request) {
+// ==========================================
+// API PRINCIPAL
+// ==========================================
+
+export async function POST(req) {
   try {
+
+    // 1. CONFIGURACION SUPABASE
+
     const {
       NEXT_PUBLIC_SUPABASE_URL: url,
       SUPABASE_SERVICE_ROLE_KEY: key,
@@ -32,87 +50,101 @@ export async function POST(req: Request) {
       }, 503)
     }
 
+    // 2. RECIBIR DATOS DE EXCEL
+
     const data = await req.json()
+
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return response({
+        ok: false,
+        error: 'JSON_INVALIDO'
+      }, 400)
+    }
 
     const centro = String(data.distrito || '')
       .trim()
       .toUpperCase()
 
     const token = String(data.token || '').trim()
-    const tipo = String(data.tipo || '').trim().toUpperCase()
-    const action = String(data.action || '').trim().toLowerCase()
+
+    const tipo = String(data.tipo || '')
+      .trim()
+      .toUpperCase()
+
+    const accion = String(data.action || '')
+      .trim()
+      .toLowerCase()
+
     const lote = String(data.lote || '').trim()
 
-    if (
-      !/^[A-Z]{2,5}[0-9]{1,5}$/.test(centro) ||
-      !token ||
-      !TIPOS.includes(tipo)
-    ) {
+    // 3. VALIDAR DISTRITO
+
+    if (!/^[A-Z]{2,5}[0-9]{1,5}$/.test(centro)) {
       return response({
         ok: false,
-        error: 'PARAMETROS_INVALIDOS'
+        error: 'DISTRITO_INVALIDO'
       }, 400)
     }
 
-    const db = createClient(url, key || fallback!, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false
-      }
-    })
+    // 4. VALIDAR TOKEN INDIVIDUAL
 
-    // =========================================
-    // DESCARGAR INVENTARIO DESDE SUPABASE
-    // =========================================
-
-    if (action === 'download') {
-
-      const { data: out, error } = await db.rpc(
-        'qiora_excel_inventario_descargar',
-        {
-          p_distrito: centro,
-          p_token: token,
-          p_tipo: tipo
-        }
-      )
-
-      if (error) {
-        console.error('ERROR DESCARGA INVENTARIO:', error)
-
-        return response({
-          ok: false,
-          error: 'ERROR_DESCARGA_INVENTARIO',
-          detalle: error.message
-        }, 400)
-      }
-
+    if (!token || token.length < 12) {
       return response({
-        ok: true,
-        distrito: centro,
-        tipo,
-        total: Array.isArray(out) ? out.length : 0,
-        filas: out || []
-      })
+        ok: false,
+        error: 'TOKEN_INVALIDO'
+      }, 401)
     }
 
-    // =========================================
-    // SUBIR LOTES A SUPABASE
-    // =========================================
+    // 5. VALIDAR INVENTARIO
 
-    if (!lote || lote.length > 180) {
+    if (!TIPOS.includes(tipo)) {
+      return response({
+        ok: false,
+        error: 'TIPO_INVALIDO'
+      }, 400)
+    }
+
+    // 6. VALIDAR ACCION
+
+    if (!['batch', 'commit'].includes(accion)) {
+      return response({
+        ok: false,
+        error: 'ACCION_INVALIDA'
+      }, 400)
+    }
+
+    // 7. VALIDAR LOTE
+
+    if (!lote || lote.length < 8 || lote.length > 180) {
       return response({
         ok: false,
         error: 'LOTE_INVALIDO'
       }, 400)
     }
 
-    if (action === 'batch') {
+    // ========================================
+    // CONEXION SUPABASE
+    // ========================================
+
+    const db = createClient(url, key || fallback, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false
+      }
+    })
+
+    // ========================================
+    // ACCION 1: RECIBIR LOTES
+    // ========================================
+
+    if (accion === 'batch') {
 
       if (
         !Array.isArray(data.filas) ||
         data.filas.length < 1 ||
         data.filas.length > 150 ||
-        !Number.isInteger(data.offset)
+        !Number.isInteger(data.offset) ||
+        data.offset < 0
       ) {
         return response({
           ok: false,
@@ -120,7 +152,10 @@ export async function POST(req: Request) {
         }, 400)
       }
 
-      const { data: out, error } = await db.rpc(
+      const {
+        data: out,
+        error
+      } = await db.rpc(
         'qiora_excel_inventario_lote',
         {
           p_distrito: centro,
@@ -132,16 +167,28 @@ export async function POST(req: Request) {
         }
       )
 
-      return error
-        ? response({ ok: false, error: error.message }, 400)
-        : response(out)
+      if (error) {
+        console.error(
+          'ERROR QIORA BATCH:',
+          centro,
+          tipo,
+          error.message
+        )
+
+        return response({
+          ok: false,
+          error: error.message
+        }, 400)
+      }
+
+      return response(out)
     }
 
-    // =========================================
-    // CONFIRMAR CARGA COMPLETA
-    // =========================================
+    // ========================================
+    // ACCION 2: CONFIRMAR INVENTARIO
+    // ========================================
 
-    if (action === 'commit') {
+    if (accion === 'commit') {
 
       if (
         !Number.isInteger(data.total) ||
@@ -153,7 +200,10 @@ export async function POST(req: Request) {
         }, 400)
       }
 
-      const { data: out, error } = await db.rpc(
+      const {
+        data: out,
+        error
+      } = await db.rpc(
         'qiora_excel_inventario_commit',
         {
           p_distrito: centro,
@@ -164,9 +214,21 @@ export async function POST(req: Request) {
         }
       )
 
-      return error
-        ? response({ ok: false, error: error.message }, 400)
-        : response(out)
+      if (error) {
+        console.error(
+          'ERROR QIORA COMMIT:',
+          centro,
+          tipo,
+          error.message
+        )
+
+        return response({
+          ok: false,
+          error: error.message
+        }, 400)
+      }
+
+      return response(out)
     }
 
     return response({
@@ -174,13 +236,16 @@ export async function POST(req: Request) {
       error: 'ACCION_INVALIDA'
     }, 400)
 
-  } catch (e: unknown) {
+  } catch (e) {
 
-    const mensaje = e instanceof Error
+    const mensaje = e && e.message
       ? e.message
       : String(e)
 
-    console.error('QIORA INVENTARIOS:', mensaje)
+    console.error(
+      'ERROR API EXCEL INVENTARIOS:',
+      mensaje
+    )
 
     return response({
       ok: false,
