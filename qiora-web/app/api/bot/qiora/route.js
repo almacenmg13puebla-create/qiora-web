@@ -202,6 +202,63 @@ async function marcarNotificacionProgramada(admin, payload) {
   return { ok: true, marcado: Boolean(data), notificacion: data || null }
 }
 
+// Busca almacenes o tecnicos activos exclusivamente dentro del distrito
+// del usuario autenticado en Telegram. El cliente no puede elegir otro distrito.
+async function buscarAlmacenTraspaso(admin, payload) {
+  const chatId = clean(payload.telegram_chat_id)
+  const perfil = await perfilTelegram(admin, chatId)
+  if (!perfil) {
+    return { ok: false, error: 'Telegram no esta vinculado a un usuario activo de SAT.' }
+  }
+
+  const distrito = clean(perfil.distrito)
+  if (!distrito) {
+    return { ok: false, error: 'El usuario no tiene distrito asignado en SAT.' }
+  }
+
+  const consulta = clean(payload.almacen)
+  if (consulta.length < 2 || consulta.length > 80) {
+    return { ok: false, error: 'Escribe al menos 2 caracteres del almacen o tecnico.' }
+  }
+
+  // Se consultan usuario_almacen y nombre por separado para evitar construir
+  // expresiones .or() con texto libre del usuario.
+  const patron = `%${consulta.replace(/[%_,]/g, ' ')}%`
+  const columnas = 'usuario_almacen,nombre,distrito,puesto'
+  const base = () => admin.from('almacen_usuarios')
+    .select(columnas)
+    .eq('activo', true)
+    .eq('distrito', distrito)
+
+  const [porAlmacen, porNombre] = await Promise.all([
+    base().ilike('usuario_almacen', patron).limit(20),
+    base().ilike('nombre', patron).limit(20),
+  ])
+
+  if (porAlmacen.error) throw new Error(porAlmacen.error.message)
+  if (porNombre.error) throw new Error(porNombre.error.message)
+
+  const unicos = new Map()
+  for (const fila of [...(porAlmacen.data || []), ...(porNombre.data || [])]) {
+    const almacen = clean(fila.usuario_almacen)
+    if (!almacen) continue
+    unicos.set(almacen, {
+      almacen,
+      nombre: clean(fila.nombre) || almacen,
+    })
+  }
+
+  const encontrados = [...unicos.values()].slice(0, 20)
+  return {
+    ok: true,
+    distrito,
+    encontrados,
+    mensaje: encontrados.length
+      ? `${encontrados.length} coincidencia(s) encontradas en ${distrito}.`
+      : `No se encontraron almacenes o tecnicos en ${distrito} con ese criterio.`,
+  }
+}
+
 async function accionMigrada(admin, payload) {
   const accion = clean(payload.accion || payload.action)
   if (accion === 'telegram_registrar') return registrarTelegram(admin, payload)
@@ -213,6 +270,7 @@ async function accionMigrada(admin, payload) {
   if (accion === 'telegram_traslados_activos_marcar') return marcarEntrada(admin, payload)
   if (accion === 'telegram_notificaciones_programadas') return notificacionesProgramadas(admin)
   if (accion === 'telegram_notificacion_marcar') return marcarNotificacionProgramada(admin, payload)
+  if (accion === 'telegram_traspaso_nombre_almacen') return buscarAlmacenTraspaso(admin, payload)
 
   const perfil = await perfilTelegram(admin, payload.telegram_chat_id)
   if (accion === 'telegram_config_permiso') {
