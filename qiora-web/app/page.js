@@ -37,7 +37,7 @@ const MODULOS = [
   },
 
   {
-    permiso: null,
+    permisos: ['stock_tecnicos', 'equipos', 'materiales'],
     nombre: 'Inventarios',
     descripcion: 'Consulta de materiales, equipos IQ09 y catálogos.',
     ruta: '/inventarios',
@@ -53,7 +53,7 @@ const MODULOS = [
   },
 
   {
-    permiso: null,
+    permisos: ['configuracion', 'usuarios', 'administrar_permisos'],
     nombre: 'Configuración',
     descripcion: 'Usuarios, números de empleado y catálogos de costos.',
     ruta: '/configuracion',
@@ -133,7 +133,7 @@ const MODULOS = [
   },
 
   {
-    permiso: null,
+    permiso: 'traspasos',
     nombre: 'Traspasos',
     descripcion: 'Solicitudes y seguimiento de traspasos SAP.',
     ruta: '/traspasos',
@@ -568,81 +568,24 @@ export default function Home() {
     )
   }
 
-  const puestoActual =
-    String(
-      perfil.puesto ?? ''
-    )
-      .trim()
-      .toUpperCase()
+  const puestoActual = String(perfil.puesto ?? '').trim().toUpperCase()
+  const esAdminPadre = puestoActual === 'ADMIN_PADRE'
 
-  const esAdminPadre =
-    puestoActual ===
-    'ADMIN_PADRE'
+  const centroActivo = String(perfil.distrito ?? '').trim().toUpperCase()
 
-  const esAdminCentro =
-    puestoActual.startsWith(
-      'ADMIN_'
-    ) &&
-    puestoActual !==
-      'ADMIN_PADRE'
+  const tienePermisoModulo = modulo => {
+    if (esAdminPadre) return true
+    if (modulo.permiso) return perfil[modulo.permiso] === true
+    if (Array.isArray(modulo.permisos)) {
+      return modulo.permisos.some(permiso => perfil[permiso] === true)
+    }
+    return false
+  }
 
-  const esAdministrador =
-    esAdminPadre ||
-    esAdminCentro
-
-  const centroActivo =
-    String(
-      perfil.distrito ?? ''
-    )
-      .trim()
-      .toUpperCase()
-
-  const puedeVerSolicitudes =
-    esAdministrador ||
-    perfil.ver_solicitud === true ||
-    perfil.administrar_permisos === true ||
-    perfil.acceso_almacen === true ||
-    perfil.acceso_coordinador === true
-
-  const modulos =
-    esAdministrador
-      ? MODULOS
-      : MODULOS.filter(
-          modulo =>
-            modulo.permiso === null ||
-
-            perfil[
-              modulo.permiso
-            ] === true ||
-
-            (
-              modulo.permiso ===
-                'ver_solicitud' &&
-
-              puedeVerSolicitudes
-            )
-        )
-
-  const modulosAutorizados =
-    esAdministrador
-      ? MODULOS
-      : MODULOS.filter(
-          modulo =>
-            modulo.permiso !== null &&
-
-            (
-              perfil[
-                modulo.permiso
-              ] === true ||
-
-              (
-                modulo.permiso ===
-                  'ver_solicitud' &&
-
-                puedeVerSolicitudes
-              )
-            )
-        )
+  // Los administradores de distrito NO reciben todos los módulos automáticamente.
+  // Solo ADMIN_PADRE tiene acceso general; ADMIN_MG depende de permisos delegados.
+  const modulos = MODULOS.filter(tienePermisoModulo)
+  const modulosAutorizados = modulos
 
   const disponibles =
     modulos.filter(
