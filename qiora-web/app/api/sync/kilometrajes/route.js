@@ -169,12 +169,10 @@ function normalizar(row) {
   )
 
   /*
-    La marca temporal normalmente permanece
-    igual aunque posteriormente se corrija
-    algún dato del formulario.
+    Identificador de la respuesta.
 
-    La combinamos con usuario/placa/número
-    único para identificar la respuesta.
+    La marca temporal normalmente permanece igual.
+    Se combina con FFM, placa y número único.
   */
   const sourceKey = [
     fechaFormulario,
@@ -237,6 +235,16 @@ function normalizar(row) {
   }
 }
 
+/*
+  GET solamente para comprobar que la ruta existe.
+*/
+export async function GET() {
+  return out({
+    ok: true,
+    ruta: 'sync-kilometrajes'
+  })
+}
+
 export async function POST(request) {
   try {
     const {
@@ -296,7 +304,10 @@ export async function POST(request) {
       }, 400)
     }
 
-    const filas =
+    /*
+      Normalizar registros.
+    */
+    const filasNormalizadas =
       body.filas
         .map(normalizar)
         .filter(row =>
@@ -304,10 +315,38 @@ export async function POST(request) {
           row.source_key !== '|||'
         )
 
+    /*
+      Evitar que el mismo source_key
+      aparezca dos veces en el mismo UPSERT.
+
+      Si hay duplicados conservamos
+      la última versión recibida.
+    */
+    const unicasPorSourceKey =
+      new Map()
+
+    for (
+      const fila of filasNormalizadas
+    ) {
+      unicasPorSourceKey.set(
+        fila.source_key,
+        fila
+      )
+    }
+
+    const filas =
+      Array.from(
+        unicasPorSourceKey.values()
+      )
+
     if (!filas.length) {
       return out({
         ok: true,
-        procesadas: 0
+        recibidas:
+          body.filas.length,
+        procesadas: 0,
+        duplicadas_en_lote: 0,
+        guardadas: 0
       })
     }
 
@@ -356,8 +395,17 @@ export async function POST(request) {
 
     return out({
       ok: true,
+
+      recibidas:
+        body.filas.length,
+
       procesadas:
         filas.length,
+
+      duplicadas_en_lote:
+        filasNormalizadas.length -
+        filas.length,
+
       guardadas:
         data?.length || 0
     })
