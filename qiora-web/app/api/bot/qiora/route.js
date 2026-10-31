@@ -157,24 +157,14 @@ function puedeCargarPlacas(p) {
       p.puesto
     )
 
-  /*
-    ADMIN_PADRE:
-    acceso total.
-
-    ADMIN_MG / ADMIN_*:
-    acceso administrativo.
-
-    ALMACENISTA:
-    permitido para carga operativa.
-  */
   return (
     puesto === 'ADMIN_PADRE' ||
     puesto === 'ADMIN' ||
     puesto === 'ADMINISTRADOR' ||
     puesto === 'ALMACENISTA' ||
-    puesto.startsWith(
-      'ADMIN_'
-    )
+    puesto.startsWith('ADMIN_') ||
+    p.configuracion === true ||
+    p.administrar_distritos === true
   )
 }
 
