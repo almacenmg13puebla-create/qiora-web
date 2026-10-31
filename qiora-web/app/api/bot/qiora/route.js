@@ -1030,24 +1030,110 @@ async function buscarSeriesDirectasTraspaso(admin, perfil, payload) {
   return { ok:true, materiales:[...porGrupo.values()], no_encontradas, rechazadas:[] }
 }
 
-function mensajeTraspasoNuevo(folio, validacion, materiales, capturista) {
-  const lineas = [
-    '🚚 NUEVO TRASPASO', '',
-    `Folio: ${folio}`,
-    `Distrito: ${validacion.distrito}`,
-    '', 'ORIGEN',
-    `${validacion.origen} | ${validacion.nombre_origen}`,
-    '', 'DESTINO',
-    `${validacion.destino} | ${validacion.nombre_destino}`,
-    '', 'MATERIALES'
-  ]
-  for (const m of materiales) {
-    lineas.push(`${m.sku} | ${m.descripcion || ''}`)
-    lineas.push(`Cantidad: ${m.cantidad} | Lote: ${m.lote || 'SIN LOTE'}`)
-    if (Array.isArray(m.series) && m.series.length) lineas.push(`Series: ${m.series.join(', ')}`)
+function lineasMaterialesTraspaso(materiales) {
+  const lineas = []
+  for (const m of (Array.isArray(materiales) ? materiales : [])) {
+    const sku = clean(m.sku || m.material)
+    const descripcion = clean(m.descripcion || (m.material !== sku ? m.material : ''))
+    lineas.push(`• ${sku}`)
+    if (descripcion) lineas.push(descripcion)
+    lineas.push(`Cantidad: ${Number(m.cantidad || 0)}`)
+    lineas.push(`Lote: ${clean(m.lote) || 'SIN LOTE'}`)
+    if (Array.isArray(m.series) && m.series.length) {
+      lineas.push('Series:')
+      for (const serie of m.series) lineas.push(clean(serie))
+    }
+    lineas.push('')
   }
-  lineas.push('', `Capturó: ${capturista}`, 'Estado: PENDIENTE')
+  return lineas
+}
+
+function mensajeTraspasoNuevo(folio, validacion, materiales, capturista, folioSap = '') {
+  const lineas = [
+    '🚚 NUEVO TRASPASO SAP', '',
+    '🖥 Origen de captura:',
+    '🤖 TELEGRAM', '',
+    '🏢 Distrito/Centro:',
+    clean(validacion.distrito), '',
+    '📋 Folio SAP:',
+    clean(folioSap) || 'PENDIENTE', '',
+    '🆔 Folio control:',
+    clean(folio), '',
+    '🧾 Orden de servicio:',
+    'TRASPASO', '',
+    '👤 Solicitado por:',
+    clean(capturista), '',
+    '⬅️ Origen:',
+    `${clean(validacion.origen)} | ${clean(validacion.nombre_origen)}`, '',
+    '➡️ Destino:',
+    `${clean(validacion.destino)} | ${clean(validacion.nombre_destino)}`, '',
+    '📦 Materiales:', ''
+  ]
+  lineas.push(...lineasMaterialesTraspaso(materiales))
+  lineas.push(
+    '⏳ Tiempo estimado:',
+    '10 minutos aproximadamente', '',
+    '📌 Estado:',
+    '🟡 PENDIENTE', '',
+    '🤖 Generado automáticamente por',
+    'QIORA CONECTA',
+    '════════════════════════════════════'
+  )
   return lineas.join('\n').slice(0,3900)
+}
+
+function mensajeTraspasoFinal(mov) {
+  const estado = upper(mov?.estado)
+  const realizado = estado === 'REALIZADO'
+  const titulo = realizado ? '✅ TRASPASO SAP REALIZADO' : '❌ TRASPASO SAP NO REALIZADO'
+  const estadoTexto = realizado ? '🟢 REALIZADO' : `🔴 ${estado || 'NO REALIZADO'}`
+  const lineas = [
+    titulo, '',
+    '🖥 Origen de captura:',
+    '🤖 TELEGRAM', '',
+    '🏢 Distrito/Centro:',
+    clean(mov?.distrito), '',
+    '📋 Folio SAP:',
+    clean(mov?.folio_sap) || 'SIN FOLIO SAP', '',
+    '🆔 Folio control:',
+    clean(mov?.folio_control), '',
+    '🧾 Orden de servicio:',
+    'TRASPASO', '',
+    '👤 Solicitado por:',
+    clean(mov?.solicitado_por), '',
+    '⬅️ Origen:',
+    `${clean(mov?.origen)} | ${clean(mov?.tecnico_origen)}`, '',
+    '➡️ Destino:',
+    `${clean(mov?.destino)} | ${clean(mov?.tecnico_destino)}`, '',
+    '📦 Materiales:', ''
+  ]
+  lineas.push(...lineasMaterialesTraspaso(mov?.materiales))
+  if (realizado) {
+    lineas.push(
+      '📄 Documento SAP:',
+      clean(mov?.documento_sap) || 'SIN DOCUMENTO', '',
+      '📌 Estado:',
+      estadoTexto, '',
+      '➡️ Favor de dar entrada al material.', ''
+    )
+  } else {
+    lineas.push(
+      '📌 Estado:',
+      estadoTexto, '',
+      '⚠️ Motivo:',
+      clean(mov?.mensaje_sap || mov?.detalle_error) || 'No se recibió detalle del error de SAP.', ''
+    )
+  }
+  lineas.push(
+    '🤖 Generado automáticamente por',
+    'QIORA CONECTA',
+    '════════════════════════════════════'
+  )
+  return lineas.join('\n').slice(0,3900)
+}
+
+function codigoSolicitanteTraspaso(solicitadoPor) {
+  return clean(solicitadoPor).split('|')[0].trim()
 }
 
 async function confirmarTraspasoBot(admin, perfil, payload) {
@@ -1111,7 +1197,13 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
   const tecnicosNotificacion = await tecnicosTraspaso(admin, [validacion.origen, validacion.destino])
   const perfilOrigen = tecnicosNotificacion.find(x=>normalizarAlmacenTraspaso(x.usuario_almacen)===validacion.origen)
   const perfilDestino = tecnicosNotificacion.find(x=>normalizarAlmacenTraspaso(x.usuario_almacen)===validacion.destino)
-  const chatsPrivados = [perfilOrigen, perfilDestino]
+  const perfilCapturista = {
+    usuario_almacen: perfil.usuario_almacen,
+    nombre: perfil.nombre,
+    distrito: perfil.distrito,
+    telegram_chat_id: clean(perfil.telegram_chat_id || payload.telegram_chat_id)
+  }
+  const chatsPrivados = [perfilOrigen, perfilDestino, perfilCapturista]
     .filter(x=>clean(x?.telegram_chat_id))
   const privados = [...new Map(chatsPrivados.map(x=>[clean(x.telegram_chat_id),x])).values()]
     .map(x=>({ telegram_chat_id:clean(x.telegram_chat_id), usuario:x.usuario_almacen, mensaje }))
@@ -1134,7 +1226,9 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
   }
 
   return {
-    ok:true, folio_control:folio, mensaje:`✅ TRASPASO REGISTRADO\n\nFolio: ${folio}\nDistrito: ${validacion.distrito}\nOrigen: ${validacion.origen} | ${validacion.nombre_origen}\nDestino: ${validacion.destino} | ${validacion.nombre_destino}\nMateriales: ${normalizados.length}\nEstado: PENDIENTE`,
+    ok:true,
+    folio_control:folio,
+    mensaje,
     avisos_privados:privados,
     grupos_notificar:grupos,
     grupos_notificados:grupos.map(x=>x.distrito),
@@ -1157,7 +1251,104 @@ async function marcarAvisoTraspaso(admin, payload) {
   return { ok:true }
 }
 
+async function prepararAvisosFinalesTraspaso(admin) {
+  const { data: movimientos, error: movError } = await admin
+    .from('qiora_traspasos')
+    .select('folio_control,distrito,origen,destino,solicitado_por,tecnico_origen,tecnico_destino,estado,materiales,folio_sap,documento_sap,mensaje_sap,detalle_error,creado_en,actualizado_en')
+    .in('estado',['REALIZADO','NO REALIZADO','ERROR'])
+    .order('actualizado_en',{ascending:false})
+    .limit(100)
+  if (movError) throw new Error(movError.message)
+  if (!movimientos?.length) return
+
+  const codigos = [...new Set(movimientos.flatMap(m=>[
+    clean(m.origen), clean(m.destino), codigoSolicitanteTraspaso(m.solicitado_por)
+  ]).filter(Boolean))]
+  let usuarios=[]
+  if (codigos.length) {
+    const { data, error } = await admin.from('almacen_usuarios')
+      .select('usuario_almacen,nombre,distrito,telegram_chat_id,activo')
+      .in('usuario_almacen',codigos)
+      .eq('activo',true)
+    if (error) throw new Error(error.message)
+    usuarios=data || []
+  }
+  const usuariosPorCodigo = new Map()
+  for (const u of usuarios) {
+    const k=normalizarAlmacenTraspaso(u.usuario_almacen)
+    if (!usuariosPorCodigo.has(k)) usuariosPorCodigo.set(k,u)
+  }
+
+  const distritos = [...new Set([
+    ...movimientos.map(m=>upper(m.distrito)),
+    ...usuarios.map(u=>upper(u.distrito))
+  ].filter(Boolean))]
+  const gruposPorDistrito = new Map()
+  if (distritos.length) {
+    const { data, error } = await admin.from('qiora_distritos_telegram')
+      .select('centro,chat_traspasos')
+      .in('centro',distritos)
+    if (error) throw new Error(error.message)
+    for (const c of data || []) if (clean(c.chat_traspasos)) gruposPorDistrito.set(upper(c.centro),clean(c.chat_traspasos))
+  }
+
+  const folios = movimientos.map(m=>clean(m.folio_control)).filter(Boolean)
+  const { data: existentes, error: exError } = await admin.from('qiora_traspasos_avisos')
+    .select('folio_control,destino')
+    .in('folio_control',folios)
+  if (exError) throw new Error(exError.message)
+  const existe = new Set((existentes || []).map(x=>`${clean(x.folio_control)}|${clean(x.destino)}`))
+  const foliosConAvisoInicial = new Set((existentes || [])
+    .filter(x=>!clean(x.destino).startsWith('FINAL:'))
+    .map(x=>clean(x.folio_control)))
+  const nuevos=[]
+  const ahora=new Date().toISOString()
+
+  for (const mov of movimientos) {
+    // Evita disparar avisos de traspasos históricos que nunca pasaron por la cola nueva.
+    if (!foliosConAvisoInicial.has(clean(mov.folio_control))) continue
+    const estado=upper(mov.estado)
+    const fase=estado === 'REALIZADO' ? 'REALIZADO' : 'NO_REALIZADO'
+    const origen=usuariosPorCodigo.get(normalizarAlmacenTraspaso(mov.origen))
+    const destino=usuariosPorCodigo.get(normalizarAlmacenTraspaso(mov.destino))
+    const capturista=usuariosPorCodigo.get(normalizarAlmacenTraspaso(codigoSolicitanteTraspaso(mov.solicitado_por)))
+    const privados=[origen,destino,capturista]
+      .map(x=>clean(x?.telegram_chat_id)).filter(Boolean)
+    for (const chat of [...new Set(privados)]) {
+      const key=`FINAL:${fase}:PRIVADO:${chat}`
+      const pk=`${clean(mov.folio_control)}|${key}`
+      if (!existe.has(pk)) {
+        nuevos.push({folio_control:mov.folio_control,destino:key,estado:'PENDIENTE',telegram_notificado:false,actualizado_en:ahora})
+        existe.add(pk)
+      }
+    }
+    const ds=[upper(origen?.distrito),upper(destino?.distrito),upper(mov.distrito)].filter(Boolean)
+    const grupos=[...new Map([...new Set(ds)].map(d=>[gruposPorDistrito.get(d),d]).filter(([chat])=>clean(chat))).entries()]
+    for (const [chat,distrito] of grupos) {
+      const key=`FINAL:${fase}:GRUPO_${distrito}`
+      const pk=`${clean(mov.folio_control)}|${key}`
+      if (!existe.has(pk)) {
+        nuevos.push({folio_control:mov.folio_control,destino:key,estado:'PENDIENTE',telegram_notificado:false,actualizado_en:ahora})
+        existe.add(pk)
+      }
+    }
+  }
+  if (nuevos.length) {
+    const { error } = await admin.from('qiora_traspasos_avisos').insert(nuevos)
+    if (error) throw new Error(error.message)
+  }
+}
+
+function destinoRealAvisoTraspaso(destino) {
+  const d=clean(destino)
+  if (!d.startsWith('FINAL:')) return { final:false, destino:d }
+  const partes=d.split(':')
+  return { final:true, destino:partes.slice(2).join(':') }
+}
+
 async function listarAvisosTraspasoPendientes(admin) {
+  await prepararAvisosFinalesTraspaso(admin)
+
   const { data: avisos, error: avisoError } = await admin
     .from('qiora_traspasos_avisos')
     .select('folio_control,destino,estado')
@@ -1171,13 +1362,14 @@ async function listarAvisosTraspasoPendientes(admin) {
   const folios = [...new Set(avisos.map(x=>clean(x.folio_control)).filter(Boolean))]
   const { data: movimientos, error: movimientoError } = await admin
     .from('qiora_traspasos')
-    .select('folio_control,distrito,origen,destino,solicitado_por,tecnico_origen,tecnico_destino,estado,materiales,folio_sap,documento_sap,mensaje_sap,creado_en')
+    .select('folio_control,distrito,origen,destino,solicitado_por,tecnico_origen,tecnico_destino,estado,materiales,folio_sap,documento_sap,mensaje_sap,detalle_error,creado_en,actualizado_en')
     .in('folio_control',folios)
   if (movimientoError) throw new Error(movimientoError.message)
   const porFolio = new Map((movimientos || []).map(x=>[x.folio_control,x]))
 
   const distritos = [...new Set(avisos.map(x=>{
-    const d=clean(x.destino)
+    const info=destinoRealAvisoTraspaso(x.destino)
+    const d=clean(info.destino)
     return d.startsWith('GRUPO_') ? d.slice(6).toUpperCase() : ''
   }).filter(Boolean))]
   const gruposPorDistrito = new Map()
@@ -1194,15 +1386,16 @@ async function listarAvisosTraspasoPendientes(admin) {
   for (const a of avisos) {
     const mov=porFolio.get(a.folio_control)
     if (!mov) continue
+    const info=destinoRealAvisoTraspaso(a.destino)
+    const destino=clean(info.destino)
     let chat=''
-    if (clean(a.destino).startsWith('GRUPO_')) {
-      const distrito=clean(a.destino).slice(6).toUpperCase()
+    if (destino.startsWith('GRUPO_')) {
+      const distrito=destino.slice(6).toUpperCase()
       chat=gruposPorDistrito.get(distrito) || ''
-    } else if (clean(a.destino).startsWith('PRIVADO:')) {
-      chat=clean(a.destino).slice(8)
+    } else if (destino.startsWith('PRIVADO:')) {
+      chat=destino.slice(8)
     }
     if (!chat) continue
-    const materiales=Array.isArray(mov.materiales) ? mov.materiales : []
     const validacion={
       distrito:mov.distrito,
       origen:mov.origen,
@@ -1214,7 +1407,9 @@ async function listarAvisosTraspasoPendientes(admin) {
       folio_control:a.folio_control,
       destino:a.destino,
       telegram_chat_id:chat,
-      mensaje:mensajeTraspasoNuevo(a.folio_control,validacion,materiales,mov.solicitado_por || '')
+      mensaje:info.final
+        ? mensajeTraspasoFinal(mov)
+        : mensajeTraspasoNuevo(a.folio_control,validacion,mov.materiales,mov.solicitado_por || '',mov.folio_sap || '')
     })
   }
   return { ok:true, avisos:salida }
