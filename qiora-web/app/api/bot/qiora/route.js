@@ -961,24 +961,33 @@ async function buscarMaterialesTraspaso(admin, perfil, payload) {
   const origen = validacion.origen
   const consulta = upper(payload.consulta)
   if (consulta.length < 1 || consulta.length > 100) return { ok:false, error:'Escribe SKU o descripción.' }
-  const { data, error } = await admin.from('stock_almacen')
-    .select('material,descripcion_material,centro,almacen,libre_utilizacion,disponible,lote')
+
+  // En el flujo técnico -> técnico, el inventario del origen vive en stock_tecnicos.
+  // stock_almacen queda reservado para movimientos cuyo origen sea un almacén de centro.
+  const { data, error } = await admin.from('stock_tecnicos')
+    .select('sku,material,centro,almacen,lote,cantidad,libre_utilizacion,trans_trasl,tecnico,solicita,disponible')
     .eq('almacen', origen)
     .gt('disponible', 0)
     .limit(2000)
   if (error) throw new Error(error.message)
+
   const agrupados = new Map()
   for (const r of data || []) {
-    const sku = clean(r.material)
-    const desc = clean(r.descripcion_material)
+    const sku = clean(r.sku)
+    const desc = clean(r.material)
     if (!(upper(sku).includes(consulta) || upper(desc).includes(consulta))) continue
     const lote = clean(r.lote)
     const key = `${sku}|${lote}`
     const actual = agrupados.get(key) || { sku, material:sku, descripcion:desc, disponible:0, lote }
-    actual.disponible += Number(r.disponible || r.libre_utilizacion || 0)
+    actual.disponible += Number(r.disponible || 0)
     agrupados.set(key, actual)
   }
-  return { ok:true, materiales:[...agrupados.values()].sort((a,b)=>a.sku.localeCompare(b.sku)).slice(0,50) }
+
+  return {
+    ok:true,
+    fuente_inventario:'stock_tecnicos',
+    materiales:[...agrupados.values()].sort((a,b)=>a.sku.localeCompare(b.sku)).slice(0,50)
+  }
 }
 
 async function buscarSeriesTraspaso(admin, perfil, payload) {
@@ -1056,12 +1065,12 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
     const series = Array.isArray(m.series) ? [...new Set(m.series.map(clean).filter(Boolean))] : []
     if (!sku || !Number.isFinite(cantidad) || cantidad <= 0) return { ok:false, error:`Material o cantidad inválida: ${sku || 'SIN SKU'}` }
 
-    const { data: stocksBase, error: stockError } = await admin.from('stock_almacen')
-      .select('material,descripcion_material,almacen,disponible,libre_utilizacion,lote')
-      .eq('almacen', validacion.origen).eq('material', sku).limit(200)
+    const { data: stocksBase, error: stockError } = await admin.from('stock_tecnicos')
+      .select('sku,material,almacen,disponible,lote')
+      .eq('almacen', validacion.origen).eq('sku', sku).limit(200)
     if (stockError) throw new Error(stockError.message)
     const stocks = (stocksBase || []).filter(x => (clean(x.lote) || 'NA') === (lote || 'NA'))
-    const disponible = stocks.reduce((n,x)=>n+Number(x.disponible || x.libre_utilizacion || 0),0)
+    const disponible = stocks.reduce((n,x)=>n+Number(x.disponible || 0),0)
     if (disponible < cantidad) return { ok:false, error:`Stock insuficiente para ${sku}. Disponible: ${disponible}; solicitado: ${cantidad}.` }
 
     if (lote.toUpperCase().startsWith('TPE') && lote.toUpperCase() !== 'TPE USADO') {
@@ -1077,7 +1086,7 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
     } else if (series.length) {
       return { ok:false, error:`El lote ${lote} no está configurado como material serializado; no se aceptan series manuales.` }
     }
-    const desc = clean(m.descripcion || stocks?.[0]?.descripcion_material)
+    const desc = clean(m.descripcion || stocks?.[0]?.material)
     normalizados.push({ sku, material:sku, descripcion:desc, cantidad, lote:lote || 'NA', series })
   }
 
