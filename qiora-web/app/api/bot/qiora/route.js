@@ -469,12 +469,20 @@ function textoContiene(valor, termino) {
 }
 
 async function consultarPlacas(admin, perfil, payload) {
-  const termino = upper(payload.termino || payload.buscar || payload.valor)
+  const terminoOriginal = clean(payload.termino || payload.buscar || payload.valor)
+  const termino = upper(terminoOriginal).replace(/-/g, '')
+
   if (termino.length < 2 || termino.length > 80) {
     return { ok: false, error: 'La búsqueda debe tener entre 2 y 80 caracteres.' }
   }
 
-  const ffms = await listaFfmPermitidos(admin, perfil)
+  /*
+    CONSULTAR PLACAS es una consulta global de solo lectura.
+    No se limita por FFM del técnico.
+
+    PENDIENTES conserva su filtro por alcance mediante
+    listaFfmPermitidos() y dentroAlcance().
+  */
   const filas = await leerTodo(
     admin,
     'qiora_placas',
@@ -482,8 +490,9 @@ async function consultarPlacas(admin, perfil, payload) {
   )
 
   const encontrados = filas.filter(f => {
-    if (!dentroAlcance(f, ffms)) return false
-    return textoContiene(f.placa, termino) ||
+    const placaNormalizada = upper(f.placa).replace(/-/g, '')
+
+    return placaNormalizada.includes(termino) ||
       textoContiene(f.usuario_ffm, termino) ||
       textoContiene(f.numero_empleado, termino) ||
       textoContiene(f.numero_unico, termino) ||
@@ -491,10 +500,19 @@ async function consultarPlacas(admin, perfil, payload) {
   })
 
   if (!encontrados.length) {
-    return { ok: true, total: 0, mensaje: `🔎 CONSULTAR PLACAS\n\nSin resultados para: ${clean(payload.termino)}` }
+    return {
+      ok: true,
+      total: 0,
+      mensaje: `🔎 CONSULTAR PLACAS\n\nSin resultados para: ${terminoOriginal}`
+    }
   }
 
-  const lineas = ['🔎 CONSULTAR PLACAS', '', `Resultados: ${encontrados.length}`]
+  const lineas = [
+    '🔎 CONSULTAR PLACAS',
+    '',
+    `Resultados: ${encontrados.length}`
+  ]
+
   for (const f of encontrados.slice(0, 20)) {
     lineas.push('')
     lineas.push(`🚘 ${f.placa || 'SIN PLACA'} | ${f.numero_unico || 'SIN NÚMERO ÚNICO'}`)
@@ -503,11 +521,19 @@ async function consultarPlacas(admin, perfil, payload) {
     lineas.push(`Sucursal: ${f.sucursal || 'NO REGISTRADA'}`)
     lineas.push(`Vehículo: ${[f.marca, f.modelo].filter(Boolean).join(' ') || 'NO REGISTRADO'}`)
     lineas.push(`Último KM: ${f.ultimo_kilometraje ?? 'NO REGISTRADO'}`)
+    lineas.push(`Fecha último KM: ${f.fecha_ultimo_kilometraje || 'NO REGISTRADA'}`)
   }
 
-  if (encontrados.length > 20) lineas.push('', `Mostrando 20 de ${encontrados.length} resultados.`)
+  if (encontrados.length > 20) {
+    lineas.push('', `Mostrando 20 de ${encontrados.length} resultados.`)
+  }
 
-  return { ok: true, total: encontrados.length, resultados: encontrados.slice(0, 20), mensaje: lineas.join('\n').slice(0, 4000) }
+  return {
+    ok: true,
+    total: encontrados.length,
+    resultados: encontrados.slice(0, 20),
+    mensaje: lineas.join('\n').slice(0, 4000)
+  }
 }
 
 async function pendientesKilometraje(admin, perfil) {
