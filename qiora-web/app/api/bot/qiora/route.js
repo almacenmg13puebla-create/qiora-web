@@ -1116,7 +1116,7 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
   const privados = [...new Map(chatsPrivados.map(x=>[clean(x.telegram_chat_id),x])).values()]
     .map(x=>({ telegram_chat_id:clean(x.telegram_chat_id), usuario:x.usuario_almacen, mensaje }))
 
-  const distritos = [...new Set([upper(perfilOrigen?.distrito), upper(perfilDestino?.distrito)].filter(Boolean))]
+  const distritos = [...new Set([upper(validacion.perfil_origen.distrito),upper(validacion.perfil_destino.distrito)].filter(Boolean))]
   const { data: configs, error: cfgError } = await admin.from('qiora_distritos_telegram')
     .select('centro,chat_traspasos').in('centro',distritos)
   if (cfgError) throw new Error(cfgError.message)
@@ -1126,7 +1126,7 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
 
   const avisos = [
     ...privados.map(x=>({folio_control:folio,destino:`PRIVADO:${x.telegram_chat_id}`,estado:'PENDIENTE',telegram_notificado:false,actualizado_en:new Date().toISOString()})),
-    ...grupos.map(x=>({folio_control:folio,destino:`GRUPO:${x.distrito}`,estado:'PENDIENTE',telegram_notificado:false,actualizado_en:new Date().toISOString()}))
+    ...grupos.map(x=>({folio_control:folio,destino:`GRUPO_${x.distrito}`,estado:'PENDIENTE',telegram_notificado:false,actualizado_en:new Date().toISOString()}))
   ]
   if (avisos.length) {
     const { error: avisoError } = await admin.from('qiora_traspasos_avisos').upsert(avisos,{onConflict:'folio_control,destino'})
@@ -1155,6 +1155,69 @@ async function marcarAvisoTraspaso(admin, payload) {
   }).eq('folio_control',folio).eq('destino',destino)
   if (error) throw new Error(error.message)
   return { ok:true }
+}
+
+async function listarAvisosTraspasoPendientes(admin) {
+  const { data: avisos, error: avisoError } = await admin
+    .from('qiora_traspasos_avisos')
+    .select('folio_control,destino,estado')
+    .eq('estado','PENDIENTE')
+    .eq('telegram_notificado',false)
+    .order('actualizado_en',{ascending:true})
+    .limit(50)
+  if (avisoError) throw new Error(avisoError.message)
+  if (!avisos?.length) return { ok:true, avisos:[] }
+
+  const folios = [...new Set(avisos.map(x=>clean(x.folio_control)).filter(Boolean))]
+  const { data: movimientos, error: movimientoError } = await admin
+    .from('qiora_traspasos')
+    .select('folio_control,distrito,origen,destino,solicitado_por,tecnico_origen,tecnico_destino,estado,materiales,folio_sap,documento_sap,mensaje_sap,creado_en')
+    .in('folio_control',folios)
+  if (movimientoError) throw new Error(movimientoError.message)
+  const porFolio = new Map((movimientos || []).map(x=>[x.folio_control,x]))
+
+  const distritos = [...new Set(avisos.map(x=>{
+    const d=clean(x.destino)
+    return d.startsWith('GRUPO_') ? d.slice(6).toUpperCase() : ''
+  }).filter(Boolean))]
+  const gruposPorDistrito = new Map()
+  if (distritos.length) {
+    const { data: configs, error: configError } = await admin
+      .from('qiora_distritos_telegram')
+      .select('centro,chat_traspasos')
+      .in('centro',distritos)
+    if (configError) throw new Error(configError.message)
+    for (const c of configs || []) gruposPorDistrito.set(upper(c.centro),clean(c.chat_traspasos))
+  }
+
+  const salida=[]
+  for (const a of avisos) {
+    const mov=porFolio.get(a.folio_control)
+    if (!mov) continue
+    let chat=''
+    if (clean(a.destino).startsWith('GRUPO_')) {
+      const distrito=clean(a.destino).slice(6).toUpperCase()
+      chat=gruposPorDistrito.get(distrito) || ''
+    } else if (clean(a.destino).startsWith('PRIVADO:')) {
+      chat=clean(a.destino).slice(8)
+    }
+    if (!chat) continue
+    const materiales=Array.isArray(mov.materiales) ? mov.materiales : []
+    const validacion={
+      distrito:mov.distrito,
+      origen:mov.origen,
+      destino:mov.destino,
+      nombre_origen:mov.tecnico_origen,
+      nombre_destino:mov.tecnico_destino
+    }
+    salida.push({
+      folio_control:a.folio_control,
+      destino:a.destino,
+      telegram_chat_id:chat,
+      mensaje:mensajeTraspasoNuevo(a.folio_control,validacion,materiales,mov.solicitado_por || '')
+    })
+  }
+  return { ok:true, avisos:salida }
 }
 
 async function listarTraspasosBot(admin, perfil, payload) {
@@ -1190,6 +1253,7 @@ async function accionMigrada(admin, payload) {
   if (accion === 'telegram_registrar') {
     return registrarTelegram(admin, payload)
   }
+  if (accion === 'telegram_traspasos_avisos_pendientes') return listarAvisosTraspasoPendientes(admin)
 
   const perfil = await perfilTelegram(admin, payload.telegram_chat_id)
 
