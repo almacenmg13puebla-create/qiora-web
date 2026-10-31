@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import * as XLSX from 'xlsx'
+import { createDecipheriv } from 'node:crypto'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -12,6 +13,28 @@ const json = (body, status = 200) => NextResponse.json(body, {
 
 const clean = (v) => String(v ?? '').trim()
 const upper = (v) => clean(v).toUpperCase()
+
+function descifrarTokenTraspasos(valor) {
+  const cifrado = clean(valor)
+  if (!cifrado) return ''
+  const hex = clean(process.env.QIORA_TELEGRAM_ENCRYPTION_KEY)
+  if (!/^[a-f0-9]{64}$/i.test(hex)) {
+    throw new Error('QIORA_TELEGRAM_ENCRYPTION_KEY no esta configurada correctamente en Vercel.')
+  }
+  const partes = cifrado.split('.')
+  if (partes.length !== 3) throw new Error('TOKEN_TRASPASOS cifrado tiene formato invalido.')
+  try {
+    const [iv64, tag64, data64] = partes
+    const decipher = createDecipheriv('aes-256-gcm', Buffer.from(hex, 'hex'), Buffer.from(iv64, 'base64'))
+    decipher.setAuthTag(Buffer.from(tag64, 'base64'))
+    return Buffer.concat([
+      decipher.update(Buffer.from(data64, 'base64')),
+      decipher.final()
+    ]).toString('utf8')
+  } catch (e) {
+    throw new Error('No se pudo descifrar TOKEN_TRASPASOS. Verifica QIORA_TELEGRAM_ENCRYPTION_KEY.')
+  }
+}
 
 function verificarBot(request) {
   const esperado = clean(process.env.QIORA_BOT_API_KEY)
@@ -1210,11 +1233,20 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
 
   const distritos = [...new Set([upper(perfilOrigen?.distrito), upper(perfilDestino?.distrito), upper(validacion.distrito)].filter(Boolean))]
   const { data: configs, error: cfgError } = await admin.from('qiora_distritos_telegram')
-    .select('centro,chat_traspasos').in('centro',distritos)
+    .select('centro,chat_traspasos,token_cifrado').in('centro',distritos)
   if (cfgError) throw new Error(cfgError.message)
-  const grupos = [...new Map((configs || []).filter(x=>clean(x.chat_traspasos)).map(x=>[clean(x.chat_traspasos),{
-    chat_id:clean(x.chat_traspasos), distrito:clean(x.centro), mensaje
-  }])).values()]
+  const grupos = [...new Map((configs || [])
+    .filter(x=>clean(x.chat_traspasos) && clean(x.token_cifrado))
+    .map(x=>{
+      const tokenTraspasos = descifrarTokenTraspasos(x.token_cifrado)
+      const chat = clean(x.chat_traspasos)
+      return [`${clean(x.centro)}|${chat}`,{
+        chat_id:chat,
+        distrito:clean(x.centro),
+        telegram_bot_token:tokenTraspasos,
+        mensaje
+      }]
+    })).values()]
 
   const avisos = [
     ...privados.map(x=>({folio_control:folio,destino:`PRIVADO:${x.telegram_chat_id}`,estado:'PENDIENTE',telegram_notificado:false,actualizado_en:new Date().toISOString()})),
@@ -1376,10 +1408,14 @@ async function listarAvisosTraspasoPendientes(admin) {
   if (distritos.length) {
     const { data: configs, error: configError } = await admin
       .from('qiora_distritos_telegram')
-      .select('centro,chat_traspasos')
+      .select('centro,chat_traspasos,token_cifrado')
       .in('centro',distritos)
     if (configError) throw new Error(configError.message)
-    for (const c of configs || []) gruposPorDistrito.set(upper(c.centro),clean(c.chat_traspasos))
+    for (const c of configs || []) {
+      const chat = clean(c.chat_traspasos)
+      const token = clean(c.token_cifrado) ? descifrarTokenTraspasos(c.token_cifrado) : ''
+      gruposPorDistrito.set(upper(c.centro), { chat, token })
+    }
   }
 
   const salida=[]
@@ -1391,7 +1427,8 @@ async function listarAvisosTraspasoPendientes(admin) {
     let chat=''
     if (destino.startsWith('GRUPO_')) {
       const distrito=destino.slice(6).toUpperCase()
-      chat=gruposPorDistrito.get(distrito) || ''
+      const cfgGrupo = gruposPorDistrito.get(distrito) || {}
+      chat=clean(cfgGrupo.chat)
     } else if (destino.startsWith('PRIVADO:')) {
       chat=destino.slice(8)
     }
@@ -1403,10 +1440,13 @@ async function listarAvisosTraspasoPendientes(admin) {
       nombre_origen:mov.tecnico_origen,
       nombre_destino:mov.tecnico_destino
     }
+    const distritoGrupo = destino.startsWith('GRUPO_') ? destino.slice(6).toUpperCase() : ''
+    const cfgGrupoSalida = distritoGrupo ? (gruposPorDistrito.get(distritoGrupo) || {}) : {}
     salida.push({
       folio_control:a.folio_control,
       destino:a.destino,
       telegram_chat_id:chat,
+      telegram_bot_token:distritoGrupo ? clean(cfgGrupoSalida.token) : '',
       mensaje:info.final
         ? mensajeTraspasoFinal(mov)
         : mensajeTraspasoNuevo(a.folio_control,validacion,mov.materiales,mov.solicitado_por || '',mov.folio_sap || '')
