@@ -330,6 +330,7 @@ function normalizarPlaca(row) {
 
   return {
     numero_unico: numeroUnico,
+    distrito: null,
     placa: placa || null,
     estado_placa: clean(buscarCampo(row, 'ESTADO PLACA', 'Estado placa')) || null,
     sucursal: clean(buscarCampo(row, 'SUCURSAL', 'Sucursal')) || null,
@@ -345,6 +346,102 @@ function normalizarPlaca(row) {
       row, 'FECHA ULTIMO KILOMETRAJE', 'FECHA ÚLTIMO KILOMETRAJE', 'Fecha ultimo kilometraje', 'Fecha último kilometraje'
     )) || null,
     datos_completos: row,
+  }
+}
+
+
+function llaveEmpleado(v) {
+  return clean(v).replace(/\s+/g, '').toUpperCase()
+}
+
+async function enriquecerDistritosPlacas(admin, filas) {
+  const { data: usuarios, error } = await admin
+    .from('almacen_usuarios')
+    .select('distrito,usuario_ffm,ffm,numero_empleado,numero_empleado_odoo')
+    .eq('activo', true)
+
+  if (error) throw new Error(error.message)
+
+  const porFfm = new Map()
+  const porEmpleado = new Map()
+
+  function agregar(map, llave, distrito) {
+    const k = upper(llave)
+    const d = upper(distrito)
+    if (!k || !d) return
+
+    if (!map.has(k)) {
+      map.set(k, new Set())
+    }
+
+    map.get(k).add(d)
+  }
+
+  for (const u of usuarios || []) {
+    agregar(porFfm, u.usuario_ffm, u.distrito)
+    agregar(porFfm, u.ffm, u.distrito)
+
+    const n1 = llaveEmpleado(u.numero_empleado)
+    const n2 = llaveEmpleado(u.numero_empleado_odoo)
+
+    if (n1) {
+      if (!porEmpleado.has(n1)) porEmpleado.set(n1, new Set())
+      porEmpleado.get(n1).add(upper(u.distrito))
+    }
+
+    if (n2) {
+      if (!porEmpleado.has(n2)) porEmpleado.set(n2, new Set())
+      porEmpleado.get(n2).add(upper(u.distrito))
+    }
+  }
+
+  let identificadas = 0
+  let sinDistrito = 0
+  let conflictos = 0
+
+  const resultado = filas.map(fila => {
+    const candidatos = new Set()
+
+    const ffm = upper(fila.usuario_ffm)
+    const empleado = llaveEmpleado(fila.numero_empleado)
+
+    if (ffm && porFfm.has(ffm)) {
+      for (const d of porFfm.get(ffm)) {
+        if (d) candidatos.add(d)
+      }
+    }
+
+    if (empleado && porEmpleado.has(empleado)) {
+      for (const d of porEmpleado.get(empleado)) {
+        if (d) candidatos.add(d)
+      }
+    }
+
+    let distrito = null
+
+    if (candidatos.size === 1) {
+      distrito = [...candidatos][0]
+      identificadas++
+    } else if (candidatos.size > 1) {
+      conflictos++
+    } else {
+      sinDistrito++
+    }
+
+    return {
+      ...fila,
+      distrito
+    }
+  })
+
+  return {
+    filas: resultado,
+    diagnostico: {
+      total: filas.length,
+      identificadas,
+      sin_distrito: sinDistrito,
+      conflictos
+    }
   }
 }
 
@@ -367,10 +464,14 @@ async function cargarPlacasTelegram(admin, perfil, payload) {
   }
 
   const { nombreHoja, filas } = leerExcelPlacas(buffer)
-  const normalizadas = filas.map(normalizarPlaca).filter(x => x.numero_unico)
-  if (!normalizadas.length) {
+  const baseNormalizada = filas.map(normalizarPlaca).filter(x => x.numero_unico)
+
+  if (!baseNormalizada.length) {
     return { ok: false, error: 'No encontré registros con NÚMERO ÚNICO en el archivo.' }
   }
+
+  const enriquecido = await enriquecerDistritosPlacas(admin, baseNormalizada)
+  const normalizadas = enriquecido.filas
 
   const vistos = new Set()
   for (const fila of normalizadas) {
@@ -391,49 +492,176 @@ async function cargarPlacasTelegram(admin, perfil, payload) {
     registros: normalizadas.length,
     hoja: nombreHoja,
     resultado: data,
+    diagnostico_distritos: enriquecido.diagnostico,
     mensaje: [
       'PLACAS ACTUALIZADAS', '',
       `Archivo: ${fileName || 'Excel recibido'}`,
       `Hoja: ${nombreHoja}`,
-      `Registros cargados: ${normalizadas.length}`, '',
+      `Registros cargados: ${normalizadas.length}`,
+      `Con distrito identificado: ${enriquecido.diagnostico.identificadas}`,
+      `Sin distrito identificado: ${enriquecido.diagnostico.sin_distrito}`,
+      `Conflictos de distrito: ${enriquecido.diagnostico.conflictos}`,
+      '',
       'El catálogo anterior fue reemplazado correctamente.'
     ].join('\n')
   }
 }
 
-async function listaFfmPermitidos(admin, perfil) {
-  if (esAdminPadre(perfil)) return null
+function normalizarLlave(v) {
+  return upper(v)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
+function esCoordinador(p) {
+  return upper(p?.puesto) === 'COORDINADOR'
+}
+
+async function usuariosAlcancePendientes(admin, perfil) {
+  /*
+    ADMIN_PADRE ve todo el país.
+  */
+  if (esAdminPadre(perfil)) {
+    return null
+  }
+
+  const distrito = upper(perfil?.distrito)
+
+  if (!distrito) {
+    return []
+  }
+
+  /*
+    Administradores de distrito:
+    todos los usuarios activos de su distrito.
+  */
   if (esAdminDistrito(perfil)) {
-    const distrito = upper(perfil.distrito)
-    if (!distrito) return new Set()
-
     const { data, error } = await admin
       .from('almacen_usuarios')
-      .select('usuario_ffm,ffm')
+      .select('id,nombre,usuario_almacen,distrito,puesto,usuario_ffm,ffm,numero_empleado,numero_empleado_odoo,coordinador')
       .eq('activo', true)
       .eq('distrito', distrito)
 
     if (error) throw new Error(error.message)
-    return new Set((data || []).map(ffmUsuario).filter(Boolean))
+    return data || []
   }
 
+  /*
+    Coordinador:
+    únicamente técnicos/usuarios activos de su distrito
+    que lo tengan asignado en la columna coordinador.
+
+    Se compara contra nombre y usuario_almacen del coordinador
+    para soportar los dos formatos que ya existen en almacen_usuarios.
+  */
+  if (esCoordinador(perfil)) {
+    const { data, error } = await admin
+      .from('almacen_usuarios')
+      .select('id,nombre,usuario_almacen,distrito,puesto,usuario_ffm,ffm,numero_empleado,numero_empleado_odoo,coordinador')
+      .eq('activo', true)
+      .eq('distrito', distrito)
+
+    if (error) throw new Error(error.message)
+
+    const nombreCoordinador = normalizarLlave(perfil.nombre)
+    const usuarioCoordinador = normalizarLlave(perfil.usuario_almacen)
+
+    return (data || []).filter(u => {
+      const coordinador = normalizarLlave(u.coordinador)
+      return Boolean(
+        coordinador &&
+        (
+          coordinador === nombreCoordinador ||
+          coordinador === usuarioCoordinador
+        )
+      )
+    })
+  }
+
+  /*
+    Almacenista:
+    usuarios activos del mismo distrito y mismo almacén/código
+    cuando almacen_usuarios.usuario_almacen coincide.
+
+    Si tu catálogo usa otra columna específica para almacén,
+    esta parte se puede cambiar sin afectar los demás roles.
+  */
   if (esAlmacenista(perfil)) {
-    const almacen = upper(perfil.usuario_almacen)
-    if (!almacen) return new Set()
+    const almacen = normalizarLlave(perfil.usuario_almacen)
+    if (!almacen) return []
 
     const { data, error } = await admin
       .from('almacen_usuarios')
-      .select('usuario_ffm,ffm')
+      .select('id,nombre,usuario_almacen,distrito,puesto,usuario_ffm,ffm,numero_empleado,numero_empleado_odoo,coordinador')
       .eq('activo', true)
-      .eq('usuario_almacen', almacen)
+      .eq('distrito', distrito)
 
     if (error) throw new Error(error.message)
-    return new Set((data || []).map(ffmUsuario).filter(Boolean))
+
+    return (data || []).filter(
+      u => normalizarLlave(u.usuario_almacen) === almacen
+    )
   }
 
-  const propio = ffmUsuario(perfil)
-  return new Set(propio ? [propio] : [])
+  /*
+    Técnico y demás puestos:
+    solo su propio usuario.
+  */
+  return [perfil]
+}
+
+function indicesAlcance(usuarios) {
+  if (usuarios === null) {
+    return null
+  }
+
+  const ffms = new Set()
+  const empleados = new Set()
+  const nombres = new Set()
+
+  for (const u of usuarios || []) {
+    const ffm = normalizarLlave(u?.usuario_ffm || u?.ffm)
+    const empleado = normalizarLlave(
+      u?.numero_empleado ||
+      u?.numero_empleado_odoo
+    )
+    const nombre = normalizarLlave(u?.nombre)
+
+    if (ffm) ffms.add(ffm)
+    if (empleado) empleados.add(empleado)
+    if (nombre) nombres.add(nombre)
+  }
+
+  return {
+    ffms,
+    empleados,
+    nombres
+  }
+}
+
+function dentroAlcancePendientes(fila, indices) {
+  if (indices === null) {
+    return true
+  }
+
+  const ffm = normalizarLlave(fila?.usuario_ffm)
+  const empleado = normalizarLlave(fila?.numero_empleado)
+  const nombre = normalizarLlave(fila?.empleado_asignado)
+
+  /*
+    Se intenta primero FFM, después número de empleado
+    y finalmente nombre exacto.
+
+    Esto permite incluir placas con usuario_ffm NULL
+    cuando sí existe número de empleado, como JF3830B.
+  */
+  if (ffm && indices.ffms.has(ffm)) return true
+  if (empleado && indices.empleados.has(empleado)) return true
+  if (nombre && indices.nombres.has(nombre)) return true
+
+  return false
 }
 
 async function leerTodo(admin, tabla, columnas, orden = 'id') {
@@ -459,11 +687,6 @@ async function leerTodo(admin, tabla, columnas, orden = 'id') {
   return salida
 }
 
-function dentroAlcance(fila, ffms) {
-  if (ffms === null) return true
-  return ffms.has(upper(fila?.usuario_ffm))
-}
-
 function textoContiene(valor, termino) {
   return upper(valor).includes(termino)
 }
@@ -486,7 +709,7 @@ async function consultarPlacas(admin, perfil, payload) {
   const filas = await leerTodo(
     admin,
     'qiora_placas',
-    'id,numero_unico,placa,estado_placa,sucursal,empleado_asignado,numero_empleado,usuario_ffm,puesto_empleado,marca,modelo,numero_serie,ultimo_kilometraje,fecha_ultimo_kilometraje'
+    'id,numero_unico,distrito,placa,estado_placa,sucursal,empleado_asignado,numero_empleado,usuario_ffm,puesto_empleado,marca,modelo,numero_serie,ultimo_kilometraje,fecha_ultimo_kilometraje'
   )
 
   const encontrados = filas.filter(f => {
@@ -518,6 +741,7 @@ async function consultarPlacas(admin, perfil, payload) {
     lineas.push(`🚘 ${f.placa || 'SIN PLACA'} | ${f.numero_unico || 'SIN NÚMERO ÚNICO'}`)
     lineas.push(`FFM: ${f.usuario_ffm || 'NO REGISTRADO'}`)
     lineas.push(`Empleado: ${f.empleado_asignado || 'NO REGISTRADO'}${f.numero_empleado ? ` (${f.numero_empleado})` : ''}`)
+    lineas.push(`Distrito: ${f.distrito || 'NO IDENTIFICADO'}`)
     lineas.push(`Sucursal: ${f.sucursal || 'NO REGISTRADA'}`)
     lineas.push(`Vehículo: ${[f.marca, f.modelo].filter(Boolean).join(' ') || 'NO REGISTRADO'}`)
     lineas.push(`Último KM: ${f.ultimo_kilometraje ?? 'NO REGISTRADO'}`)
@@ -537,46 +761,110 @@ async function consultarPlacas(admin, perfil, payload) {
 }
 
 async function pendientesKilometraje(admin, perfil) {
-  const ffms = await listaFfmPermitidos(admin, perfil)
+  const usuarios = await usuariosAlcancePendientes(admin, perfil)
+  const indices = indicesAlcance(usuarios)
+
   const filas = await leerTodo(
     admin,
     'qiora_kilometrajes_pendientes',
-    'id,numero_unico,placa,empleado_asignado,numero_empleado,usuario_ffm,sucursal,modelo,semana',
+    'id,numero_unico,distrito,placa,empleado_asignado,numero_empleado,usuario_ffm,sucursal,modelo,semana',
     'id'
   )
 
-  const pendientes = filas.filter(f => dentroAlcance(f, ffms))
-  const semana = pendientes[0]?.semana || filas[0]?.semana || ''
+  let pendientes
+
+  if (esAdminPadre(perfil)) {
+    pendientes = filas
+  } else if (esAdminDistrito(perfil)) {
+    const distrito = upper(perfil?.distrito)
+    pendientes = filas.filter(
+      f => upper(f?.distrito) === distrito
+    )
+  } else {
+    pendientes = filas.filter(
+      f => dentroAlcancePendientes(f, indices)
+    )
+  }
+
+  const semana =
+    pendientes[0]?.semana ||
+    filas[0]?.semana ||
+    ''
+
+  const puesto = upper(perfil?.puesto)
+  const distrito = upper(perfil?.distrito)
+
+  let alcanceTexto = ''
+
+  if (esAdminPadre(perfil)) {
+    alcanceTexto = 'NACIONAL'
+  } else if (esAdminDistrito(perfil)) {
+    alcanceTexto = distrito || 'DISTRITO'
+  } else if (esCoordinador(perfil)) {
+    alcanceTexto = `COORDINADOR / ${distrito || 'SIN DISTRITO'}`
+  } else if (esAlmacenista(perfil)) {
+    alcanceTexto = `ALMACÉN ${perfil?.usuario_almacen || ''} / ${distrito || ''}`.trim()
+  } else {
+    alcanceTexto = `TÉCNICO / ${distrito || 'SIN DISTRITO'}`
+  }
 
   if (!pendientes.length) {
     return {
       ok: true,
       total: 0,
       semana,
-      mensaje: `⏳ KILOMETRAJES PENDIENTES${semana ? `\nSemana: ${semana}` : ''}\n\n✅ No hay vehículos pendientes en tu alcance.`
+      alcance: alcanceTexto,
+      mensaje: [
+        '⏳ KILOMETRAJES PENDIENTES',
+        semana ? `Semana: ${semana}` : '',
+        `Alcance: ${alcanceTexto}`,
+        '',
+        '✅ No hay vehículos pendientes en tu alcance.'
+      ].filter(Boolean).join('\n')
     }
   }
 
   const lineas = [
     '⏳ KILOMETRAJES PENDIENTES',
     semana ? `Semana: ${semana}` : '',
-    `Total: ${pendientes.length}`,
+    `Alcance: ${alcanceTexto}`,
+    `Total: ${pendientes.length}`
   ].filter(Boolean)
 
   for (const p of pendientes) {
-    const linea = `• ${p.empleado_asignado || p.usuario_ffm || 'SIN OPERADOR'} — ${p.placa || 'SIN PLACA'}${p.usuario_ffm ? ` — ${p.usuario_ffm}` : ''}`
-    if ((lineas.join('\n').length + linea.length + 2) > 3800) break
+    const identificador =
+      p.usuario_ffm ||
+      p.numero_empleado ||
+      'SIN FFM'
+
+    const linea =
+      `• ${p.empleado_asignado || 'SIN OPERADOR'} — ` +
+      `${p.placa || 'SIN PLACA'} — ${identificador}`
+
+    if (
+      (lineas.join('\n').length + linea.length + 2) >
+      3800
+    ) {
+      break
+    }
+
     lineas.push(linea)
   }
 
-  if (lineas.length - 3 < pendientes.length) {
-    lineas.push(`… Total pendientes: ${pendientes.length}`)
+  const mostrados =
+    Math.max(0, lineas.length - 4)
+
+  if (mostrados < pendientes.length) {
+    lineas.push(
+      `… Mostrando ${mostrados} de ${pendientes.length} pendientes.`
+    )
   }
 
   return {
     ok: true,
     total: pendientes.length,
     semana,
+    alcance: alcanceTexto,
     pendientes,
     mensaje: lineas.join('\n')
   }
