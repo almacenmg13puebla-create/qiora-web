@@ -10,19 +10,19 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
 
 const MENU = [
-  ['Accesos especiales', null],
-  ['Actualizar máximos', 'catalogos'],
-  ['Materiales', 'materiales'],
-  ['Distritos', 'distritos'],
-  ['Horarios', 'horarios'],
-  ['Costos SAP', 'costos_sap'],
-  ['Costos ODOO', 'costos_odoo'],
-  ['Herramienta ODOO', 'herramienta_odoo_inventario'],
-  ['Exportar fechas', null],
-  ['Usuarios', 'usuarios'],
-  ['RECUS TP', null],
-  ['Actualizar macro Excel', null],
-  ['Grupos de materiales', 'grupos_materiales']
+  ['Accesos especiales', null, 'admin_padre'],
+  ['Actualizar máximos', 'catalogos', 'materiales'],
+  ['Materiales', 'materiales', 'materiales'],
+  ['Distritos', 'distritos', 'admin_padre'],
+  ['Horarios', 'horarios', 'configuracion'],
+  ['Costos SAP', 'costos_sap', 'configuracion'],
+  ['Costos ODOO', 'costos_odoo', 'odoo'],
+  ['Herramienta ODOO', 'herramienta_odoo_inventario', 'odoo'],
+  ['Exportar fechas', null, 'admin_padre'],
+  ['Usuarios', 'usuarios', 'usuarios'],
+  ['RECUS TP', null, 'admin_padre'],
+  ['Actualizar macro Excel', null, 'admin_padre'],
+  ['Grupos de materiales', 'grupos_materiales', 'materiales']
 ]
 
 const CAMPOS = {
@@ -146,6 +146,8 @@ export default function ConfiguracionPage() {
 
   const [permitido, setPermitido] =
     useState(false)
+
+  const [perfilActual, setPerfilActual] = useState(null)
 
   const [seccion, setSeccion] =
     useState('')
@@ -305,22 +307,23 @@ export default function ConfiguracionPage() {
           return
         }
 
-        const {
-          data,
-          error: e
-        } =
-          await supabase.rpc(
-            'qiora_config_es_admin'
-          )
+        const [adminResult, perfilResult] = await Promise.all([
+          supabase.rpc('qiora_config_es_admin'),
+          supabase.rpc('qiora_mi_perfil')
+        ])
 
-        if (e) {
-          throw e
-        }
+        if (adminResult.error) throw adminResult.error
+        if (perfilResult.error) throw perfilResult.error
+
+        const perfil = perfilResult.data
+        const puesto = String(perfil?.puesto || '').trim().toUpperCase()
+        const esPadreActual = puesto === 'ADMIN_PADRE'
+        const autorizado = esPadreActual || perfil?.administrar_permisos === true
 
         if (vivo) {
-          setPermitido(
-            data === true
-          )
+          setPerfilActual(perfil || null)
+          setEsPadre(esPadreActual)
+          setPermitido(adminResult.data === true && autorizado)
         }
 
       } catch (e) {
@@ -1595,12 +1598,30 @@ export default function ConfiguracionPage() {
   }
 
   /*
+    PERMISOS DEL MENU DE CONFIGURACION
+    Las opciones sin permiso explícito quedan reservadas a ADMIN_PADRE.
+  */
+  const puedeAbrirMenu = permiso => {
+    if (esPadre) return true
+    if (!perfilActual || !permiso || permiso === 'admin_padre') return false
+    return perfilActual[permiso] === true
+  }
+
+  const menuVisible = MENU.filter(([, , permiso]) => puedeAbrirMenu(permiso))
+
+  /*
     ABRIR SECCIONES
   */
 
   function abrir(
     tipo
   ) {
+    const opcion = MENU.find(item => item[1] === tipo)
+    if (opcion && !puedeAbrirMenu(opcion[2])) {
+      setError('No tienes permiso para abrir esta sección.')
+      return
+    }
+
     if (
       tipo ===
       'catalogos'
@@ -1798,7 +1819,11 @@ export default function ConfiguracionPage() {
 
             <div style={css.menu}>
 
-              {MENU.map(
+              {menuVisible.length === 0 && (
+                <p style={css.nota}>No tienes opciones de configuración delegadas.</p>
+              )}
+
+              {menuVisible.map(
                 (
                   [
                     label,
