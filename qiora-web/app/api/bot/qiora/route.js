@@ -1116,7 +1116,7 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
   const privados = [...new Map(chatsPrivados.map(x=>[clean(x.telegram_chat_id),x])).values()]
     .map(x=>({ telegram_chat_id:clean(x.telegram_chat_id), usuario:x.usuario_almacen, mensaje }))
 
-  const distritos = [...new Set([upper(validacion.perfil_origen.distrito),upper(validacion.perfil_destino.distrito)].filter(Boolean))]
+  const distritos = [...new Set([upper(perfilOrigen?.distrito), upper(perfilDestino?.distrito)].filter(Boolean))]
   const { data: configs, error: cfgError } = await admin.from('qiora_distritos_telegram')
     .select('centro,chat_traspasos').in('centro',distritos)
   if (cfgError) throw new Error(cfgError.message)
