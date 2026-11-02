@@ -1245,18 +1245,13 @@ export default function ConfiguracionPage() {
           nuevoUsuario
             .usuario_almacen
         ) ||
-        !nuevoUsuario.clave ||
         !textoNumero(
           nuevoUsuario.nombre
         )
       ) {
         throw new Error(
-          'Usuario, clave y nombre son obligatorios.'
+          'Usuario y nombre son obligatorios.'
         )
-      }
-
-      if (!/^\d{4}$/.test(String(nuevoUsuario.clave ?? ''))) {
-        throw new Error('La clave inicial debe contener exactamente 4 dígitos numéricos.')
       }
 
       const {
@@ -1334,7 +1329,7 @@ export default function ConfiguracionPage() {
       await cargarUsuarios()
 
       setAviso(
-        'Usuario creado correctamente.'
+        `Usuario creado. Acceso: ${resultado.login}. Clave temporal: ${resultado.clave_temporal}. Guárdala ahora y entrégala por un canal seguro.`
       )
 
     } catch (e) {
@@ -2567,7 +2562,6 @@ export default function ConfiguracionPage() {
 
                   {[
                     ['usuario_almacen', 'Usuario / Almacén'],
-                    ['clave', 'Clave'],
                     ['nombre', 'Nombre'],
                     ['telefono', 'Teléfono'],
                     ['puesto', 'Puesto'],
