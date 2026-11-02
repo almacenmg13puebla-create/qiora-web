@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import nodemailer from 'nodemailer'
 
 export const runtime = 'nodejs'
 
@@ -14,10 +15,10 @@ export async function POST(request) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const publicKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  const resendKey = process.env.RESEND_API_KEY
-  const remitente = process.env.QIORA_CORREO_REMITENTE
+  const smtpUsuario = process.env.SMTP_USER
+  const smtpClave = process.env.SMTP_PASSWORD
   const sitio = process.env.QIORA_URL_PUBLICA
-  if (!url || !publicKey || !serviceKey || !resendKey || !remitente || !sitio) {
+  if (!url || !publicKey || !serviceKey || !smtpUsuario || !smtpClave || !sitio) {
     return respuesta({ ok: false, error: 'Falta configurar el servicio de correo en Vercel.' }, 503)
   }
   if (sitio !== 'https://sistematraspasos.com') {
@@ -68,17 +69,24 @@ export async function POST(request) {
   const enlace = `${sitio}/restablecer-clave?token_hash=${encodeURIComponent(token)}`
   const titulo = `Recuperación de contraseña QIORA: ${target.usuario_almacen}.${target.distrito}`
   const texto = `Se solicitó restablecer la contraseña de tu cuenta QIORA (${target.usuario_almacen}.${target.distrito}).\n\nAbre este enlace de uso único para establecer una nueva contraseña:\n${enlace}\n\nSi no solicitaste este cambio, informa a tu administrador. No compartas este enlace.`
-  let envio
   try {
-    envio = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: remitente, to: [destino], subject: titulo, text: texto }),
-      cache: 'no-store',
+    const transporte = nodemailer.createTransport({
+      host: 'smtp.gmail.com', port: 465, secure: true,
+      auth: { user: smtpUsuario, pass: smtpClave },
+      connectionTimeout: 15000, greetingTimeout: 10000, socketTimeout: 20000,
     })
-  } catch {
-    return respuesta({ ok: false, error: 'No se pudo contactar al proveedor de correo.' }, 502)
+    const resultado = await transporte.sendMail({
+      from: smtpUsuario,
+      to: destino,
+      subject: titulo,
+      text: texto,
+    })
+    if (!resultado.accepted?.some(x => x.toLowerCase() === destino.toLowerCase())) {
+      return respuesta({ ok: false, error: 'Gmail no confirmó la aceptación del destinatario.' }, 502)
+    }
+  } catch (err) {
+    console.error('Error SMTP QIORA', err?.code || 'sin_codigo')
+    return respuesta({ ok: false, error: 'No se pudo enviar desde Gmail. Revisa la configuración SMTP.' }, 502)
   }
-  if (!envio.ok) return respuesta({ ok: false, error: 'El proveedor no aceptó el envío. Comprueba el remitente y su configuración.' }, 502)
-  return respuesta({ ok: true, mensaje: 'Solicitud de envío aceptada por el proveedor. Confirma la recepción con el técnico.' })
+  return respuesta({ ok: true, mensaje: 'Gmail aceptó el mensaje. Confirma su recepción con el técnico.' })
 }
