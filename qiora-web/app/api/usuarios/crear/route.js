@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { randomBytes } from 'node:crypto'
 
 export const runtime = 'nodejs'
 const fail = (error, status=400) => NextResponse.json({ok:false,error},{status})
@@ -32,11 +33,10 @@ export async function POST(request) {
   const usuario_almacen=norm(body.usuario_almacen)
   const nombre=String(body.nombre ?? '').trim()
   const puesto=norm(body.puesto)
-  const clave=String(body.clave ?? '')
+  const claveTemporal=randomBytes(18).toString('base64url')+'Aa1!'
   if (!/^[A-Z0-9_-]{2,40}$/.test(usuario_almacen)) return fail('Usuario/almacen invalido.')
   if (nombre.length<3 || nombre.length>200) return fail('Nombre invalido.')
   if (!puesto || puesto.startsWith('ADMIN')) return fail('No puedes asignar puestos administrativos.',403)
-  if (!/^\d{4}$/.test(clave)) return fail('La clave inicial debe contener exactamente 4 dígitos numéricos.')
   const {data:existing,error:existingError} = await admin.from('almacen_usuarios')
     .select('id').eq('usuario_almacen',usuario_almacen).eq('distrito',distrito).limit(1)
   if (existingError) return fail('Error al verificar duplicados.',500)
@@ -53,7 +53,7 @@ export async function POST(request) {
   }
   // Compatibilidad con el esquema de inicio de sesion existente.
   const {data:created,error:createError} = await admin.auth.admin.createUser({
-    email:`${usuario_almacen.toLowerCase()}.${distrito.toLowerCase()}@qiora.local`,password:`QIORA#${clave}`,email_confirm:true
+    email:`${usuario_almacen.toLowerCase()}.${distrito.toLowerCase()}@qiora.local`,password:`QIORA#${claveTemporal}`,email_confirm:true,app_metadata:{force_password_change:true,qiora_distrito:distrito}
   })
   if (createError || !created?.user) return fail('Error creando Auth: '+(createError?.message||''))
   const uid=created.user.id
@@ -65,5 +65,5 @@ export async function POST(request) {
     if (rollbackError) return fail('Error de perfil y fallo de compensacion; requiere revision administrativa.',500)
     return fail('No se pudo crear el usuario: '+(profileError?.message || 'Supabase no confirmó el guardado.'))
   }
-  return NextResponse.json({ok:true,usuario_almacen,distrito})
+  return NextResponse.json({ok:true,usuario_almacen,distrito,login:`${usuario_almacen}.${distrito}`,clave_temporal:claveTemporal},{headers:{'Cache-Control':'no-store'}})
 }
