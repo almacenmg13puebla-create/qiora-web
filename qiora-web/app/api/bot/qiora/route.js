@@ -1579,6 +1579,169 @@ async function menuStockTelegram(perfil) {
 // No se simula que las consultas de RECOLECCIONES o CRITICOS esten migradas.
 // Su implementacion requiere conocer sus tablas, filtros y reglas reales.
 
+
+// EQUIPOS 2026: consultas de solo lectura, siempre limitadas al distrito SAT del chat.
+// Normalizar solamente almacenes numericos, conservando los identificadores ME13, etc.
+function normalizarAlmacenEquipo(v) {
+  const raw = upper(v)
+  if (!raw) return ''
+  return /^\d+$/.test(raw) ? String(BigInt(raw)) : raw
+}
+function variantesAlmacenEquipo(v) {
+  const n = normalizarAlmacenEquipo(v)
+  return /^\d+$/.test(n) ? [...new Set([n, n.padStart(4, '0')])] : [n]
+}
+function tienePermisoEquipo(p, columna) {
+  return Boolean(p && p.activo === true && p[columna] === true)
+}
+function fechaMexicoHoy() {
+  const partes = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date())
+  const v = Object.fromEntries(partes.map(x => [x.type, x.value]))
+  return Date.UTC(Number(v.year), Number(v.month) - 1, Number(v.day)) / 86400000
+}
+function fechaSerialSAP(v) {
+  const raw = clean(v)
+  if (!/^\d{5}(?:\.\d+)?$/.test(raw)) return null
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 30000 || n > 100000) return null
+  return Math.floor(n) - 25569 // Excel 1899-12-30 a epoch 1970-01-01
+}
+function soloTexto(v, longitud = 80) { return clean(v).replace(/[\r\n\t]+/g, ' ').slice(0, longitud) }
+async function obtenerFilasPaginas(queryFactory, max = 15000) {
+  let resultado = []
+  for (let desde = 0; desde < max; desde += 1000) {
+    const { data, error } = await queryFactory(desde, Math.min(desde + 999, max - 1))
+    if (error) throw new Error(error.message)
+    const lote = data || []
+    resultado.push(...lote)
+    if (lote.length < 1000) return resultado
+  }
+  throw new Error('La consulta supera el limite de seguridad; reduce el alcance del distrito.')
+}
+async function almacenesAutorizados(admin, perfil, paraTodos = false) {
+  const distrito = upper(perfil?.distrito)
+  if (!distrito) return []
+  const usuarios = await obtenerFilasPaginas((a,b) => admin.from('almacen_usuarios')
+    .select('usuario_almacen,distrito').eq('activo', true)
+    .order('id', {ascending:true}).range(a,b), 5000)
+  const asignaciones = new Map()
+  for (const u of usuarios) {
+    const k = normalizarAlmacenEquipo(u.usuario_almacen)
+    if (!k) continue
+    if (!asignaciones.has(k)) asignaciones.set(k, new Set())
+    asignaciones.get(k).add(upper(u.distrito))
+  }
+  const verificados = [...asignaciones.entries()].filter(([,d])=>d.size === 1 && d.has(distrito)).map(([a])=>a)
+  return paraTodos ? verificados : verificados.filter(a=>a===normalizarAlmacenEquipo(perfil.usuario_almacen))
+}
+function esObjetivoTodos(objetivo) { return upper(objetivo) === 'TODOS' }
+function puedeVerTodos(p) {
+  return esAdmin(p) || p?.acceso_almacen === true || p?.acceso_coordinador === true
+}
+function objetivoSolicitado(p, objetivo) {
+  const raw = upper(objetivo)
+  const propio = normalizarAlmacenEquipo(p?.usuario_almacen)
+  if (!raw) return {todos: puedeVerTodos(p), almacen: propio}
+  if (raw === 'TODOS') {
+    if (!puedeVerTodos(p)) return {error:'No tienes permiso para consultar todos los almacenes.'}
+    return {todos:true, almacen:''}
+  }
+  if (!/^[A-Z0-9_-]{1,30}$/.test(raw)) return {error:'Almacen invalido.'}
+  const elegido = normalizarAlmacenEquipo(raw)
+  if (elegido !== propio && !puedeVerTodos(p)) return {error:'Solo puedes consultar tu propio almacen.'}
+  return {todos:false, almacen:elegido}
+}
+async function equiposCriticosTelegram(admin, p, payload) {
+  if (!tienePermisoEquipo(p, 'equipos')) return {ok:false,error:'No tienes permiso EQUIPOS en SAT.'}
+  const filtro = objetivoSolicitado(p, payload.objetivo)
+  if (filtro.error) return {ok:false,error:filtro.error}
+  const distrito = upper(p.distrito)
+  // Solo almacenes identificados en usuarios activos del distrito; excluye ME13 y desconocidos.
+  const permitidos = new Set(await almacenesAutorizados(admin, p, filtro.todos))
+  const rows = await obtenerFilasPaginas((a,b) => admin.from('iq09_equipos')
+    .select('almacen,serie,material,descripcion,fecha_modificacion')
+    .eq('distrito',distrito).order('id',{ascending:true}).range(a,b))
+  const hoy = fechaMexicoHoy()
+  const encontrados = rows.map(x => {
+    const almacen = normalizarAlmacenEquipo(x.almacen)
+    const serial = fechaSerialSAP(x.fecha_modificacion)
+    const dias = serial === null ? null : hoy - serial
+    if (!/^\d+$/.test(almacen) || !permitidos.has(almacen) || dias === null || dias <= 30 || dias > 3650) return null
+    return {...x,almacen,dias}
+  }).filter(Boolean).sort((a,b) => b.dias - a.dias)
+  const porAlmacen = new Map()
+  for (const item of encontrados) porAlmacen.set(item.almacen,(porAlmacen.get(item.almacen)||0)+1)
+  const resumen = [...porAlmacen.entries()].sort((a,b)=>b[1]-a[1]).slice(0,12)
+    .map(([a,n])=>`Almacen ${a}: ${n} equipo(s)`)
+  const detalle = encontrados.slice(0,15).map(x=>`- ${soloTexto(x.serie,40)} | Alm. ${x.almacen} | ${x.dias} dias | ${soloTexto(x.descripcion||x.material,65)}`)
+  return {ok:true,total:encontrados.length,distrito,
+    mensaje:[`EQUIPOS CRITICOS - ${distrito}`,`Equipos con mas de 30 dias desde fecha_modificacion SAP: ${encontrados.length}`,
+    'NOTA: fecha_modificacion no esta comprobada como fecha de ingreso a cajuela.',
+    '',...resumen,'','Primeros 15 registros:',...detalle].join('\n').slice(0,3800)}
+}
+async function recoleccionesPendientesTelegram(admin, p, payload) {
+  if (!tienePermisoEquipo(p, 'ver_recolecciones')) return {ok:false,error:'No tienes permiso VER RECOLECCIONES en SAT.'}
+  const filtro = objetivoSolicitado(p, payload.objetivo)
+  if (filtro.error) return {ok:false,error:filtro.error}
+  const almacenes = await almacenesAutorizados(admin,p,filtro.todos)
+  const validos = new Set(almacenes)
+  if (!validos.size) return {ok:true,total:0,mensaje:'No hay almacenes autorizados.'}
+  // El origen historico no tiene distrito. Se filtra en el servidor por almacenes
+  // asignados a usuarios activos del mismo distrito; nunca se muestran sin asignacion.
+  const rows = await obtenerFilasPaginas((a,b)=>admin.from('recolecciones_equipos')
+    .select('almacen,serie,material,descripcion,tecnico,estado,dias_en_cajuela')
+    .eq('estado','PENDIENTE').order('id',{ascending:true}).range(a,b))
+  const elegidos = rows.filter(x => validos.has(normalizarAlmacenEquipo(x.almacen)))
+  const counts = new Map()
+  for (const x of elegidos) {
+    const k = normalizarAlmacenEquipo(x.almacen)
+    counts.set(k, (counts.get(k)||0)+1)
+  }
+  const lineas = [...counts.entries()].sort((a,b)=>b[1]-a[1]).slice(0,22)
+    .map(([k,v])=>`Almacen ${k}: ${v} pendiente(s)`)
+  const detalle = elegidos.slice(0,12).map(x => `- ${soloTexto(x.serie,36)} | ${soloTexto(x.material||x.descripcion,70)} | Alm. ${normalizarAlmacenEquipo(x.almacen)}`)
+  return {ok:true,distrito:upper(p.distrito),total:elegidos.length,
+    mensaje:[`RECOLECCIONES POR ENTREGAR - ${upper(p.distrito)}`,
+    `Pendientes de almacenes asociados a usuarios activos del distrito: ${elegidos.length}`,
+    'Los almacenes sin asignacion verificada se excluyen.', '',...lineas,'','Primeros 12 registros:',...detalle]
+      .join('\n').slice(0,3800)}
+}
+async function stockEquiposTelegram(admin,p,payload) {
+  if (!tienePermisoEquipo(p,'equipos') && !tienePermisoEquipo(p,'stock_tecnicos'))
+    return {ok:false,error:'No tienes permiso de STOCK o EQUIPOS en SAT.'}
+  const filtro = objetivoSolicitado(p,payload.objetivo)
+  if (filtro.error) return {ok:false,error:filtro.error}
+  const distrito = upper(p.distrito)
+  const term = upper(payload.consulta).slice(0,60)
+  const almacenes = filtro.todos ? null : variantesAlmacenEquipo(filtro.almacen)
+  if (term && !/^[A-Z0-9 ._\/-]{1,60}$/.test(term)) return {ok:false,error:'Consulta contiene caracteres no permitidos.'}
+  const obtener = async (tabla,campos) => {
+    let q = admin.from(tabla).select(campos,{count:'exact'}).eq('distrito',distrito)
+    if (almacenes) q=q.in('almacen',almacenes)
+    if (term) {
+      const seguro=term.replace(/[%_]/g,'\\$&')
+      q=q.or(`material.ilike.%${seguro}%,descripcion.ilike.%${seguro}%`)
+    }
+    const {data,error,count}=await q.order('id',{ascending:true}).limit(30)
+    if(error) throw new Error(error.message)
+    return {rows:data||[],count:count||0}
+  }
+  const [tec,central]=await Promise.all([
+    obtener('stock_tecnicos','almacen,sku,material,descripcion,disponible,tecnico'),
+    obtener('stock_almacen','almacen,material,descripcion,disponible,denominacion_almacen')
+  ])
+  const ver = (data) => data.rows.slice(0,12).map(x =>
+    `- Alm. ${soloTexto(x.almacen,12)} | ${soloTexto(x.material||x.sku,16)} | ${soloTexto(x.descripcion,46)} | Disp. ${x.disponible??0}`)
+  return {ok:true,distrito,total_resultados:tec.count+central.count,
+    mensaje:[`STOCK - ${distrito}`, `Consulta: ${term||'TODOS'} | Almacen: ${filtro.todos?'TODOS':filtro.almacen}`,
+    `Stock tecnicos: ${tec.count} registro(s)`,...ver(tec),'',
+    `Stock almacen: ${central.count} registro(s)`,...ver(central),
+    '', 'Mostrando hasta 12 filas por origen.'].join('\n').slice(0,3800),
+    hayTPE:false,tieneLoteTPE:false,series_filtros:[],total_series_disponibles:0}
+}
+
 async function accionMigrada(admin, payload) {
   const accion = clean(payload.accion || payload.action)
 
@@ -1591,6 +1754,9 @@ async function accionMigrada(admin, payload) {
 
   const perfil = await perfilTelegram(admin, payload.telegram_chat_id)
   if (accion === 'telegram_stock_menu') return menuStockTelegram(perfil)
+  if (accion === 'telegram_stock') return stockEquiposTelegram(admin, perfil, payload)
+  if (accion === 'telegram_recolecciones_por_entregar') return recoleccionesPendientesTelegram(admin, perfil, payload)
+  if (accion === 'telegram_criticos') return equiposCriticosTelegram(admin, perfil, payload)
   if (accion === 'telegram_sap_crear_comando') return crearComandoSAPEnSupabase(admin, perfil, payload)
 
   if (accion === 'telegram_traspaso_nombre_almacen') return buscarAlmacenTraspaso(admin, perfil, payload)
