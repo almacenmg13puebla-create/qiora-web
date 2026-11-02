@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import * as XLSX from 'xlsx'
-import { createDecipheriv, randomUUID } from 'node:crypto'
+import { createDecipheriv } from 'node:crypto'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -1514,17 +1514,19 @@ async function crearComandoSAPEnSupabase(admin, perfil, payload) {
     if (!/^[A-Z0-9_-]{4,80}$/.test(serie)) return {ok:false,error:'Serie invalida.'}
   }
   const parametro = clean(payload.parametro).slice(0,200)
-  // UUID para unicidad, prefijo SAP para mantener el contrato historico del ID.
-  const id = 'SAP-' + new Date().toISOString().replace(/[-:TZ.]/g,'').slice(0,14) + '-' + randomUUID()
+  // id_comando es UUID con DEFAULT gen_random_uuid() en Supabase.
+  // Se omite el id para que PostgreSQL lo genere.
   const fila = {
-    id_comando:id,
-    fecha_solicitud:new Date().toISOString(),
+    fecha_solicitud: new Date().toISOString(),
     distrito,
-    usuario_solicita:clean(perfil.usuario_almacen),
-    nombre_solicita:clean(perfil.nombre),
-    telegram_chat_id:chat,
-    proceso, estado:'PENDIENTE',
-    intentos:0, notificado:false,
+    usuario_solicita: clean(perfil.usuario_almacen),
+    nombre_solicita: clean(perfil.nombre),
+    telegram_chat_id: chat,
+    proceso,
+    estado: 'PENDIENTE',
+    intentos: 0,
+    telegram_notificado: false,
+    notificado: 'NO',
     parametro: parametro || null,
     equipo: equipo || null,
     serie: serie || null
@@ -1537,23 +1539,23 @@ async function crearComandoSAPEnSupabase(admin, perfil, payload) {
 
 async function notificacionesComandosSAP(admin) {
   const {data,error} = await admin.from('comandos_sap')
-    .select('id_comando,telegram_chat_id,distrito,proceso,estado,resultado,pc_ejecutora,resultado_mac,resultado_recu')
+    .select('id_comando,telegram_chat_id,distrito,proceso,estado,resultado,pc_ejecutora,resultado_mac')
     .in('estado',['REALIZADO','ERROR','NO REALIZADO'])
-    .eq('notificado',false)
+    .eq('telegram_notificado',false)
     .order('fecha_solicitud',{ascending:true}).limit(50)
   if(error) throw new Error(error.message)
   return {ok:true,avisos:(data||[]).filter(x=>clean(x.telegram_chat_id)).map(x=>({
     id_comando:x.id_comando, telegram_chat_id:x.telegram_chat_id,
     distrito:x.distrito, proceso:x.proceso, estado:x.estado,
-    pc:x.pc_ejecutora || '', resultado:x.resultado || x.resultado_mac || x.resultado_recu || ''
+    pc:x.pc_ejecutora || '', resultado:x.resultado || x.resultado_mac || ''
   }))}
 }
 
 async function marcarComandoSAPNotificado(admin,payload) {
   const id=clean(payload.id_comando)
-  if(!/^SAP-[A-Za-z0-9-]{10,100}$/.test(id)) return {ok:false,error:'ID de comando invalido.'}
-  const {data,error}=await admin.from('comandos_sap').update({notificado:true})
-    .eq('id_comando',id).eq('notificado',false)
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) return {ok:false,error:'ID de comando invalido.'}
+  const {data,error}=await admin.from('comandos_sap').update({telegram_notificado:true,telegram_notificado_en:new Date().toISOString(),notificado:'SI'})
+    .eq('id_comando',id).eq('telegram_notificado',false)
     .in('estado',['REALIZADO','ERROR','NO REALIZADO']).select('id_comando')
   if(error) throw new Error(error.message)
   return {ok:true,actualizado:(data||[]).length>0}
