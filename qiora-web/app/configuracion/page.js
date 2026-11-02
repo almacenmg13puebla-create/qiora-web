@@ -204,6 +204,8 @@ export default function ConfiguracionPage() {
     setCreandoUsuario
   ] = useState(false)
 
+  const [mostrarCargaTecnicos, setMostrarCargaTecnicos] = useState(false)
+
   const [
     nuevoUsuario,
     setNuevoUsuario
@@ -2499,21 +2501,40 @@ export default function ConfiguracionPage() {
               Gestión de Usuarios
             </h2>
 
-            <button
-              style={css.boton}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                style={css.boton}
+                onClick={() => {
+                  setCreandoUsuario(x => !x)
+                  setMostrarCargaTecnicos(false)
+                  setUsuarioEditando(null)
+                }}
+              >
+                + Crear usuario
+              </button>
 
-              onClick={() => {
-                setCreandoUsuario(
-                  x => !x
-                )
+              <button
+                type="button"
+                style={{ ...css.boton, fontSize: 13, padding: '8px 12px' }}
+                onClick={() => {
+                  setMostrarCargaTecnicos(x => !x)
+                  setCreandoUsuario(false)
+                  setUsuarioEditando(null)
+                }}
+              >
+                Cargar Técnicos
+              </button>
+            </div>
 
-                setUsuarioEditando(
-                  null
-                )
-              }}
-            >
-              + Crear usuario
-            </button>
+            {mostrarCargaTecnicos && (
+              <ImportarUsuariosExcel
+                supabase={supabase}
+                esPadre={esPadre}
+                distritoActual={perfilActual?.distrito || ''}
+                onUsuariosCreados={cargarUsuarios}
+              />
+            )}
 
             {creandoUsuario && (
 
@@ -2627,13 +2648,6 @@ export default function ConfiguracionPage() {
               </div>
 
             )}
-
-            <ImportarUsuariosExcel
-               supabase={supabase}
-               esPadre={esPadre}
-               distritoActual={perfilActual?.distrito || ''}
-               onUsuariosCreados={cargarUsuarios}
-/>
 
              {usuarioEditando && (
 
