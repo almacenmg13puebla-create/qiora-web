@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import * as XLSX from 'xlsx'
-import { createDecipheriv } from 'node:crypto'
+import { createDecipheriv, randomUUID } from 'node:crypto'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -1482,6 +1482,83 @@ async function listarTraspasosBot(admin, perfil, payload) {
   return { ok:true, traspasos:rows, mensaje:lineas.join('\n').slice(0,3900) }
 }
 
+// Cola de comandos SAP (Supabase). El cliente Telegram nunca accede a service_role.
+const SAP_PROCESOS = new Set([
+  'ACTUALIZAR_TODO', 'MB52', 'IQ09', 'STOCK_ALMACEN', 'STOCK_TECNICOS',
+  'TRASPASOS_PENDIENTES_ENTRADA', 'TRASPASOS_SAP', 'DETENER_TRASPASOS',
+  'CONSULTA_MAC_ONT', 'CONSULTA_MAC_STB', 'ENTRADA_RECU'
+])
+const SAP_PROCESOS_CONSULTA = new Set(['CONSULTA_MAC_ONT', 'CONSULTA_MAC_STB'])
+const SAP_PROCESOS_COORDINADOR = new Set(['ACTUALIZAR_TODO', 'TRASPASOS_PENDIENTES_ENTRADA'])
+
+function permiteComandoSAP(perfil, proceso) {
+  if (!perfil || perfil.activo !== true) return false
+  if (SAP_PROCESOS_CONSULTA.has(proceso)) return true
+  if (esAdmin(perfil)) return true
+  return upper(perfil.puesto) === 'COORDINADOR' && SAP_PROCESOS_COORDINADOR.has(proceso)
+}
+
+async function crearComandoSAPEnSupabase(admin, perfil, payload) {
+  if (!perfil) return { ok:false, error:'Telegram no esta vinculado a un usuario activo.' }
+  const proceso = upper(payload.proceso)
+  if (!SAP_PROCESOS.has(proceso)) return { ok:false, error:'Proceso SAP no permitido.' }
+  if (!permiteComandoSAP(perfil, proceso)) return { ok:false, error:'No tienes permisos para este comando SAP.' }
+  const distrito = upper(perfil.distrito)
+  if (!distrito) return { ok:false, error:'Usuario sin distrito configurado.' }
+  const chat = clean(perfil.telegram_chat_id)
+  if (!chat || chat !== clean(payload.telegram_chat_id)) return { ok:false, error:'Chat de Telegram no autorizado.' }
+  const equipo = upper(payload.equipo) || (proceso.endsWith('_ONT') ? 'ONT' : proceso.endsWith('_STB') ? 'STB' : '')
+  const serie = upper(payload.serie)
+  if (SAP_PROCESOS_CONSULTA.has(proceso)) {
+    if (equipo !== (proceso.endsWith('_ONT') ? 'ONT' : 'STB')) return {ok:false,error:'Tipo de equipo invalido.'}
+    if (!/^[A-Z0-9_-]{4,80}$/.test(serie)) return {ok:false,error:'Serie invalida.'}
+  }
+  const parametro = clean(payload.parametro).slice(0,200)
+  // UUID para unicidad, prefijo SAP para mantener el contrato historico del ID.
+  const id = 'SAP-' + new Date().toISOString().replace(/[-:TZ.]/g,'').slice(0,14) + '-' + randomUUID()
+  const fila = {
+    id_comando:id,
+    fecha_solicitud:new Date().toISOString(),
+    distrito,
+    usuario_solicita:clean(perfil.usuario_almacen),
+    nombre_solicita:clean(perfil.nombre),
+    telegram_chat_id:chat,
+    proceso, estado:'PENDIENTE',
+    intentos:0, notificado:false,
+    parametro: parametro || null,
+    equipo: equipo || null,
+    serie: serie || null
+  }
+  const {data,error} = await admin.from('comandos_sap').insert(fila).select('id_comando,proceso,estado').single()
+  if(error) throw new Error('No se pudo registrar COMANDOS_SAP: '+error.message)
+  return {ok:true,id_comando:data.id_comando,estado:data.estado,
+    mensaje:`Orden SAP registrada.\n\nComando: ${proceso}\nFolio: ${data.id_comando}\nEstado: PENDIENTE\nDistrito: ${distrito}`}
+}
+
+async function notificacionesComandosSAP(admin) {
+  const {data,error} = await admin.from('comandos_sap')
+    .select('id_comando,telegram_chat_id,distrito,proceso,estado,resultado,pc_ejecutora,resultado_mac,resultado_recu')
+    .in('estado',['REALIZADO','ERROR','NO REALIZADO'])
+    .eq('notificado',false)
+    .order('fecha_solicitud',{ascending:true}).limit(50)
+  if(error) throw new Error(error.message)
+  return {ok:true,avisos:(data||[]).filter(x=>clean(x.telegram_chat_id)).map(x=>({
+    id_comando:x.id_comando, telegram_chat_id:x.telegram_chat_id,
+    distrito:x.distrito, proceso:x.proceso, estado:x.estado,
+    pc:x.pc_ejecutora || '', resultado:x.resultado || x.resultado_mac || x.resultado_recu || ''
+  }))}
+}
+
+async function marcarComandoSAPNotificado(admin,payload) {
+  const id=clean(payload.id_comando)
+  if(!/^SAP-[A-Za-z0-9-]{10,100}$/.test(id)) return {ok:false,error:'ID de comando invalido.'}
+  const {data,error}=await admin.from('comandos_sap').update({notificado:true})
+    .eq('id_comando',id).eq('notificado',false)
+    .in('estado',['REALIZADO','ERROR','NO REALIZADO']).select('id_comando')
+  if(error) throw new Error(error.message)
+  return {ok:true,actualizado:(data||[]).length>0}
+}
+
 async function accionMigrada(admin, payload) {
   const accion = clean(payload.accion || payload.action)
 
@@ -1489,8 +1566,11 @@ async function accionMigrada(admin, payload) {
     return registrarTelegram(admin, payload)
   }
   if (accion === 'telegram_traspasos_avisos_pendientes') return listarAvisosTraspasoPendientes(admin)
+  if (accion === 'telegram_sap_notificaciones') return notificacionesComandosSAP(admin)
+  if (accion === 'telegram_sap_marcar_notificado') return marcarComandoSAPNotificado(admin, payload)
 
   const perfil = await perfilTelegram(admin, payload.telegram_chat_id)
+  if (accion === 'telegram_sap_crear_comando') return crearComandoSAPEnSupabase(admin, perfil, payload)
 
   if (accion === 'telegram_traspaso_nombre_almacen') return buscarAlmacenTraspaso(admin, perfil, payload)
   if (accion === 'telegram_traspaso_validar') return validarTraspasoBot(admin, perfil, payload)
