@@ -20,7 +20,7 @@ function convertirHoja(hoja) {
   const matriz = XLSX.utils.sheet_to_json(hoja, { header: 1, defval: '', raw: false })
   if (!matriz.length) throw new Error('El Excel está vacío.')
   const campos = matriz[0].map(x => headers[norm(x)] || null)
-  for (const obligatorio of ['usuario_almacen', 'clave', 'nombre', 'distrito']) {
+  for (const obligatorio of ['usuario_almacen', 'nombre', 'distrito']) {
     if (!campos.includes(obligatorio)) throw new Error(`Falta la columna: ${obligatorio}.`)
   }
   const registros = matriz.slice(1).filter(fila => fila.some(v => String(v ?? '').trim()))
@@ -61,7 +61,6 @@ export default function ImportarUsuariosExcel({ supabase, esPadre, distritoActua
       const vistos = new Set()
       for (const fila of datos) {
         if (!/^[A-Z0-9_-]{2,40}$/.test(norm(fila.usuario_almacen))) throw new Error(`Fila ${fila.fila}: usuario inválido.`)
-        if (!/^\d{4}$/.test(fila.clave)) throw new Error(`Fila ${fila.fila}: la clave debe tener exactamente 4 dígitos.`)
         if (fila.nombre.length < 3 || fila.nombre.length > 200) throw new Error(`Fila ${fila.fila}: nombre inválido.`)
         if (!/^[A-Z]{2,5}[0-9]{1,5}$/.test(norm(fila.distrito))) throw new Error(`Fila ${fila.fila}: distrito inválido.`)
         if (!esPadre && norm(fila.distrito) !== norm(distritoActual)) throw new Error(`Fila ${fila.fila}: ese distrito no te pertenece.`)
@@ -77,7 +76,7 @@ export default function ImportarUsuariosExcel({ supabase, esPadre, distritoActua
 
   async function importar() {
     if (procesando || !filas.length) return
-    if (!window.confirm(`¿Crear ${filas.length} usuarios? Solo se importarán usuario, clave, nombre y distrito; el puesto será TECNICO.`)) return
+    if (!window.confirm(`¿Crear ${filas.length} usuarios? Se generará una contraseña temporal aleatoria para cada técnico creado.`)) return
     setProcesando(true)
     setResultado([])
     setError('')
@@ -92,7 +91,6 @@ export default function ImportarUsuariosExcel({ supabase, esPadre, distritoActua
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
             body: JSON.stringify({
               usuario_almacen: fila.usuario_almacen,
-              clave: fila.clave,
               nombre: fila.nombre,
               distrito: fila.distrito,
               puesto: 'TECNICO',
@@ -101,10 +99,10 @@ export default function ImportarUsuariosExcel({ supabase, esPadre, distritoActua
             })
           })
           const data = await response.json().catch(() => ({}))
-          res.push({ fila: fila.fila, usuario: fila.usuario_almacen, ok: response.ok && data.ok === true,
+          res.push({ fila: fila.fila, usuario: fila.usuario_almacen, distrito: fila.distrito, nombre: fila.nombre, ok: response.ok && data.ok === true, login: data.login || '', clave_temporal: response.ok && data.ok === true ? data.clave_temporal : '',
             mensaje: response.ok && data.ok === true ? 'Creado' : (data.error || `HTTP ${response.status}`) })
         } catch (e) {
-          res.push({ fila: fila.fila, usuario: fila.usuario_almacen, ok: false, mensaje: e?.message || 'Error de conexión' })
+          res.push({ fila: fila.fila, usuario: fila.usuario_almacen, distrito: fila.distrito, nombre: fila.nombre, ok: false, mensaje: e?.message || 'Error de conexión' })
         }
         setResultado([...res])
       }
@@ -116,11 +114,22 @@ export default function ImportarUsuariosExcel({ supabase, esPadre, distritoActua
     }
   }
 
+  function descargarClaves() {
+    const creados = resultado.filter(r => r.ok && r.clave_temporal)
+    if (!creados.length) return
+    const datos = creados.map(r => ({ USUARIO: r.usuario, DISTRITO: r.distrito, 'NOMBRE DEL TECNICO': r.nombre, 'USUARIO DE ACCESO': r.login, 'CLAVE TEMPORAL': r.clave_temporal }))
+    const hoja = XLSX.utils.json_to_sheet(datos)
+    hoja['!cols'] = [{wch:18},{wch:12},{wch:35},{wch:23},{wch:34}]
+    const libro = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(libro, hoja, 'Claves temporales')
+    XLSX.writeFile(libro, 'QIORA_CLAVES_TEMPORALES.xlsx')
+  }
+
   return (
     <section style={{ border: '1px solid #406f62', borderRadius: 12, padding: 16, margin: '18px 0', background: '#082a23' }}>
       <h3>Importar usuarios desde Excel</h3>
-      <p>Columnas: USUARIO, CLAVE, NOMBRE DEL TECNICO, DISTRITO. Máximo {LIMITE} usuarios por archivo. Las claves iniciales deben tener 4 dígitos.</p>
-      <p style={{ color: '#ffe4a3' }}>El archivo contiene claves temporales: no lo compartas y elimínalo cuando ya no lo necesites. Cambia las claves iniciales por contraseñas seguras antes de usar el sistema en producción.</p>
+      <p>Columnas: USUARIO, NOMBRE DEL TECNICO, DISTRITO. Si tu Excel incluye CLAVE, se ignorará. Máximo {LIMITE} usuarios por archivo. El sistema genera claves temporales aleatorias.</p>
+      <p style={{ color: '#ffe4a3' }}>El Excel descargado con claves temporales contiene información sensible. Descárgalo, entrégalo de forma segura y elimínalo al terminar.</p>
       <input style={estilo} type="file" accept=".xlsx" disabled={procesando} onChange={seleccionarArchivo} />
       {archivo && <p>Archivo: {archivo}. Registros válidos: {filas.length}</p>}
       {error && <p role="alert" style={{ color: '#ffb3b3' }}>{error}</p>}
@@ -128,8 +137,8 @@ export default function ImportarUsuariosExcel({ supabase, esPadre, distritoActua
         <>
           <div style={{ overflowX: 'auto', maxHeight: 240, margin: '12px 0' }}>
             <table style={{ width: '100%', background: '#fff', color: '#143126', borderCollapse: 'collapse' }}>
-              <thead><tr><th>Fila</th><th>Usuario</th><th>Nombre</th><th>Distrito</th><th>Clave</th></tr></thead>
-              <tbody>{filas.map(f => <tr key={f.fila}><td>{f.fila}</td><td>{f.usuario_almacen}</td><td>{f.nombre}</td><td>{f.distrito}</td><td>••••</td></tr>)}</tbody>
+              <thead><tr><th>Fila</th><th>Usuario</th><th>Nombre</th><th>Distrito</th></tr></thead>
+              <tbody>{filas.map(f => <tr key={f.fila}><td>{f.fila}</td><td>{f.usuario_almacen}</td><td>{f.nombre}</td><td>{f.distrito}</td></tr>)}</tbody>
             </table>
           </div>
           <button type="button" style={boton} disabled={procesando} onClick={importar}>
@@ -140,6 +149,7 @@ export default function ImportarUsuariosExcel({ supabase, esPadre, distritoActua
       {resultado.length > 0 && (
         <div aria-live="polite" style={{ marginTop: 12 }}>
           <p>Procesados: {resultado.length}/{filas.length}. Creados: {resultado.filter(x => x.ok).length}. Con error: {resultado.filter(x => !x.ok).length}.</p>
+          {resultado.some(r => r.ok && r.clave_temporal) && <button type="button" style={boton} onClick={descargarClaves}>Descargar Excel con claves temporales</button>}
           <div style={{ maxHeight: 220, overflow: 'auto' }}>
             {resultado.map(r => <p key={r.fila} style={{ color: r.ok ? '#b9f3da' : '#ffb3b3', margin: '4px 0' }}>
               Fila {r.fila}: {r.usuario} — {r.mensaje}
