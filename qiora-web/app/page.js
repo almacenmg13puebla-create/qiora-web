@@ -152,7 +152,10 @@ const MODULOS = [
 export default function Home() {
   const [usuario, setUsuario] = useState('')
   const [clave, setClave] = useState('')
-  const [distritoLogin, setDistritoLogin] = useState('')
+  const [cambioObligatorio, setCambioObligatorio] = useState(false)
+  const [nuevaClave, setNuevaClave] = useState('')
+  const [confirmacionClave, setConfirmacionClave] = useState('')
+  const [guardandoClave, setGuardandoClave] = useState(false)
   const [perfil, setPerfil] = useState(null)
   const [numeroEmpleado, setNumeroEmpleado] = useState('')
   const [msg, setMsg] = useState('')
@@ -174,6 +177,10 @@ export default function Home() {
           return
         }
 
+        if (user.app_metadata?.force_password_change === true) {
+          if (montado) setCambioObligatorio(true)
+          return
+        }
         await cargarPerfil(() => montado)
       } catch (error) {
         console.error('ERROR VALIDANDO SESIÓN:', error)
@@ -313,17 +320,18 @@ export default function Home() {
         return
       }
 
-      // Sin distrito: acceso histórico para cuentas existentes.
-      // Con distrito: buscar primero la nueva identidad y después la histórica.
-      // La identidad histórica solo se acepta si su perfil coincide con el distrito.
-      const distritoSeleccionado = String(distritoLogin || '').trim().toUpperCase()
-      if (distritoSeleccionado && !/^[A-Z]{2,5}[0-9]{1,5}$/.test(distritoSeleccionado)) {
-        setMsg('Distrito inválido.')
+      // Sin selector de distrito. Las cuentas antiguas usan 0093.
+      // Las cuentas nuevas usan 0093.MG19 en el mismo campo Usuario.
+      const acceso = u.toUpperCase()
+      const nuevoFormato = /^([A-Z0-9_-]{2,40})\.([A-Z]{2,5}[0-9]{1,5})$/.exec(acceso)
+      const base = nuevoFormato ? nuevoFormato[1] : acceso
+      if (!/^[A-Z0-9_-]{2,40}$/.test(base)) {
+        setMsg('Nombre de usuario inválido.')
         return
       }
-      const correos = distritoSeleccionado
-        ? [`${u.toLowerCase()}.${distritoSeleccionado.toLowerCase()}@qiora.local`, `${u.toLowerCase()}@qiora.local`]
-        : [`${u.toLowerCase()}@qiora.local`]
+      const correos = nuevoFormato
+        ? [`${base.toLowerCase()}.${nuevoFormato[2].toLowerCase()}@qiora.local`]
+        : [`${base.toLowerCase()}@qiora.local`]
       let autenticado = false
       for (const email of correos) {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -334,8 +342,8 @@ export default function Home() {
         // El perfil procede de la sesión autenticada, no del texto del usuario.
         const { data: perfilLogin, error: perfilError } = await supabase.rpc('qiora_mi_perfil')
         const coincide = !perfilError && perfilLogin?.activo === true &&
-          String(perfilLogin.usuario_almacen || '').trim().toUpperCase() === u.toUpperCase() &&
-          (!distritoSeleccionado || String(perfilLogin.distrito || '').trim().toUpperCase() === distritoSeleccionado)
+          String(perfilLogin.usuario_almacen || '').trim().toUpperCase() === base &&
+          (!nuevoFormato || String(perfilLogin.distrito || '').trim().toUpperCase() === nuevoFormato[2])
         if (coincide) {
           autenticado = true
           break
@@ -343,7 +351,14 @@ export default function Home() {
         await supabase.auth.signOut()
       }
       if (!autenticado) {
-        setMsg('Usuario, clave o distrito incorrectos.')
+        setMsg('Usuario o contraseña incorrectos. Para cuentas nuevas usa USUARIO.DISTRITO, por ejemplo 0093.MG19.')
+        return
+      }
+
+      const { data: { user: usuarioAutenticado } } = await supabase.auth.getUser()
+      if (usuarioAutenticado?.app_metadata?.force_password_change === true) {
+        setCambioObligatorio(true)
+        setClave('')
         return
       }
 
@@ -369,6 +384,43 @@ export default function Home() {
     }
   }
 
+  async function guardarNuevaClave(e) {
+    e.preventDefault()
+    if (guardandoClave) return
+    setMsg('')
+    if (nuevaClave.length < 12 || nuevaClave.length > 128 || !/[A-Za-z]/.test(nuevaClave) || !/[0-9]/.test(nuevaClave)) {
+      setMsg('La nueva contraseña debe tener de 12 a 128 caracteres, incluir letras y números.')
+      return
+    }
+    if (nuevaClave !== confirmacionClave) {
+      setMsg('Las contraseñas no coinciden.')
+      return
+    }
+    setGuardandoClave(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) throw new Error('Sesión vencida. Vuelve a iniciar sesión.')
+      const response = await fetch('/api/usuarios/cambiar-clave-inicial', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ nueva_clave: nuevaClave })
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo cambiar la contraseña.')
+      // Renueva el JWT para reflejar el estado de contraseña actual.
+      const { error: salirError } = await supabase.auth.signOut()
+      if (salirError) throw salirError
+      setNuevaClave('')
+      setConfirmacionClave('')
+      setCambioObligatorio(false)
+      setPerfil(null)
+      setUsuario('')
+      setMsg('Contraseña actualizada. Inicia sesión con tu contraseña nueva.')
+    } catch (e) {
+      setMsg(e?.message || 'Error al cambiar contraseña.')
+    } finally { setGuardandoClave(false) }
+  }
+
   async function salir() {
     try {
       const {
@@ -382,6 +434,7 @@ export default function Home() {
       }
 
       setPerfil(null)
+      setCambioObligatorio(false)
       setNumeroEmpleado('')
       setUsuario('')
       setClave('')
@@ -441,6 +494,26 @@ export default function Home() {
     )
   }
 
+  if (cambioObligatorio) {
+    return (
+      <main style={{minHeight:'100vh',background:'#052b22',color:'white',display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+        <form onSubmit={guardarNuevaClave} style={{width:'100%',maxWidth:440,padding:28,border:'1px solid #27a77c',borderRadius:15,display:'grid',gap:15,background:'#073b2c'}}>
+          <h2 style={{margin:0}}>Cambio obligatorio de contraseña</h2>
+          <p>Tu contraseña es temporal. Establece una nueva para continuar.</p>
+          <label>Nueva contraseña (mínimo 12 caracteres, letras y números)
+            <input type="password" autoComplete="new-password" required minLength={12} maxLength={128} value={nuevaClave} onChange={e=>setNuevaClave(e.target.value)} style={{width:'100%',padding:12,marginTop:6,color:'#111'}} />
+          </label>
+          <label>Confirmar nueva contraseña
+            <input type="password" autoComplete="new-password" required value={confirmacionClave} onChange={e=>setConfirmacionClave(e.target.value)} style={{width:'100%',padding:12,marginTop:6,color:'#111'}} />
+          </label>
+          {msg && <p role="alert">{msg}</p>}
+          <button type="submit" disabled={guardandoClave} style={{padding:14,background:'#13ac7a',border:0,borderRadius:8,fontWeight:'bold'}}>Guardar contraseña nueva</button>
+          <button type="button" onClick={()=>{supabase.auth.signOut().then(()=>{setCambioObligatorio(false);setPerfil(null);setMsg('')})}} style={{padding:10}}>Cerrar sesión</button>
+        </form>
+      </main>
+    )
+  }
+
   if (!perfil) {
     return (
       <main className="sat-login-page">
@@ -476,23 +549,6 @@ export default function Home() {
                 required
               />
             </div>
-
-            <label className="sat-login-label" htmlFor="qiora-distrito">
-              Distrito (para cuentas multidistrito)
-            </label>
-            <div className="sat-login-input-wrap">
-              <input
-                id="qiora-distrito"
-                className="sat-login-input"
-                value={distritoLogin}
-                onChange={e => setDistritoLogin(e.target.value.toUpperCase())}
-                placeholder="Ejemplo: MG19 (opcional para cuentas anteriores)"
-                autoCapitalize="characters"
-                spellCheck={false}
-                disabled={loading}
-              />
-            </div>
-
             <label className="sat-login-label" htmlFor="qiora-clave">
               Contraseña
             </label>
