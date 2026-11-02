@@ -65,8 +65,8 @@ export default function ImportarUsuariosExcel({ supabase, esPadre, distritoActua
         if (fila.nombre.length < 3 || fila.nombre.length > 200) throw new Error(`Fila ${fila.fila}: nombre inválido.`)
         if (!/^[A-Z]{2,5}[0-9]{1,5}$/.test(norm(fila.distrito))) throw new Error(`Fila ${fila.fila}: distrito inválido.`)
         if (!esPadre && norm(fila.distrito) !== norm(distritoActual)) throw new Error(`Fila ${fila.fila}: ese distrito no te pertenece.`)
-        if (vistos.has(norm(fila.usuario_almacen))) throw new Error(`Fila ${fila.fila}: usuario duplicado dentro del Excel.`)
-        vistos.add(norm(fila.usuario_almacen))
+        if (vistos.has(`${norm(fila.distrito)}:${norm(fila.usuario_almacen)}`)) throw new Error(`Fila ${fila.fila}: usuario duplicado dentro del Excel.`)
+        vistos.add(`${norm(fila.distrito)}:${norm(fila.usuario_almacen)}`)
       }
       setFilas(datos)
       setArchivo(file.name)
