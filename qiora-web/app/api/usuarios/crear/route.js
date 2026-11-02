@@ -36,7 +36,7 @@ export async function POST(request) {
   if (!/^[A-Z0-9_-]{2,40}$/.test(usuario_almacen)) return fail('Usuario/almacen invalido.')
   if (nombre.length<3 || nombre.length>200) return fail('Nombre invalido.')
   if (!puesto || puesto.startsWith('ADMIN')) return fail('No puedes asignar puestos administrativos.',403)
-  if (clave.length<10 || clave.length>100) return fail('La clave debe tener de 10 a 100 caracteres.')
+  if (!/^\d{4}$/.test(clave)) return fail('La clave inicial debe contener exactamente 4 dígitos numéricos.')
   const {data:existing,error:existingError} = await admin.from('almacen_usuarios')
     .select('id').eq('usuario_almacen',usuario_almacen).limit(1)
   if (existingError) return fail('Error al verificar duplicados.',500)
