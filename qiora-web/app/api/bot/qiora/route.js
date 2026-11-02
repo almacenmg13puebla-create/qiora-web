@@ -149,18 +149,27 @@ async function registrarTelegram(admin, payload) {
   }
 
   const auth = supabaseAuthClient()
-  const { data: login, error: loginError } = await auth.auth.signInWithPassword({
-    email: `${usuario.toLowerCase()}@qiora.local`,
-    password: `QIORA#${clave}`,
-  })
-
-  if (loginError || !login?.user?.id) {
-    return { ok: false, error: 'Contraseña incorrecta. Verifica tu usuario y contraseña de SAT.' }
+  // El registro del distrito está vinculado a una identidad Auth concreta.
+  // Permite correos nuevos y legados, sin confundir usuarios homónimos.
+  const correos = [
+    `${usuario.toLowerCase()}.${distrito.toLowerCase()}@qiora.local`,
+    `${usuario.toLowerCase()}@qiora.local`,
+  ]
+  let autenticado = false
+  for (const email of correos) {
+    const { data: login, error: loginError } = await auth.auth.signInWithPassword({
+      email,
+      password: `QIORA#${clave}`,
+    })
+    if (loginError || !login?.user?.id) continue
+    if (String(login.user.id).toLowerCase() === String(perfil.auth_user_id).toLowerCase()) {
+      autenticado = true
+      break
+    }
+    await auth.auth.signOut()
   }
-
-  if (String(login.user.id).toLowerCase() !== String(perfil.auth_user_id).toLowerCase()) {
-    await auth.auth.signOut().catch(() => {})
-    return { ok: false, error: 'La cuenta autenticada no corresponde al usuario indicado en SAT.' }
+  if (!autenticado) {
+    return { ok: false, error: 'Usuario, distrito o contraseña incorrectos.' }
   }
 
   await auth.auth.signOut().catch(() => {})
