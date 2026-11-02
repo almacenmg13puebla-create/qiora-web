@@ -205,6 +205,7 @@ export default function ConfiguracionPage() {
   ] = useState(false)
 
   const [mostrarCargaTecnicos, setMostrarCargaTecnicos] = useState(false)
+  const [enviandoEnlaceId, setEnviandoEnlaceId] = useState(null)
 
   const [
     nuevoUsuario,
@@ -1219,6 +1220,30 @@ export default function ConfiguracionPage() {
 
       setCargando(false)
     }
+  }
+
+  async function enviarEnlaceRestablecimiento(u) {
+    if (enviandoEnlaceId) return
+    const correoDestino = String(u.correo ?? '').trim()
+    if (!correoDestino || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correoDestino) || correoDestino.toLowerCase().endsWith('@qiora.local')) {
+      setAviso(''); setError('Este técnico no tiene un correo real registrado. Abre Editar, agrega el correo y guarda la ficha antes de enviar el enlace.')
+      return
+    }
+    if (!window.confirm(`¿Enviar un enlace de recuperación al correo ${correoDestino} de ${u.usuario_almacen} (${u.distrito})?`)) return
+    setError(''); setAviso(''); setEnviandoEnlaceId(u.id)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) throw new Error('Inicia sesión nuevamente.')
+      const response = await fetch('/api/usuarios/enviar-enlace-restablecimiento', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ usuario_id: u.id }),
+      })
+      const data = await response.json()
+      if (!response.ok || !data.ok) throw new Error(data.error || 'No fue posible enviar el enlace.')
+      setAviso(data.mensaje)
+    } catch (e) { setError(e?.message || 'Error al solicitar recuperación.') }
+    finally { setEnviandoEnlaceId(null) }
   }
 
   async function crearCuentaUsuario() {
@@ -2579,12 +2604,8 @@ export default function ConfiguracionPage() {
                         <input
                           style={css.input}
 
-                          type={
-                            campo ===
-                            'clave'
-                              ? 'password'
-                              : 'text'
-                          }
+                          type={campo === 'correo' ? 'email' : campo === 'clave' ? 'password' : 'text'}
+                          placeholder={campo === 'correo' ? 'Opcional: se puede agregar después' : undefined}
 
                           value={
                             nuevoUsuario[
@@ -2673,6 +2694,8 @@ export default function ConfiguracionPage() {
 
                         <input
                           style={css.input}
+                          type={campo === 'correo' ? 'email' : 'text'}
+                          placeholder={campo === 'correo' ? 'Opcional: escribir correo real' : undefined}
 
                           value={
                             usuarioEditando[
@@ -2873,6 +2896,16 @@ export default function ConfiguracionPage() {
                             }
                           >
                             Editar
+                          </button>
+
+                          <button
+                            type="button"
+                            style={{ ...css.boton, marginLeft: 6, background: '#176b73' }}
+                            disabled={!u.activo || Boolean(enviandoEnlaceId)}
+                            onClick={() => enviarEnlaceRestablecimiento(u)}
+                            title="Envía un enlace al correo real registrado. Si falta, edita primero la ficha."
+                          >
+                            {enviandoEnlaceId === u.id ? 'Enviando...' : 'Enviar enlace de contraseña'}
                           </button>
 
                           <button
