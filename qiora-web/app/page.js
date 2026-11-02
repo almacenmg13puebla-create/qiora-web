@@ -152,6 +152,7 @@ const MODULOS = [
 export default function Home() {
   const [usuario, setUsuario] = useState('')
   const [clave, setClave] = useState('')
+  const [distritoLogin, setDistritoLogin] = useState('')
   const [perfil, setPerfil] = useState(null)
   const [numeroEmpleado, setNumeroEmpleado] = useState('')
   const [msg, setMsg] = useState('')
@@ -312,29 +313,37 @@ export default function Home() {
         return
       }
 
-      const {
-        data,
-        error,
-      } =
-        await supabase.auth
-          .signInWithPassword({
-            email:
-              `${u.toLowerCase()}@qiora.local`,
-
-            password:
-              passwordSupabase(
-                claveNormal
-              ),
-          })
-
-      if (
-        error ||
-        !data?.user?.id
-      ) {
-        setMsg(
-          'Usuario o clave incorrectos.'
-        )
-
+      // Sin distrito: acceso histórico para cuentas existentes.
+      // Con distrito: buscar primero la nueva identidad y después la histórica.
+      // La identidad histórica solo se acepta si su perfil coincide con el distrito.
+      const distritoSeleccionado = String(distritoLogin || '').trim().toUpperCase()
+      if (distritoSeleccionado && !/^[A-Z]{2,5}[0-9]{1,5}$/.test(distritoSeleccionado)) {
+        setMsg('Distrito inválido.')
+        return
+      }
+      const correos = distritoSeleccionado
+        ? [`${u.toLowerCase()}.${distritoSeleccionado.toLowerCase()}@qiora.local`, `${u.toLowerCase()}@qiora.local`]
+        : [`${u.toLowerCase()}@qiora.local`]
+      let autenticado = false
+      for (const email of correos) {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password: passwordSupabase(claveNormal),
+        })
+        if (error || !data?.user?.id) continue
+        // El perfil procede de la sesión autenticada, no del texto del usuario.
+        const { data: perfilLogin, error: perfilError } = await supabase.rpc('qiora_mi_perfil')
+        const coincide = !perfilError && perfilLogin?.activo === true &&
+          String(perfilLogin.usuario_almacen || '').trim().toUpperCase() === u.toUpperCase() &&
+          (!distritoSeleccionado || String(perfilLogin.distrito || '').trim().toUpperCase() === distritoSeleccionado)
+        if (coincide) {
+          autenticado = true
+          break
+        }
+        await supabase.auth.signOut()
+      }
+      if (!autenticado) {
+        setMsg('Usuario, clave o distrito incorrectos.')
         return
       }
 
@@ -465,6 +474,22 @@ export default function Home() {
                 placeholder="Usuario"
                 disabled={loading}
                 required
+              />
+            </div>
+
+            <label className="sat-login-label" htmlFor="qiora-distrito">
+              Distrito (para cuentas multidistrito)
+            </label>
+            <div className="sat-login-input-wrap">
+              <input
+                id="qiora-distrito"
+                className="sat-login-input"
+                value={distritoLogin}
+                onChange={e => setDistritoLogin(e.target.value.toUpperCase())}
+                placeholder="Ejemplo: MG19 (opcional para cuentas anteriores)"
+                autoCapitalize="characters"
+                spellCheck={false}
+                disabled={loading}
               />
             </div>
 
