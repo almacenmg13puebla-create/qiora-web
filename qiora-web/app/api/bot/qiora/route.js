@@ -1561,6 +1561,24 @@ async function marcarComandoSAPNotificado(admin,payload) {
   return {ok:true,actualizado:(data||[]).length>0}
 }
 
+// Menu STOCK: reutiliza el perfil SAT vinculado al chat, sin token Excel adicional.
+async function menuStockTelegram(perfil) {
+  if (!perfil || perfil.activo !== true) {
+    return { ok:false, error:'Registra tu Telegram con un usuario SAT activo.' }
+  }
+  const tecnico = upper(perfil.puesto) === 'TECNICO'
+  return {
+    ok:true,
+    tecnico,
+    nombre:clean(perfil.nombre),
+    almacen:tecnico ? normalizarAlmacenTraspaso(perfil.usuario_almacen) : '',
+    distrito:upper(perfil.distrito),
+  }
+}
+
+// No se simula que las consultas de RECOLECCIONES o CRITICOS esten migradas.
+// Su implementacion requiere conocer sus tablas, filtros y reglas reales.
+
 async function accionMigrada(admin, payload) {
   const accion = clean(payload.accion || payload.action)
 
@@ -1572,6 +1590,7 @@ async function accionMigrada(admin, payload) {
   if (accion === 'telegram_sap_marcar_notificado') return marcarComandoSAPNotificado(admin, payload)
 
   const perfil = await perfilTelegram(admin, payload.telegram_chat_id)
+  if (accion === 'telegram_stock_menu') return menuStockTelegram(perfil)
   if (accion === 'telegram_sap_crear_comando') return crearComandoSAPEnSupabase(admin, perfil, payload)
 
   if (accion === 'telegram_traspaso_nombre_almacen') return buscarAlmacenTraspaso(admin, perfil, payload)
