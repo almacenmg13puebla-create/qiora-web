@@ -38,9 +38,9 @@ export async function POST(request) {
   if (!puesto || puesto.startsWith('ADMIN')) return fail('No puedes asignar puestos administrativos.',403)
   if (!/^\d{4}$/.test(clave)) return fail('La clave inicial debe contener exactamente 4 dígitos numéricos.')
   const {data:existing,error:existingError} = await admin.from('almacen_usuarios')
-    .select('id').eq('usuario_almacen',usuario_almacen).limit(1)
+    .select('id').eq('usuario_almacen',usuario_almacen).eq('distrito',distrito).limit(1)
   if (existingError) return fail('Error al verificar duplicados.',500)
-  if (existing?.length) return fail('Ese usuario ya existe.')
+  if (existing?.length) return fail('Ese usuario ya existe en el distrito '+distrito+'.')
   const datos = {
     usuario_almacen,nombre,puesto,
     numero_empleado:String(body.numero_empleado ?? '').trim(),
@@ -53,7 +53,7 @@ export async function POST(request) {
   }
   // Compatibilidad con el esquema de inicio de sesion existente.
   const {data:created,error:createError} = await admin.auth.admin.createUser({
-    email:`${usuario_almacen.toLowerCase()}@qiora.local`,password:`QIORA#${clave}`,email_confirm:true
+    email:`${usuario_almacen.toLowerCase()}.${distrito.toLowerCase()}@qiora.local`,password:`QIORA#${clave}`,email_confirm:true
   })
   if (createError || !created?.user) return fail('Error creando Auth: '+(createError?.message||''))
   const uid=created.user.id
