@@ -1,6 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
-import { timingSafeEqual } from 'node:crypto'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -9,24 +8,19 @@ const clean = (v) => String(v ?? '').trim()
 const upper = (v) => clean(v).toUpperCase()
 const respond = (body, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } })
 
-function iguales(a, b) {
-  const x = Buffer.from(clean(a), 'utf8')
-  const y = Buffer.from(clean(b), 'utf8')
-  return x.length > 0 && x.length === y.length && timingSafeEqual(x, y)
-}
-
-// Vercel: QIORA_COMANDOS_EXCEL_TOKENS = {"MG13":"token-del-centro","MG22":"otro-token"}
-// Cada token debe coincidir con USUARIO SAP!B1 de la PC correspondiente.
-function autorizar(body) {
+// La credencial se valida con la misma RPC utilizada por la API de Traspasos.
+// No se requieren listas de tokens en variables de entorno de Vercel.
+async function autorizar(admin, body) {
   const distrito = upper(body?.distrito)
   const token = clean(body?.token)
-  if (!/^[A-Z0-9_-]{2,20}$/.test(distrito) || !token) return ''
-  const raw = clean(process.env.QIORA_COMANDOS_EXCEL_TOKENS)
-  if (!raw) throw new Error('Falta QIORA_COMANDOS_EXCEL_TOKENS en Vercel.')
-  const mapa = JSON.parse(raw)
-  if (!mapa || typeof mapa !== 'object' || Array.isArray(mapa)) throw new Error('Formato invalido de QIORA_COMANDOS_EXCEL_TOKENS.')
-  const esperado = mapa[distrito]
-  return typeof esperado === 'string' && iguales(token, esperado) ? distrito : ''
+  if (!/^[A-Z]{2,5}[0-9]{1,5}$/.test(distrito) || !token) return ''
+
+  const { data: valido, error } = await admin.rpc('qiora_excel_validar_credencial', {
+    p_distrito: distrito,
+    p_token: token,
+  })
+  if (error) throw error
+  return valido === true ? distrito : ''
 }
 
 function adminClient() {
@@ -51,9 +45,15 @@ export async function POST(request) {
   try { body = await request.json() }
   catch { return respond({ ok: false, error: 'JSON invalido' }, 400) }
 
-  let distrito
-  try { distrito = autorizar(body) }
-  catch (e) { console.error('Comandos SAP auth/config:', e.message); return respond({ ok: false, error: 'Configuracion de autenticacion invalida' }, 500) }
+  // La validacion ocurre antes de reclamar o actualizar cualquier comando.
+  let admin, distrito
+  try {
+    admin = adminClient()
+    distrito = await autorizar(admin, body)
+  } catch (e) {
+    console.error('Comandos SAP autenticacion:', e.message)
+    return respond({ ok: false, error: 'Error validando credencial Excel' }, 500)
+  }
   if (!distrito) return respond({ ok: false, error: 'TOKEN_INVALIDO' }, 401)
 
   const accion = upper(body.action || body.accion)
@@ -61,7 +61,6 @@ export async function POST(request) {
   if (!/^[A-Z0-9_.-]{1,80}$/.test(pc)) return respond({ ok: false, error: 'PC_INVALIDA' }, 400)
 
   try {
-    const admin = adminClient()
     if (accion === 'RECLAMAR_COMANDO') {
       const { data, error } = await admin.rpc('qiora_reclamar_comando_sap', {
         p_distrito: distrito, p_pc: pc,
