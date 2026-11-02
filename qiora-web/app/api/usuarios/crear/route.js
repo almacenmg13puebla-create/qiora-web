@@ -57,13 +57,13 @@ export async function POST(request) {
   })
   if (createError || !created?.user) return fail('Error creando Auth: '+(createError?.message||''))
   const uid=created.user.id
-  const {error:profileError} = await admin.rpc('qiora_usuarios_crear_servidor',{
+  const {data:profileOk,error:profileError} = await admin.rpc('qiora_usuarios_crear_servidor',{
     p_auth_id:uid,p_datos:datos,p_distrito:distrito,p_actor_id:user.id
   })
-  if (profileError) {
+  if (profileError || profileOk !== true) {
     const {error:rollbackError} = await admin.auth.admin.deleteUser(uid)
     if (rollbackError) return fail('Error de perfil y fallo de compensacion; requiere revision administrativa.',500)
-    return fail('No se pudo crear el usuario: '+profileError.message)
+    return fail('No se pudo crear el usuario: '+(profileError?.message || 'Supabase no confirmó el guardado.'))
   }
   return NextResponse.json({ok:true,usuario_almacen,distrito})
 }
