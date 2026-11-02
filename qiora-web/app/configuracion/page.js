@@ -8,6 +8,7 @@ import {
 
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
+import ImportarUsuariosExcel from './ImportarUsuariosExcel'
 
 const MENU = [
   ['Accesos especiales', null, 'admin_padre'],
@@ -1250,6 +1251,10 @@ export default function ConfiguracionPage() {
         throw new Error(
           'Usuario, clave y nombre son obligatorios.'
         )
+      }
+
+      if (!/^\d{4}$/.test(String(nuevoUsuario.clave ?? ''))) {
+        throw new Error('La clave inicial debe contener exactamente 4 dígitos numéricos.')
       }
 
       const {
@@ -2572,6 +2577,9 @@ export default function ConfiguracionPage() {
                             ] ||
                             ''
                           }
+                          maxLength={campo === 'clave' ? 4 : undefined}
+                           inputMode={campo === 'clave' ? 'numeric' : undefined}
+
 
                           onChange={
                             e =>
@@ -2620,7 +2628,14 @@ export default function ConfiguracionPage() {
 
             )}
 
-            {usuarioEditando && (
+            <ImportarUsuariosExcel
+               supabase={supabase}
+               esPadre={esPadre}
+               distritoActual={perfilActual?.distrito || ''}
+               onUsuariosCreados={cargarUsuarios}
+/>
+
+             {usuarioEditando && (
 
               <div style={css.subpanel}>
 
