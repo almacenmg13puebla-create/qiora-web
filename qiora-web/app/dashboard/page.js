@@ -14,11 +14,16 @@ const today = () => new Intl.DateTimeFormat('en-CA',{timeZone:'America/Mexico_Ci
 const monthAgo = () => { const d=new Date(); d.setDate(1); return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Mexico_City',year:'numeric',month:'2-digit',day:'2-digit'}).format(d) }
 
 const sections = [
-  ['solicitudes','Solicitudes por técnico / almacén'],['traspasos','Traspasos por técnico / almacén'],
-  ['recolecciones','Recolecciones recibidas'],['recoleccionesEntregadasTP','Recolecciones entregadas a Totalplay'],['auditorias','Auditorías realizadas'],
-  ['valor','Valor en cajuela por técnico / almacén'],['valorCentro','Valor por centro'],['valorTotal','Valor total'],
-  ['criticos','Críticos +30 días'],['materialesTraspasados','Material más traspasado'],
-  ['materialesSolicitados','Material más solicitado'],['recoleccionesPendientes','RECUS pendientes'],
+  ['recolecciones','Recolecciones recibidas'],
+  ['recoleccionesEntregadasTP','Recolecciones entregadas a Totalplay'],
+  ['recoleccionesPendientes','Recolecciones pendientes'],
+  ['faltantes','Piezas faltantes por entregar'],
+  ['auditorias','Auditorías realizadas'],
+  ['valor','Valor en cajuela (solo técnicos activos)'],
+  ['valorCentro','Valor por centro'],
+  ['valorTotal','Valor total'],
+  ['traspasos','Traspasos'],
+  ['criticos','Críticos +30 días'],
 ]
 
 export default function DashboardPage() {
@@ -30,7 +35,7 @@ export default function DashboardPage() {
   const [data,setData] = useState(null)
   const [desde,setDesde] = useState(monthAgo())
   const [hasta,setHasta] = useState(today())
-  const [section,setSection] = useState('solicitudes')
+  const [section,setSection] = useState('recolecciones')
   const [detail,setDetail] = useState(null)
   const [search,setSearch] = useState('')
   const [periodoReco,setPeriodoReco] = useState('dia')
@@ -91,31 +96,32 @@ export default function DashboardPage() {
   const k=data?.kpis||{}
   const tables=data?.tablas||{}
   const list=useMemo(()=>{
-    const rows=section==='valorTotal'?[{concepto:'Valor en cajuela',total:k.valorCajuela},{concepto:'Valor por centro',total:k.valorCentro},{concepto:'VALOR TOTAL',total:k.valorTotal}]:tables[section]||[]
+    const rows=section==='valorTotal'?[{concepto:'Valor en cajuela',total:k.valorCajuela},{concepto:'Valor por centro',total:k.valorCentro},{concepto:'VALOR TOTAL',total:k.valorTotal}]:section==='faltantes'?(data?.porDistrito||[]).map(g=>({distrito:g.distrito,piezas:g.faltantesPiezas,costo:'Sin conciliar'})):tables[section]||[]
     const q=search.trim().toLocaleLowerCase('es-MX')
     return rows.filter(r=>!q||Object.values(r).some(v=>String(v??'').toLocaleLowerCase('es-MX').includes(q)))
   },[section,tables,k,search])
 
   const cols = useMemo(()=>{
     const maps={
-      solicitudes:[['Almacén','almacen'],['Técnico','tecnico'],['Pend.','pendientes'],['Ent.','entregadas'],['Total','total'],['Piezas','piezas']],
+
       traspasos:[['Almacén','almacen'],['Técnico','tecnico'],['Pend.','pendientes'],['Realizados','realizados'],['Error','error'],['Total','total'],['Piezas','piezas']],
       recolecciones:[['Almacén','almacen'],['Técnico','tecnico'],['Total','total']],
       recoleccionesEntregadasTP:[['Distrito','distrito'],['Pedido / almacén','almacen'],['Salida / técnico','tecnico'],['Total','total']],
       auditorias:[['Distrito','distrito'],['Almacén','almacen'],['Técnico','tecnico'],['Folio','folio'],['Fecha','fecha'],['Tipos','tipos'],['Registros','total']],
-      recoleccionesEntregadasTP:[['Almacén','almacen'],['Técnico','tecnico'],['Total','total']],
+
       valor:[['Almacén','almacen'],['Técnico','tecnico'],['Piezas','piezas'],['Valor','total']],
       valorCentro:[['Distrito','distrito'],['Centro','almacen'],['Concepto','tecnico'],['Piezas','piezas'],['Valor','total']],
       valorTotal:[['Concepto','concepto'],['Valor','total']],
       criticos:[['Almacén','almacen'],['Técnico','tecnico'],['Equipos','total'],['Días máx.','maxDias']],
       recoleccionesPendientes:[['Almacén','almacen'],['Técnico','tecnico'],['Pendientes','total'],['Días máx.','maxDias']],
-      materialesTraspasados:[['SKU','sku'],['Material','material'],['Cantidad','cantidad'],['Movimientos','movimientos']],
-      materialesSolicitados:[['SKU','sku'],['Material','material'],['Cantidad','cantidad'],['Movimientos','movimientos']],
+
+      faltantes:[['Distrito','distrito'],['Piezas','piezas'],['Costo','costo']],
     }
     return maps[section]||[]
   },[section])
 
   function detailFor(row,index){
+    if(section==='faltantes'){setDetail({title:'Faltantes estimados por distrito',rows:[row],columns:[['Distrito','distrito'],['Piezas','piezas'],['Costo','costo']]});return}
     if(section==='valorTotal'){setDetail({title:'Composición del valor total',rows:[{concepto:'Valor en cajuela',total:k.valorCajuela},{concepto:'Valor por centro',total:k.valorCentro},{concepto:'Total',total:k.valorTotal}],columns:[['Concepto','concepto'],['Valor','total']]});return}
     const key=row.key||row.sku||String(index)
     const rows=(data?.detalles?.[section]||{})[key]||[]
@@ -144,12 +150,16 @@ export default function DashboardPage() {
   if(!perfil)return <main className="dash"><div className="shell"><button className="back" onClick={()=>router.push('/')}>← Regresar</button><p className="error">{error||'Acceso no autorizado.'}</p></div></main>
 
   const cards=[
-    ['solicitudes','SOLICITUDES',fmt(k.solicitudes),'Por técnico / almacén'],['traspasos','TRASPASOS',fmt(k.traspasos),'Por técnico / almacén'],
-    ['recolecciones','RECOLECCIONES RECIBIDAS',fmt(k.recolecciones),'Total recibidas'],['recoleccionesEntregadasTP','RECOLECCIONES ENTREGADAS A TOTALPLAY',fmt(k.recoleccionesEntregadasTP),'Total entregadas'],['auditorias','AUDITORÍAS REALIZADAS',fmt(k.auditoriasRealizadas),'Registros auditados'],
-    ['valor','VALOR EN CAJUELA',mxn(k.valorCajuela),'Total'],['valorCentro','VALOR POR CENTRO',mxn(k.valorCentro),'Total centro'],
-    ['valorTotal','VALOR TOTAL',mxn(k.valorTotal),'Cajuela + centro'],['criticos','CRÍTICOS +30 DÍAS',fmt(k.criticos),`Más antiguo: ${fmt(k.maxDiasCriticos)} días`],
-    ['materialesTraspasados','MATERIAL + TRASPASADO',fmt(k.materialMasTraspasado),'Top por piezas'],['materialesSolicitados','MATERIAL + SOLICITADO',fmt(k.materialMasSolicitado),'Top por piezas'],
-    ['recoleccionesPendientes','RECUS PENDIENTES',fmt(k.recoleccionesPendientes),`Más antiguo: ${fmt(k.maxDiasRecoleccionesPendientes)} días`],
+    ['recolecciones','RECOLECCIONES RECIBIDAS',fmt(k.recibidasPiezas),`Piezas · Costo identificado: ${mxn(k.recibidasCosto)}`],
+    ['recoleccionesEntregadasTP','ENTREGADAS A TOTALPLAY',fmt(k.entregadasPiezas),`Piezas · Costo identificado: ${mxn(k.entregadasCosto)}`],
+    ['recoleccionesPendientes','RECOLECCIONES PENDIENTES',fmt(k.pendientesPiezas),`Piezas · Costo identificado: ${mxn(k.pendientesCosto)}`],
+    ['faltantes','PIEZAS FALTANTES POR ENTREGAR',fmt(k.faltantesPiezas),'Diferencia recibidas − enviadas; costo sin conciliar'],
+    ['auditorias','AUDITORÍAS REALIZADAS',fmt(k.auditoriasRealizadas),'Faltantes: sin meta definida'],
+    ['valor','VALOR EN CAJUELA',mxn(k.valorCajuela),'Solo stock_tecnicos de técnicos activos'],
+    ['valorCentro','VALOR POR CENTRO',mxn(k.valorCentro),'Solo stock_almacen'],
+    ['valorTotal','VALOR TOTAL',mxn(k.valorTotal),'Cajuela + centro'],
+    ['traspasos','TRASPASOS',fmt(k.traspasos),'Por técnico / almacén'],
+    ['criticos','CRÍTICOS +30 DÍAS',fmt(k.criticos),`Más antiguo: ${fmt(k.maxDiasCriticos)} días`],
   ]
 
   return <main className="dash"><div className="shell">
@@ -158,6 +168,12 @@ export default function DashboardPage() {
     {error&&<div className="error" role="alert">{error}</div>}
     {data?.advertencias?.length>0&&<details className="warnings"><summary>Advertencias de datos ({data.advertencias.length})</summary><ul>{data.advertencias.map((x,i)=><li key={i}>{x}</li>)}</ul></details>}
     <div id="dashboardAll"><div className="kpis">{cards.map(([id,title,value,sub])=><button key={id} className={`kpi ${id==='criticos'?'red':id==='recoleccionesPendientes'?'lime':''}`} onClick={()=>{setSection(id);setSearch('');setDetail(null)}}><span>{title}</span><b>{value}</b><small>{sub}</small></button>)}</div>
+    <section className="tableCard" aria-label="Resumen por distrito">
+      <div className="tableHead"><h2>Resumen por distrito</h2><small>Inventario actual; movimientos según fechas seleccionadas. Costo faltante y meta de auditorías pendientes de conciliación.</small></div>
+      <div className="tableWrap"><table><thead><tr><th>Distrito</th><th>Recibidas (piezas)</th><th>Costo recibidas</th><th>Entregadas TP (piezas)</th><th>Costo entregadas</th><th>Pendientes (piezas)</th><th>Costo pendientes</th><th>Faltantes estimadas (piezas)</th><th>Costo faltantes</th><th>Auditorías realizadas</th><th>Auditorías faltantes</th><th>Valor cajuela</th><th>Valor centro</th></tr></thead>
+      <tbody>{(data?.porDistrito||[]).map(g=><tr key={g.distrito}><td>{g.distrito}</td><td>{fmt(g.recibidasPiezas)}</td><td>{mxn(g.recibidasCosto)}{g.recibidasSinCosto?' *':''}</td><td>{fmt(g.entregadasPiezas)}</td><td>{mxn(g.entregadasCosto)}{g.entregadasSinCosto?' *':''}</td><td>{fmt(g.pendientesPiezas)}</td><td>{mxn(g.pendientesCosto)}{g.pendientesSinCosto?' *':''}</td><td>{fmt(g.faltantesPiezas)}</td><td>Sin conciliar</td><td>{fmt(g.auditoriasRealizadas)}</td><td>Sin meta</td><td>{mxn(g.valorCajuela)}</td><td>{mxn(g.valorCentro)}</td></tr>)}{!(data?.porDistrito||[]).length&&<tr><td colSpan="13" className="empty">Sin información por distrito.</td></tr>}</tbody></table></div>
+      <small>* Importe parcial: hay piezas sin costo conocido. Las auditorías faltantes requieren una meta definida.</small>
+    </section>
     <section className="tableCard" aria-label="Reportes de recolecciones">
       <div className="tableHead"><div><h2>Recolecciones por día, mes o año</h2><small>Se aplican también las fechas seleccionadas arriba.</small></div>
         <div className="tools"><label>Desglose <select value={periodoReco} onChange={e=>setPeriodoReco(e.target.value)}><option value="dia">Por día</option><option value="mes">Por mes</option><option value="anio">Por año</option></select></label></div>
