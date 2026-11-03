@@ -103,6 +103,8 @@ export default function RecoleccionesPage() {
 
   const [folio, setFolio] = useState('')
   const [almacen, setAlmacen] = useState('')
+  const [almacenesDistrito, setAlmacenesDistrito] = useState([])
+  const [cargandoAlmacenes, setCargandoAlmacenes] = useState(false)
   const [datos, setDatos] = useState(null)
 
   const [recibe, setRecibe] = useState('')
@@ -185,6 +187,34 @@ export default function RecoleccionesPage() {
           setPuestoActivo(puestoPerfil)
         }
 
+        // Cargar el catálogo de técnicos activos exclusivamente del distrito
+        // del usuario autenticado. No usar el almacén del administrador como técnico.
+        if (centroPerfil) {
+          setCargandoAlmacenes(true)
+          const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+          if (sessionError) throw sessionError
+          const token = sessionData?.session?.access_token
+          if (!token) throw new Error('La sesión expiró. Inicia sesión nuevamente.')
+
+          const response = await fetch('/api/recolecciones/almacenes', {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+            cache: 'no-store',
+          })
+          const resultado = await response.json().catch(() => ({}))
+          if (!response.ok || !resultado.ok) {
+            throw new Error(resultado.error || 'No se pudo cargar el catálogo de técnicos del distrito.')
+          }
+
+          if (activo) {
+            const lista = Array.isArray(resultado.almacenes) ? resultado.almacenes : []
+            setAlmacenesDistrito(lista)
+            if (lista.length === 0) {
+              setError(`No hay técnicos activos registrados en el distrito ${centroPerfil}.`)
+            }
+          }
+        }
+
       } catch (e) {
         console.error(
           'ERROR CARGANDO USUARIO ACTIVO:',
@@ -201,6 +231,7 @@ export default function RecoleccionesPage() {
       } finally {
         if (activo) {
           setCargandoUsuario(false)
+          setCargandoAlmacenes(false)
         }
       }
     }
@@ -218,14 +249,8 @@ export default function RecoleccionesPage() {
     if (puestoActivo === 'ADMIN_PADRE') return true
     if (!centroActivo) throw new Error('No se pudo determinar el centro activo.')
 
-    const { data, error: errorAlmacen } = await supabase
-      .from('almacen_usuarios')
-      .select('usuario_almacen,distrito')
-      .eq('usuario_almacen', almacenLimpio)
-      .maybeSingle()
-
-    if (errorAlmacen) throw errorAlmacen
-    if (!data) throw new Error(`No se encontró el almacén ${almacenLimpio} en el catálogo de usuarios.`)
+    const data = almacenesDistrito.find(t => clean(t.usuario_almacen) === almacenLimpio)
+    if (!data) throw new Error(`El almacén ${almacenLimpio} no está registrado como técnico activo en ${centroActivo}. Selecciónalo del catálogo del distrito.`)
 
     const centroAlmacen = upper(data.distrito)
     if (centroAlmacen !== upper(centroActivo)) {
@@ -661,25 +686,31 @@ export default function RecoleccionesPage() {
             <label>
               Almacén
 
-              <input
+              <select
                 ref={inputAlmacen}
-                placeholder="0008"
                 value={almacen}
-                disabled={busy || !!guardado}
-                onChange={e =>
-                  setAlmacen(
-                    e.target.value
-                      .replace(/\D/g, '')
-                      .slice(0, 4)
-                  )
-                }
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    cargar()
-                  }
+                disabled={busy || !!guardado || cargandoAlmacenes || !almacenesDistrito.length}
+                onChange={e => {
+                  setAlmacen(e.target.value)
+                  setDatos(null)
+                  setEntregadas([])
+                  setGuardado(null)
+                  setError('')
                 }}
-              />
+              >
+                <option value="">
+                  {cargandoAlmacenes
+                    ? 'Cargando almacenes del distrito...'
+                    : almacenesDistrito.length
+                      ? `Selecciona un técnico de ${centroActivo}`
+                      : `Sin técnicos activos en ${centroActivo || 'el distrito'}`}
+                </option>
+                {almacenesDistrito.map(t => (
+                  <option key={`${t.distrito}-${t.usuario_almacen}`} value={clean(t.usuario_almacen)}>
+                    {clean(t.usuario_almacen)} — {clean(t.nombre)}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label>
@@ -1016,7 +1047,7 @@ export default function RecoleccionesPage() {
           gap: 7px;
         }
 
-        input {
+        input, select {
           width: 100%;
           box-sizing: border-box;
           border: 1px solid #c9dfda;
@@ -1030,6 +1061,11 @@ export default function RecoleccionesPage() {
 
         input:read-only {
           background: #e5eded;
+        }
+
+        select:disabled {
+          opacity: .75;
+          cursor: wait;
         }
 
         .controls {
