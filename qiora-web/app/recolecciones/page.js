@@ -1,3 +1,4 @@
+
 'use client'
 
 import { useRouter } from 'next/navigation'
@@ -52,6 +53,19 @@ export default function RecoleccionesMenuPage() {
             }
           >
             📦 RECUS TP - Recolecciones entregadas a Totalplay
+          </button>
+
+          <button
+            type="button"
+            className="card proceso"
+            onClick={() =>
+              router.push('/recolecciones/recus-tp')
+            }
+          >
+            🔄 PROCESO RECU
+            <span>
+              Captura de entregas a Totalplay
+            </span>
           </button>
 
         </div>
@@ -113,13 +127,13 @@ export default function RecoleccionesMenuPage() {
         .menu {
           display: grid;
           grid-template-columns:
-            repeat(3, minmax(0, 1fr));
+            repeat(2, minmax(0, 1fr));
           gap: 16px;
         }
 
         .card {
           min-height: 85px;
-          border: 0;
+          border: 1px solid #229a7a;
           border-radius: 12px;
           background: linear-gradient(
             135deg,
@@ -131,10 +145,31 @@ export default function RecoleccionesMenuPage() {
           font-weight: 800;
           padding: 18px;
           cursor: pointer;
+          transition:
+            filter 0.2s,
+            transform 0.2s;
         }
 
         .card:hover {
           filter: brightness(1.08);
+          transform: translateY(-2px);
+        }
+
+        .proceso {
+          background: linear-gradient(
+            135deg,
+            #087a98,
+            #12a6a0
+          );
+          border-color: #40d4ca;
+        }
+
+        .proceso span {
+          display: block;
+          margin-top: 7px;
+          font-size: 12px;
+          font-weight: 400;
+          color: #e5fffa;
         }
 
         @media (max-width: 760px) {
