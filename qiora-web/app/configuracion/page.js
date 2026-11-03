@@ -206,6 +206,7 @@ export default function ConfiguracionPage() {
 
   const [mostrarCargaTecnicos, setMostrarCargaTecnicos] = useState(false)
   const [enviandoEnlaceId, setEnviandoEnlaceId] = useState(null)
+  const [enviandoWhatsAppId, setEnviandoWhatsAppId] = useState(null)
 
   const [
     nuevoUsuario,
@@ -1244,6 +1245,33 @@ export default function ConfiguracionPage() {
       setAviso(data.mensaje)
     } catch (e) { setError(e?.message || 'Error al solicitar recuperación.') }
     finally { setEnviandoEnlaceId(null) }
+  }
+
+  async function enviarEnlaceWhatsApp(u) {
+    if (enviandoWhatsAppId) return
+    const telefono = String(u.telefono ?? '').replace(/\\D/g, '')
+    if (!telefono) {
+      setAviso(''); setError('Este técnico no tiene teléfono registrado. Edita su ficha antes de generar el enlace de WhatsApp.')
+      return
+    }
+    if (!window.confirm(`¿Generar un enlace de recuperación para ${u.usuario_almacen}.${u.distrito} y abrir WhatsApp al número registrado?`)) return
+    setError(''); setAviso(''); setEnviandoWhatsAppId(u.id)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) throw new Error('Inicia sesión nuevamente.')
+      const response = await fetch('/api/usuarios/enlace-whatsapp-restablecimiento', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ usuario_id: u.id }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.ok || !data.whatsapp_url) throw new Error(data.error || 'No fue posible generar el enlace.')
+      window.location.assign(data.whatsapp_url)
+    } catch (e) {
+      setError(e?.message || 'Error al generar enlace de WhatsApp.')
+    } finally {
+      setEnviandoWhatsAppId(null)
+    }
   }
 
   async function crearCuentaUsuario() {
@@ -2906,6 +2934,16 @@ export default function ConfiguracionPage() {
                             title="Envía un enlace al correo real registrado. Si falta, edita primero la ficha."
                           >
                             {enviandoEnlaceId === u.id ? 'Enviando...' : 'Enviar enlace de contraseña'}
+                          </button>
+
+                          <button
+                            type="button"
+                            style={{ ...css.boton, marginLeft: 6, background: '#16834a' }}
+                            disabled={!u.activo || Boolean(enviandoWhatsAppId)}
+                            onClick={() => enviarEnlaceWhatsApp(u)}
+                            title="Genera un enlace de recuperación y abre WhatsApp al teléfono registrado."
+                          >
+                            {enviandoWhatsAppId === u.id ? 'Generando...' : 'Enviar enlace por WhatsApp'}
                           </button>
 
                           <button
