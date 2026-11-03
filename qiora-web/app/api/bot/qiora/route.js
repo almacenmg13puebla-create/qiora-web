@@ -922,17 +922,8 @@ async function tecnicosTraspaso(admin, almacenes) {
     .select('id,usuario_almacen,nombre,puesto,distrito,telegram_chat_id,activo,auth_user_id')
     .eq('activo', true)
     .in('usuario_almacen', keys)
-    .limit(5000)
   if (error) throw new Error(error.message)
   return (data || []).filter(x => upper(x.puesto) === 'TECNICO')
-}
-
-function buscarTecnicoAlmacenDistrito_(lista, almacen, distrito) {
-  const a = normalizarAlmacenTraspaso(almacen)
-  const d = upper(distrito)
-  return (lista || []).find(x =>
-    normalizarAlmacenTraspaso(x.usuario_almacen) === a && upper(x.distrito) === d
-  ) || null
 }
 
 async function validarTraspasoBot(admin, perfil, payload) {
@@ -941,8 +932,7 @@ async function validarTraspasoBot(admin, perfil, payload) {
 
   const origen = normalizarAlmacenTraspaso(payload.origen)
   const destino = normalizarAlmacenTraspaso(payload.destino)
-  if (!origen || !destino || (origen === destino && upper(payload.origen_distrito) === upper(payload.destino_distrito)))
-    return { ok:false, permitido:false, mensaje:'Origen o destino inválido.' }
+  if (!origen || !destino || origen === destino) return { ok:false, permitido:false, mensaje:'Origen o destino inválido.' }
 
   const puesto = upper(perfil.puesto)
   const esPadre = puesto === 'ADMIN_PADRE'
@@ -952,27 +942,27 @@ async function validarTraspasoBot(admin, perfil, payload) {
   if (!(esPadre || esAdmin || esAlmacenista || esTecnico)) return { ok:false, permitido:false, mensaje:'Tu puesto no puede capturar traspasos.' }
 
   const tecnicos = await tecnicosTraspaso(admin, [origen, destino])
-  const distritoPerfil = upper(perfil.distrito)
-  const candidatosOrigen = tecnicos.filter(x => normalizarAlmacenTraspaso(x.usuario_almacen) === origen)
-  const candidatosDestino = tecnicos.filter(x => normalizarAlmacenTraspaso(x.usuario_almacen) === destino)
-  const distritoOrigen = upper(payload.origen_distrito) || (esTecnico ? distritoPerfil : (candidatosOrigen.length === 1 ? upper(candidatosOrigen[0].distrito) : ''))
-  const distritoDestino = upper(payload.destino_distrito) || (esTecnico ? distritoPerfil : (candidatosDestino.length === 1 ? upper(candidatosDestino[0].distrito) : ''))
-  if (!distritoOrigen || !distritoDestino) return {ok:false,permitido:false,mensaje:'El almacén existe en más de un distrito. Selecciona el distrito correspondiente.'}
+  if (tecnicos.length !== 2) return { ok:false, permitido:false, mensaje:'Ambos almacenes deben corresponder a técnicos activos.' }
+  const [tOrigen, tDestino] = [
+    tecnicos.find(x => normalizarAlmacenTraspaso(x.usuario_almacen) === origen),
+    tecnicos.find(x => normalizarAlmacenTraspaso(x.usuario_almacen) === destino)
+  ]
+  if (!tOrigen || !tDestino) return { ok:false, permitido:false, mensaje:'No se identificaron ambos técnicos.' }
 
-  const tOrigen = buscarTecnicoAlmacenDistrito_(tecnicos, origen, distritoOrigen)
-  const tDestino = buscarTecnicoAlmacenDistrito_(tecnicos, destino, distritoDestino)
-  if (!tOrigen || !tDestino) return { ok:false, permitido:false, mensaje:'No se encontró un técnico activo para el almacén y distrito seleccionados.' }
-
-  if (esTecnico) {
-    const propio = normalizarAlmacenTraspaso(perfil.usuario_almacen)
-    if (![origen, destino].includes(propio) || distritoOrigen !== distritoPerfil || distritoDestino !== distritoPerfil)
-      return { ok:false, permitido:false, mensaje:'Como técnico, solo puedes participar con tu propio almacén como origen o destino dentro de tu distrito.' }
+  if (!esPadre) {
+    const distrito = upper(perfil.distrito)
+    if (!distrito || upper(tOrigen.distrito) !== distrito || upper(tDestino.distrito) !== distrito) {
+      return { ok:false, permitido:false, mensaje:'El origen y destino deben pertenecer a tu distrito.' }
+    }
+  }
+  if (esTecnico && ![origen, destino].includes(normalizarAlmacenTraspaso(perfil.usuario_almacen))) {
+    return { ok:false, permitido:false, mensaje:'Como técnico, solo puedes participar como origen o destino.' }
   }
 
   return {
-    ok:true, permitido:true, origen, destino,
-    origen_distrito:distritoOrigen, destino_distrito:distritoDestino,
-    distrito: distritoOrigen === distritoDestino ? distritoOrigen : `${distritoOrigen}/${distritoDestino}`,
+    ok:true, permitido:true,
+    origen, destino,
+    distrito: esPadre ? upper(tOrigen.distrito) : upper(perfil.distrito),
     nombre_origen:tOrigen.nombre || '', nombre_destino:tDestino.nombre || '',
     tecnico_origen:tOrigen.nombre || '', tecnico_destino:tDestino.nombre || '',
     puesto:perfil.puesto || '', usuario_almacen:normalizarAlmacenTraspaso(perfil.usuario_almacen)
@@ -985,14 +975,15 @@ async function buscarAlmacenTraspaso(admin, perfil, payload) {
   if (consulta.length < 1 || consulta.length > 100) return { ok:false, error:'Escribe un almacén o nombre válido.' }
   const { data, error } = await admin.from('almacen_usuarios')
     .select('usuario_almacen,nombre,puesto,distrito')
-    .eq('activo', true).eq('puesto', 'TECNICO').limit(5000)
+    .eq('activo', true)
+    .eq('puesto', 'TECNICO')
+    .limit(1000)
   if (error) throw new Error(error.message)
   const q = normalizarLlave(consulta)
-  const esTecnico = upper(perfil.puesto) === 'TECNICO'
-  const lista = (data || []).filter(x => {
-    if (esTecnico && upper(x.distrito) !== upper(perfil.distrito)) return false
+  let lista = (data || []).filter(x => {
+    if (upper(perfil.puesto) !== 'ADMIN_PADRE' && upper(x.distrito) !== upper(perfil.distrito)) return false
     return normalizarLlave(x.usuario_almacen) === q || normalizarLlave(x.nombre).includes(q)
-  }).slice(0,50).map(x => ({almacen:normalizarAlmacenTraspaso(x.usuario_almacen),nombre:x.nombre||'',distrito:upper(x.distrito)}))
+  }).slice(0,20).map(x => ({ almacen:normalizarAlmacenTraspaso(x.usuario_almacen), nombre:x.nombre || '', distrito:x.distrito || '' }))
   return { ok:true, encontrados:lista }
 }
 
@@ -1008,7 +999,6 @@ async function buscarMaterialesTraspaso(admin, perfil, payload) {
   const { data, error } = await admin.from('stock_tecnicos')
     .select('sku,material,centro,almacen,lote,cantidad,libre_utilizacion,trans_trasl,tecnico,solicita,disponible')
     .eq('almacen', origen)
-    .eq('distrito', validacion.origen_distrito)
     .gt('disponible', 0)
     .limit(2000)
   if (error) throw new Error(error.message)
@@ -1039,7 +1029,7 @@ async function buscarSeriesTraspaso(admin, perfil, payload) {
   const lote = clean(payload.lote)
   if (!sku) return { ok:false, error:'Falta SKU.' }
   let q = admin.from('iq09_equipos').select('serie,material,descripcion,lote,estatus_sap,tipo_stock,almacen,distrito')
-    .eq('almacen', validacion.origen).eq('distrito', validacion.origen_distrito).eq('material', sku).eq('tipo_stock', '01')
+    .eq('almacen', validacion.origen).eq('material', sku).eq('tipo_stock', '01')
   if (lote) q = q.eq('lote', lote)
   const { data, error } = await q.limit(1000)
   if (error) throw new Error(error.message)
@@ -1055,7 +1045,6 @@ async function buscarSeriesDirectasTraspaso(admin, perfil, payload) {
   const { data, error } = await admin.from('iq09_equipos')
     .select('serie,material,descripcion,lote,estatus_sap,tipo_stock,almacen')
     .eq('almacen', validacion.origen)
-    .eq('distrito', validacion.origen_distrito)
     .in('serie', solicitadas)
     .eq('tipo_stock', '01')
     .limit(200)
@@ -1196,7 +1185,7 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
 
     const { data: stocksBase, error: stockError } = await admin.from('stock_tecnicos')
       .select('sku,material,almacen,disponible,lote')
-      .eq('almacen', validacion.origen).eq('distrito', validacion.origen_distrito).eq('sku', sku).limit(200)
+      .eq('almacen', validacion.origen).eq('sku', sku).limit(200)
     if (stockError) throw new Error(stockError.message)
     const stocks = (stocksBase || []).filter(x => (clean(x.lote) || 'NA') === (lote || 'NA'))
     const disponible = stocks.reduce((n,x)=>n+Number(x.disponible || 0),0)
@@ -1206,7 +1195,7 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
       if (series.length !== cantidad) return { ok:false, error:`El material ${sku} requiere exactamente ${cantidad} series.` }
       const { data: equipos, error: equipoError } = await admin.from('iq09_equipos')
         .select('serie,material,lote,almacen,tipo_stock')
-        .eq('almacen', validacion.origen).eq('distrito', validacion.origen_distrito).eq('material', sku).eq('lote', lote)
+        .eq('almacen', validacion.origen).eq('material', sku).eq('lote', lote)
         .eq('tipo_stock','01').in('serie',series).limit(200)
       if (equipoError) throw new Error(equipoError.message)
       const disponibles = new Set((equipos || []).map(x=>x.serie))
@@ -1514,13 +1503,6 @@ const SAP_PROCESOS_COORDINADOR = new Set(['ACTUALIZAR_TODO', 'TRASPASOS_PENDIENT
 function permiteComandoSAP(perfil, proceso) {
   if (!perfil || perfil.activo !== true) return false
   if (SAP_PROCESOS_CONSULTA.has(proceso)) return true
-
-  // PENDIENTES DE ENTRADA: disponible para cualquier puesto activo,
-  // excepto TECNICO. La solicitud sigue asociada al distrito del perfil.
-  if (proceso === 'TRASPASOS_PENDIENTES_ENTRADA') {
-    return upper(perfil.puesto) !== 'TECNICO'
-  }
-
   if (esAdmin(perfil)) return true
   return upper(perfil.puesto) === 'COORDINADOR' && SAP_PROCESOS_COORDINADOR.has(proceso)
 }
@@ -1571,11 +1553,36 @@ async function notificacionesComandosSAP(admin) {
     .eq('telegram_notificado',false)
     .order('fecha_solicitud',{ascending:true}).limit(50)
   if(error) throw new Error(error.message)
-  return {ok:true,avisos:(data||[]).filter(x=>clean(x.telegram_chat_id)).map(x=>({
-    id_comando:x.id_comando, telegram_chat_id:x.telegram_chat_id,
-    distrito:x.distrito, proceso:x.proceso, estado:x.estado,
-    pc:x.pc_ejecutora || '', resultado:x.resultado || x.resultado_mac || ''
-  }))}
+
+  const filas = data || []
+  const distritosPendientes = [...new Set(filas
+    .filter(x => upper(x.proceso) === 'TRASPASOS_PENDIENTES_ENTRADA')
+    .map(x => upper(x.distrito)).filter(Boolean))]
+  const gruposPorDistrito = new Map()
+  if (distritosPendientes.length) {
+    const { data: configs, error: configError } = await admin
+      .from('qiora_distritos_telegram')
+      .select('centro,chat_traspasos,token_cifrado')
+      .in('centro', distritosPendientes)
+    if (configError) throw new Error(configError.message)
+    for (const c of configs || []) {
+      const chat = clean(c.chat_traspasos)
+      const token = clean(c.token_cifrado) ? descifrarTokenTraspasos(c.token_cifrado) : ''
+      gruposPorDistrito.set(upper(c.centro), { chat, token })
+    }
+  }
+
+  return {ok:true,avisos:filas.filter(x=>clean(x.telegram_chat_id)).map(x=>{
+    const distrito = upper(x.distrito)
+    const grupo = upper(x.proceso) === 'TRASPASOS_PENDIENTES_ENTRADA'
+      ? (gruposPorDistrito.get(distrito) || {}) : {}
+    return {
+      id_comando:x.id_comando, telegram_chat_id:x.telegram_chat_id,
+      distrito:x.distrito, proceso:x.proceso, estado:x.estado,
+      pc:x.pc_ejecutora || '', resultado:x.resultado || x.resultado_mac || '',
+      grupo_chat_id: clean(grupo.chat), grupo_bot_token: clean(grupo.token)
+    }
+  })}
 }
 
 async function marcarComandoSAPNotificado(admin,payload) {
