@@ -220,30 +220,20 @@ export default function RecoleccionesPage() {
     return digitos.padStart(4, '0')
   }
 
+  // Normaliza el almacén en el navegador. La validación real de
+  // distrito + almacén + técnico activo se realiza dentro de las RPC
+  // SECURITY DEFINER, usando auth.uid(); no se consulta el catálogo
+  // desde el navegador para evitar bloqueos por RLS o cruces de distrito.
   const validarAlmacenCentro = async almacenValor => {
     const almacenLimpio = normalizarAlmacen(almacenValor)
+
     if (!centroActivo || centroActivo === 'TODOS') {
-      throw new Error('La recepción requiere un distrito específico. ADMIN_PADRE debe ingresar desde una cuenta administradora del distrito correspondiente.')
+      throw new Error(
+        'La recepción requiere un usuario con distrito específico. ADMIN_PADRE debe seleccionar un distrito autorizado.'
+      )
     }
 
-    // La consulta del catálogo se realiza en el servidor con Service Role,
-    // porque RLS puede impedir que el cliente lea los técnicos de su distrito.
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session?.access_token) throw new Error('La sesión venció. Inicia sesión nuevamente.')
-
-    const response = await fetch('/api/recolecciones/validar-almacen', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`
-      },
-      body: JSON.stringify({ almacen: almacenLimpio, distrito: centroActivo })
-    })
-    const result = await response.json().catch(() => ({}))
-    if (!response.ok || !result.ok) {
-      throw new Error(result.error || 'No se pudo validar el almacén en el distrito activo.')
-    }
-    return { almacen: almacenLimpio, tecnico: result.tecnico }
+    return { almacen: almacenLimpio }
   }
 
   const ejecutar = async fn => {
