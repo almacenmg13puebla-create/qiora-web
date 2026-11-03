@@ -1502,6 +1502,10 @@ const SAP_PROCESOS_COORDINADOR = new Set(['ACTUALIZAR_TODO', 'TRASPASOS_PENDIENT
 
 function permiteComandoSAP(perfil, proceso) {
   if (!perfil || perfil.activo !== true) return false
+  // Pendientes de entrada: cualquier puesto activo excepto TECNICO.
+  if (proceso === 'TRASPASOS_PENDIENTES_ENTRADA') {
+    return upper(perfil.puesto) !== 'TECNICO'
+  }
   if (SAP_PROCESOS_CONSULTA.has(proceso)) return true
   if (esAdmin(perfil)) return true
   return upper(perfil.puesto) === 'COORDINADOR' && SAP_PROCESOS_COORDINADOR.has(proceso)
@@ -1554,35 +1558,33 @@ async function notificacionesComandosSAP(admin) {
     .order('fecha_solicitud',{ascending:true}).limit(50)
   if(error) throw new Error(error.message)
 
-  const filas = data || []
-  const distritosPendientes = [...new Set(filas
+  const avisosBase = (data || []).filter(x => clean(x.telegram_chat_id))
+  const distritosPendientes = [...new Set(avisosBase
     .filter(x => upper(x.proceso) === 'TRASPASOS_PENDIENTES_ENTRADA')
     .map(x => upper(x.distrito)).filter(Boolean))]
+
   const gruposPorDistrito = new Map()
   if (distritosPendientes.length) {
-    const { data: configs, error: configError } = await admin
+    const { data: configs, error: cfgError } = await admin
       .from('qiora_distritos_telegram')
       .select('centro,chat_traspasos,token_cifrado')
       .in('centro', distritosPendientes)
-    if (configError) throw new Error(configError.message)
-    for (const c of configs || []) {
-      const chat = clean(c.chat_traspasos)
-      const token = clean(c.token_cifrado) ? descifrarTokenTraspasos(c.token_cifrado) : ''
-      gruposPorDistrito.set(upper(c.centro), { chat, token })
+    if (cfgError) throw new Error(cfgError.message)
+    for (const cfg of configs || []) {
+      if (!clean(cfg.chat_traspasos) || !clean(cfg.token_cifrado)) continue
+      gruposPorDistrito.set(upper(cfg.centro), {
+        grupo_chat_id: clean(cfg.chat_traspasos),
+        grupo_token: descifrarTokenTraspasos(cfg.token_cifrado)
+      })
     }
   }
 
-  return {ok:true,avisos:filas.filter(x=>clean(x.telegram_chat_id)).map(x=>{
-    const distrito = upper(x.distrito)
-    const grupo = upper(x.proceso) === 'TRASPASOS_PENDIENTES_ENTRADA'
-      ? (gruposPorDistrito.get(distrito) || {}) : {}
-    return {
-      id_comando:x.id_comando, telegram_chat_id:x.telegram_chat_id,
-      distrito:x.distrito, proceso:x.proceso, estado:x.estado,
-      pc:x.pc_ejecutora || '', resultado:x.resultado || x.resultado_mac || '',
-      grupo_chat_id: clean(grupo.chat), grupo_bot_token: clean(grupo.token)
-    }
-  })}
+  return {ok:true,avisos:avisosBase.map(x=>({
+    id_comando:x.id_comando, telegram_chat_id:x.telegram_chat_id,
+    distrito:x.distrito, proceso:x.proceso, estado:x.estado,
+    pc:x.pc_ejecutora || '', resultado:x.resultado || x.resultado_mac || '',
+    ...(gruposPorDistrito.get(upper(x.distrito)) || {})
+  }))}
 }
 
 async function marcarComandoSAPNotificado(admin,payload) {
