@@ -348,5 +348,5 @@ export async function GET(request) {
     materialMasSolicitado:rows.materialesSolicitados.reduce((a,b)=>a+num(b.cantidad),0),
     recoleccionesPendientes:sum('recoleccionesPendientes'),maxDiasRecoleccionesPendientes:maxPendingDays,maxDiasCriticos:maxCritDays,
   }
-  return response({ok:true,distrito:padre?'TODOS':norm(actor.distrito),desde:from,hasta:to,generado:new Date().toISOString(),kpis,tablas:rows,detalles,reporteRecolecciones,advertencias})
+  return response({ok:true,distrito:padre?'TODOS':norm(actor.distrito),desde:from,hasta:to,generado:new Date().toISOString(),kpis,tablas:rows,detalles:details,reporteRecolecciones,advertencias})
 }
