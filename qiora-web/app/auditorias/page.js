@@ -551,69 +551,70 @@ export default function AuditoriasPage() {
     setTipoAuditoriaPanel('Mensual')
   }
 
-  // Consolida filas repetidas del mismo SKU + material + lote.
-  // Suma cantidades del inventario; no modifica los registros originales.
-  function agruparMateriales(filas) {
-    const grupos = new Map()
-    for (const x of filas) {
-      const sku = texto(x.sku)
-      const material = texto(x.material)
-      const lote = texto(x.lote)
-      const clave = `${sku}|${material}|${lote}`
-      const cantidad = x.cantidad !== null && x.cantidad !== undefined
-        ? numero(x.cantidad)
-        : numero(x.disponible)
-      const anterior = grupos.get(clave)
-      if (anterior) anterior.sistema += cantidad
-      else grupos.set(clave, { sku, material, lote, sistema: cantidad, fisico: 0, capturado: false, observacion: '' })
-    }
-    return [...grupos.values()].sort((a,b) => a.sku.localeCompare(b.sku, 'es', {numeric:true}) || a.lote.localeCompare(b.lote, 'es'))
-  }
-
   function conservarMateriales(nuevos) {
-    const anteriores = new Map(materiales.map(x => [
-      `${texto(x.sku)}|${texto(x.material)}|${texto(x.lote)}`, x
-    ]))
-    return nuevos.map(x => {
-      const anterior = anteriores.get(`${texto(x.sku)}|${texto(x.material)}|${texto(x.lote)}`)
-      return { ...x, fisico: anterior ? anterior.fisico : 0,
+    const anteriores = new Map(
+      materiales.map((x) => [
+        `${texto(x.distrito).toUpperCase()}|${normalizarAlmacen(x.almacen)}|${texto(x.sku)}|${texto(x.lote)}`,
+        x,
+      ])
+    )
+
+    return nuevos.map((x) => {
+      const key = `${texto(x.distrito).toUpperCase()}|${normalizarAlmacen(x.almacen)}|${texto(x.sku)}|${texto(x.lote)}`
+      const anterior = anteriores.get(key)
+
+      return {
+        ...x,
+        fisico: anterior ? anterior.fisico : x.fisico,
         capturado: anterior ? anterior.capturado === true : false,
-        observacion: anterior ? anterior.observacion : '' }
+        observacion: anterior
+          ? anterior.observacion
+          : x.observacion,
+      }
     })
   }
 
-  // Consolida herramientas repetidas por referencia/producto + colaborador.
   function conservarHerramientas(nuevos) {
-    const grupos = new Map()
-    for (const x of nuevos) {
-      const clave = `${texto(x.producto)}|${texto(x.ubicacion)}`
-      const anterior = grupos.get(clave)
-      if (anterior) anterior.sistema += numero(x.sistema)
-      else grupos.set(clave, { ...x, sistema: numero(x.sistema) })
-    }
-    const anteriores = new Map(herramientas.map(x => [
-      `${texto(x.producto)}|${texto(x.ubicacion)}`, x
-    ]))
-    return [...grupos.values()].map(x => {
-      const anterior = anteriores.get(`${texto(x.producto)}|${texto(x.ubicacion)}`)
-      return { ...x, fisico: anterior ? anterior.fisico : 0,
+    const anteriores = new Map(
+      herramientas.map((x) => [
+        `${texto(x.producto)}|${texto(x.ubicacion)}`,
+        x,
+      ])
+    )
+
+    return nuevos.map((x) => {
+      const key =
+        `${texto(x.producto)}|${texto(x.ubicacion)}`
+
+      const anterior = anteriores.get(key)
+
+      return {
+        ...x,
+        fisico: anterior ? anterior.fisico : x.fisico,
         capturado: anterior ? anterior.capturado === true : false,
-        observacion: anterior ? anterior.observacion : '' }
+        observacion: anterior
+          ? anterior.observacion
+          : x.observacion,
+      }
     })
   }
 
-  // Los equipos se conservan individualmente por serie; solo se descarta
-  // una repetición exacta de la misma serie en la respuesta de IQ09.
   function conservarEquipos(nuevos) {
-    const anteriores = new Map(equipos.map(x => [normalizarSerie(x.serie), x]))
-    const unicos = new Map()
-    for (const x of nuevos) {
-      const clave = normalizarSerie(x.serie)
-      if (clave && !unicos.has(clave)) unicos.set(clave, x)
-    }
-    return [...unicos.values()].map(x => {
-      const anterior = anteriores.get(normalizarSerie(x.serie))
-      return anterior ? { ...x, escaneado: anterior.escaneado, estado: anterior.estado } : x
+    const anteriores = new Map(
+      equipos.map((x) => [texto(x.serie).toUpperCase(), x])
+    )
+
+    return nuevos.map((x) => {
+      const anterior =
+        anteriores.get(texto(x.serie).toUpperCase())
+
+      if (!anterior) return x
+
+      return {
+        ...x,
+        escaneado: anterior.escaneado,
+        estado: anterior.estado,
+      }
     })
   }
 
@@ -656,6 +657,11 @@ export default function AuditoriasPage() {
           `El almacén ${almacen4} pertenece a un usuario inactivo.`
         )
       }
+      const distritoTecnico = texto(usuarioTecnico.distrito || usuarioTecnico.centro).toUpperCase()
+      const distritoSesion = texto(perfil?.distrito).toUpperCase()
+      if (distritoTecnico && distritoSesion && distritoTecnico !== distritoSesion) {
+        throw new Error(`El técnico pertenece a ${distritoTecnico}, pero tu sesión corresponde a ${distritoSesion}. Se bloqueó la auditoría.`)
+      }
 
       // Se establece el técnico solamente después de cargar correctamente las categorías.
 
@@ -669,12 +675,18 @@ export default function AuditoriasPage() {
         tipo === TIPOS.TODO ||
         tipo === TIPOS.MATERIALES
       ) {
+        const distritoAuditoria = texto(perfil?.distrito).toUpperCase()
+        if (!distritoAuditoria || distritoAuditoria === 'TODOS') {
+          throw new Error('No se puede cargar auditoría sin un distrito activo definido.')
+        }
+
         const { data, error: matError } = await supabase
           .from('stock_tecnicos')
           .select(
-            'sku,material,lote,cantidad,disponible,almacen,tecnico'
+            'sku,material,lote,cantidad,disponible,almacen,tecnico,distrito,centro'
           )
           .eq('almacen', almacen4)
+          .eq('distrito', distritoAuditoria)
           .order('sku')
 
         if (matError) throw matError
@@ -685,8 +697,36 @@ export default function AuditoriasPage() {
           texto(x.lote).trim().toUpperCase().startsWith('TPI')
         )
 
-        nuevosMateriales = agruparMateriales(materialesTPI)
-        nuevosMateriales = conservarMateriales(nuevosMateriales)
+        // Consolidar solamente filas del MISMO distrito, almacén, SKU,
+        // material y lote. Nunca sumar centros distintos.
+        const gruposMateriales = new Map()
+        for (const x of materialesTPI) {
+          const clave = [
+            texto(x.distrito).toUpperCase(),
+            normalizarAlmacen(x.almacen),
+            texto(x.sku).toUpperCase(),
+            texto(x.material).toUpperCase(),
+            texto(x.lote).toUpperCase(),
+          ].join('|')
+          const cantidad = x.cantidad !== null && x.cantidad !== undefined
+            ? numero(x.cantidad)
+            : numero(x.disponible)
+          const existente = gruposMateriales.get(clave)
+          if (existente) existente.sistema += cantidad
+          else gruposMateriales.set(clave, {
+            distrito: distritoAuditoria,
+            almacen: almacen4,
+            sku: texto(x.sku),
+            material: texto(x.material),
+            lote: texto(x.lote),
+            sistema: cantidad,
+            fisico: 0,
+            capturado: false,
+            observacion: '',
+          })
+        }
+
+        nuevosMateriales = conservarMateriales([...gruposMateriales.values()])
       }
 
       // ================================================
@@ -744,12 +784,17 @@ export default function AuditoriasPage() {
         tipo === TIPOS.TODO ||
         tipo === TIPOS.EQUIPOS
       ) {
+        const distritoAuditoria = texto(perfil?.distrito).toUpperCase()
+        if (!distritoAuditoria || distritoAuditoria === 'TODOS') {
+          throw new Error('No se puede cargar equipos sin un distrito activo definido.')
+        }
         const { data, error: eqError } = await supabase
           .from('iq09_equipos')
           .select(
-            'serie,material,descripcion,lote,estatus_sap,denom_status,tipo_stock,almacen'
+            'serie,material,descripcion,lote,estatus_sap,denom_status,tipo_stock,almacen,distrito,centro'
           )
           .eq('almacen', almacen4)
+          .eq('distrito', distritoAuditoria)
           .order('serie')
 
         if (eqError) throw eqError
