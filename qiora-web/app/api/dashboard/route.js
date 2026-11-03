@@ -12,14 +12,36 @@ const num = v => {
   return Number.isFinite(n) ? n : 0
 }
 const money = v => Math.round(num(v) * 100) / 100
+// Convierte fechas ISO, DD/MM/AAAA y numeros seriales de Excel (SAP/Excel).
 const dateValue = v => {
-  if (!v) return null
+  if (v === null || v === undefined || v === '') return null
   const s = String(v).trim()
-  let m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s)
-  if (m) return new Date(+m[3], +m[2] - 1, +m[1])
+  // Excel usa como origen practico el 30/12/1899 (sistema 1900).
+  if (/^\d{5}(?:\.\d+)?$/.test(s)) {
+    const serial = Number(s)
+    if (serial >= 20000 && serial <= 100000) {
+      const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(serial) * 86400000)
+      return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+    }
+  }
+  const dm = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s|$)/.exec(s)
+  if (dm) {
+    const d = new Date(Number(dm[3]), Number(dm[2]) - 1, Number(dm[1]))
+    return d.getFullYear() === Number(dm[3]) && d.getMonth() === Number(dm[2])-1 && d.getDate() === Number(dm[1]) ? d : null
+  }
+  const iso = /^(\d{4})-(\d{2})-(\d{2})(?:T|\s|$)/.exec(s)
+  if (iso) {
+    const d = new Date(Number(iso[1]), Number(iso[2])-1, Number(iso[3]))
+    return d.getFullYear() === Number(iso[1]) && d.getMonth() === Number(iso[2])-1 && d.getDate() === Number(iso[3]) ? d : null
+  }
   const d = new Date(s)
   return Number.isNaN(d.getTime()) ? null : d
 }
+const displayDate = v => {
+  const d = dateValue(v)
+  return d ? `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}` : 'Sin fecha valida'
+}
+
 const inRange = (v, from, to) => {
   const d = dateValue(v)
   if (!d) return !from && !to
@@ -94,7 +116,7 @@ export async function GET(request) {
       optionalRows(`Usuarios ${distrito}`, (a,b) => db.from('almacen_usuarios').select('usuario_almacen,nombre,distrito,puesto,activo').eq('distrito', distrito).range(a,b)),
       optionalRows(`Traspasos ${distrito}`, (a,b) => db.from('qiora_traspasos').select('*').eq('distrito', distrito).order('creado_en', { ascending: true }).range(a,b)),
       optionalRows(`IQ09 ${distrito}`, (a,b) => db.from('iq09_equipos').select('*').eq('distrito', distrito).range(a,b)),
-      optionalRows(`Stock centro ${distrito}`, (a,b) => db.from('stock_almacen').select('*').eq('distrito', distrito).range(a,b)),
+      optionalRows(`Stock centro ${distrito}`, (a,b) => db.from('stock_almacen').select('*').eq('centro', distrito).range(a,b)),
     ])
     all.usuarios.push(...users)
     all.traspasos.push(...traspasos)
@@ -224,19 +246,19 @@ export async function GET(request) {
     if (!warehouse || !distritos.includes(district)) return
     const serial = norm(r.serie), lot = norm(r.lote)
     const d = dateValue(r.fecha_modificacion || r.fecha_ingreso || r.fecha)
-    const days = d ? Math.max(0, Math.floor((today - new Date(d.getFullYear(),d.getMonth(),d.getDate())) / 86400000)) : 0
+    const days = d ? Math.max(0, Math.floor((today - new Date(d.getFullYear(),d.getMonth(),d.getDate())) / 86400000)) : null
     const tech = userByKey.get(`${district}|${warehouse}`) || warehouse
     const key = `${district}|${warehouse}|${tech}`
     if (lot === 'TPE USADO' && !deliveredSeries.has(serial)) {
       const g = pendingGroups.get(key) || {key,distrito:district,almacen:warehouse,tecnico:tech,total:0,maxDias:0}
-      g.total++; g.maxDias=Math.max(g.maxDias,days); maxPendingDays=Math.max(maxPendingDays,days); pendingGroups.set(key,g)
+      g.total++; if(days !== null){g.maxDias=Math.max(g.maxDias,days); maxPendingDays=Math.max(maxPendingDays,days);} pendingGroups.set(key,g)
       if (!details.recoleccionesPendientes[key]) details.recoleccionesPendientes[key]=[]
-      details.recoleccionesPendientes[key].push({serie:r.serie,sku:r.material,material:r.descripcion,lote:r.lote,dias:days,fecha:r.fecha_modificacion})
-    } else if (!lot.includes('TPE USADO') && days > 30 && !lot.includes('TPI USADO') && !lot.includes('TPI HERRAM') && !lot.includes('TPI GARANT')) {
+      details.recoleccionesPendientes[key].push({serie:r.serie,sku:r.material,material:r.descripcion,lote:r.lote,dias:days,fecha:displayDate(r.fecha_modificacion)})
+    } else if (!lot.includes('TPE USADO') && days !== null && days > 30 && !lot.includes('TPI USADO') && !lot.includes('TPI HERRAM') && !lot.includes('TPI GARANT')) {
       const g = critGroups.get(key) || {key,distrito:district,almacen:warehouse,tecnico:tech,total:0,maxDias:0}
       g.total++; g.maxDias=Math.max(g.maxDias,days); maxCritDays=Math.max(maxCritDays,days); critGroups.set(key,g)
       if (!details.criticos[key]) details.criticos[key]=[]
-      details.criticos[key].push({serie:r.serie,sku:r.material,material:r.descripcion,lote:r.lote,dias:days})
+      details.criticos[key].push({serie:r.serie,sku:r.material,material:r.descripcion,lote:r.lote,dias:days,fecha:displayDate(r.fecha_modificacion || r.fecha_ingreso || r.fecha)})
     }
   })
 
@@ -263,7 +285,7 @@ export async function GET(request) {
 
   const centerGroups = new Map()
   all.stockCentro.forEach(r => {
-    const district=norm(r.distrito), sku=txt(r.sku || r.material)
+    const district=norm(r.centro || r.distrito), sku=txt(r.sku || r.material)
     if (!distritos.includes(district) || !sku) return
     const qty=num(r.disponible ?? r.libre_utilizacion ?? r.cantidad ?? r.stock)
     const value=qty*(costBySku.get(sku) ?? 0)
@@ -274,6 +296,7 @@ export async function GET(request) {
     details.valorCentro[district].push({sku,material:r.material,disponible:qty,costo:costBySku.get(sku) ?? 0,valor:value,costoConocido:costBySku.has(sku)})
   })
 
+  if (!all.stockCentro.length) advertencias.push('Valor por centro: no se encontraron filas en stock_almacen para los distritos autorizados (columna centro).')
   const skuSinCosto = new Set()
   for (const r of [...all.stock, ...all.stockCentro]) {
     const sku = txt(r.sku || r.material)
@@ -281,6 +304,7 @@ export async function GET(request) {
   }
   if (skuSinCosto.size) advertencias.push(`Hay ${skuSinCosto.size} SKU sin costo SAP identificado; los importes de inventario son parciales.`)
 
+  if (all.stockCentro.length && [...centerGroups.values()].every(x => x.total === 0)) advertencias.push('Valor por centro: hay registros en stock_almacen, pero el valor es 0. Revisa cantidades y precios en costos_sap; no se puede confirmar su costo total.')
   // Reportes de recolecciones: recibidas y enviadas a Totalplay, independientes.
   // Solo se incluyen filas con distrito explícito o almacén que pertenezca
   // inequívocamente a un distrito autorizado. Nunca se presupone MG13.
