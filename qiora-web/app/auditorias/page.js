@@ -551,70 +551,69 @@ export default function AuditoriasPage() {
     setTipoAuditoriaPanel('Mensual')
   }
 
+  // Consolida filas repetidas del mismo SKU + material + lote.
+  // Suma cantidades del inventario; no modifica los registros originales.
+  function agruparMateriales(filas) {
+    const grupos = new Map()
+    for (const x of filas) {
+      const sku = texto(x.sku)
+      const material = texto(x.material)
+      const lote = texto(x.lote)
+      const clave = `${sku}|${material}|${lote}`
+      const cantidad = x.cantidad !== null && x.cantidad !== undefined
+        ? numero(x.cantidad)
+        : numero(x.disponible)
+      const anterior = grupos.get(clave)
+      if (anterior) anterior.sistema += cantidad
+      else grupos.set(clave, { sku, material, lote, sistema: cantidad, fisico: 0, capturado: false, observacion: '' })
+    }
+    return [...grupos.values()].sort((a,b) => a.sku.localeCompare(b.sku, 'es', {numeric:true}) || a.lote.localeCompare(b.lote, 'es'))
+  }
+
   function conservarMateriales(nuevos) {
-    const anteriores = new Map(
-      materiales.map((x) => [
-        `${texto(x.sku)}|${texto(x.lote)}`,
-        x,
-      ])
-    )
-
-    return nuevos.map((x) => {
-      const key = `${texto(x.sku)}|${texto(x.lote)}`
-      const anterior = anteriores.get(key)
-
-      return {
-        ...x,
-        fisico: anterior ? anterior.fisico : x.fisico,
+    const anteriores = new Map(materiales.map(x => [
+      `${texto(x.sku)}|${texto(x.material)}|${texto(x.lote)}`, x
+    ]))
+    return nuevos.map(x => {
+      const anterior = anteriores.get(`${texto(x.sku)}|${texto(x.material)}|${texto(x.lote)}`)
+      return { ...x, fisico: anterior ? anterior.fisico : 0,
         capturado: anterior ? anterior.capturado === true : false,
-        observacion: anterior
-          ? anterior.observacion
-          : x.observacion,
-      }
+        observacion: anterior ? anterior.observacion : '' }
     })
   }
 
+  // Consolida herramientas repetidas por referencia/producto + colaborador.
   function conservarHerramientas(nuevos) {
-    const anteriores = new Map(
-      herramientas.map((x) => [
-        `${texto(x.producto)}|${texto(x.ubicacion)}`,
-        x,
-      ])
-    )
-
-    return nuevos.map((x) => {
-      const key =
-        `${texto(x.producto)}|${texto(x.ubicacion)}`
-
-      const anterior = anteriores.get(key)
-
-      return {
-        ...x,
-        fisico: anterior ? anterior.fisico : x.fisico,
+    const grupos = new Map()
+    for (const x of nuevos) {
+      const clave = `${texto(x.producto)}|${texto(x.ubicacion)}`
+      const anterior = grupos.get(clave)
+      if (anterior) anterior.sistema += numero(x.sistema)
+      else grupos.set(clave, { ...x, sistema: numero(x.sistema) })
+    }
+    const anteriores = new Map(herramientas.map(x => [
+      `${texto(x.producto)}|${texto(x.ubicacion)}`, x
+    ]))
+    return [...grupos.values()].map(x => {
+      const anterior = anteriores.get(`${texto(x.producto)}|${texto(x.ubicacion)}`)
+      return { ...x, fisico: anterior ? anterior.fisico : 0,
         capturado: anterior ? anterior.capturado === true : false,
-        observacion: anterior
-          ? anterior.observacion
-          : x.observacion,
-      }
+        observacion: anterior ? anterior.observacion : '' }
     })
   }
 
+  // Los equipos se conservan individualmente por serie; solo se descarta
+  // una repetición exacta de la misma serie en la respuesta de IQ09.
   function conservarEquipos(nuevos) {
-    const anteriores = new Map(
-      equipos.map((x) => [texto(x.serie).toUpperCase(), x])
-    )
-
-    return nuevos.map((x) => {
-      const anterior =
-        anteriores.get(texto(x.serie).toUpperCase())
-
-      if (!anterior) return x
-
-      return {
-        ...x,
-        escaneado: anterior.escaneado,
-        estado: anterior.estado,
-      }
+    const anteriores = new Map(equipos.map(x => [normalizarSerie(x.serie), x]))
+    const unicos = new Map()
+    for (const x of nuevos) {
+      const clave = normalizarSerie(x.serie)
+      if (clave && !unicos.has(clave)) unicos.set(clave, x)
+    }
+    return [...unicos.values()].map(x => {
+      const anterior = anteriores.get(normalizarSerie(x.serie))
+      return anterior ? { ...x, escaneado: anterior.escaneado, estado: anterior.estado } : x
     })
   }
 
@@ -686,25 +685,8 @@ export default function AuditoriasPage() {
           texto(x.lote).trim().toUpperCase().startsWith('TPI')
         )
 
-        nuevosMateriales = materialesTPI.map((x) => {
-          const sistema =
-            x.cantidad !== null && x.cantidad !== undefined
-              ? numero(x.cantidad)
-              : numero(x.disponible)
-
-          return {
-            sku: texto(x.sku),
-            material: texto(x.material),
-            lote: texto(x.lote),
-            sistema,
-            fisico: 0,
-            capturado: false,
-            observacion: '',
-          }
-        })
-
-        nuevosMateriales =
-          conservarMateriales(nuevosMateriales)
+        nuevosMateriales = agruparMateriales(materialesTPI)
+        nuevosMateriales = conservarMateriales(nuevosMateriales)
       }
 
       // ================================================
