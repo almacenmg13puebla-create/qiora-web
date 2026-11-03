@@ -87,8 +87,8 @@ export default function DashboardPage() {
     const eventos=data?.reporteRecolecciones?.[tipo]?.registros||[]
     const resumen=agruparRecolecciones(eventos)
     if(!resumen.length){setError('No hay registros de recolecciones para exportar.');return}
-    const filas=resumen.map(r=>({PERIODO:r.periodo,DISTRITO:r.distrito,CANTIDAD:r.cantidad,
-      'COSTO CONOCIDO MXN':Math.round(r.costo*100)/100,'EQUIPOS SIN COSTO':r.sinCosto}))
+    const filas=resumen.map(r=>({PERIODO:r.periodo,DISTRITO:r.distrito,PIEZAS:r.cantidad,
+      'COSTO CONOCIDO MXN':Math.round(r.costo*100)/100,'PIEZAS SIN COSTO':r.sinCosto}))
     const libro=XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(libro,XLSX.utils.json_to_sheet(filas),'Resumen')
     XLSX.writeFile(libro,`QIORA_RECOLECCIONES_${tipo}_${periodoReco}.xlsx`)
@@ -105,15 +105,15 @@ export default function DashboardPage() {
     const maps={
 
       traspasos:[['Almacén','almacen'],['Técnico','tecnico'],['Pend.','pendientes'],['Realizados','realizados'],['Error','error'],['Total','total'],['Piezas','piezas']],
-      recolecciones:[['Almacén','almacen'],['Técnico','tecnico'],['Total','total']],
-      recoleccionesEntregadasTP:[['Distrito','distrito'],['Pedido / almacén','almacen'],['Salida / técnico','tecnico'],['Total','total']],
+      recolecciones:[['Almacén','almacen'],['Técnico','tecnico'],['Piezas','total']],
+      recoleccionesEntregadasTP:[['Distrito','distrito'],['Pedido / almacén','almacen'],['Salida / técnico','tecnico'],['Piezas','total']],
       auditorias:[['Distrito','distrito'],['Almacén','almacen'],['Técnico','tecnico'],['Folio','folio'],['Fecha','fecha'],['Tipos','tipos'],['Registros','total']],
 
       valor:[['Almacén','almacen'],['Técnico','tecnico'],['Piezas','piezas'],['Valor','total']],
       valorCentro:[['Distrito','distrito'],['Centro','almacen'],['Concepto','tecnico'],['Piezas','piezas'],['Valor','total']],
       valorTotal:[['Concepto','concepto'],['Valor','total']],
-      criticos:[['Almacén','almacen'],['Técnico','tecnico'],['Equipos','total'],['Días máx.','maxDias']],
-      recoleccionesPendientes:[['Almacén','almacen'],['Técnico','tecnico'],['Pendientes','total'],['Días máx.','maxDias']],
+      criticos:[['Almacén','almacen'],['Técnico','tecnico'],['Piezas','total'],['Días máx.','maxDias']],
+      recoleccionesPendientes:[['Almacén','almacen'],['Técnico','tecnico'],['Piezas pendientes','total'],['Días máx.','maxDias']],
 
       faltantes:[['Distrito','distrito'],['Piezas','piezas'],['Costo','costo']],
     }
@@ -184,9 +184,9 @@ export default function DashboardPage() {
       ].map(([tipo,titulo])=>{
         const reporte=data?.reporteRecolecciones?.[tipo]||{registros:[],cantidad:0,costoConocido:0,sinCosto:0}
         const grupos=agruparRecolecciones(reporte.registros)
-        return <div className="recoPanel" key={tipo}><div className="tableHead"><div><h2>{titulo}</h2><small>{fmt(reporte.cantidad)} equipos · Costo identificado: {mxn(reporte.costoConocido)}</small></div><button onClick={()=>exportarRecolecciones(tipo)}>⬇ Excel</button></div>
-          {reporte.sinCosto>0&&<p className="missingCost">{fmt(reporte.sinCosto)} equipo(s) sin costo registrado. El importe mostrado es parcial.</p>}
-          <div className="tableWrap"><table><thead><tr><th>Periodo</th><th>Distrito</th><th>Cantidad</th><th>Costo identificado</th><th>Sin costo</th></tr></thead><tbody>{grupos.map((r,i)=><tr key={`${r.periodo}-${r.distrito}-${i}`}><td>{r.periodo}</td><td>{r.distrito}</td><td>{fmt(r.cantidad)}</td><td>{mxn(r.costo)}</td><td>{fmt(r.sinCosto)}</td></tr>)}{!grupos.length&&<tr><td colSpan="5" className="empty">Sin registros para este periodo.</td></tr>}</tbody></table></div>
+        return <div className="recoPanel" key={tipo}><div className="tableHead"><div><h2>{titulo}</h2><small>{fmt(reporte.cantidad)} piezas · Costo identificado: {mxn(reporte.costoConocido)}</small></div><button onClick={()=>exportarRecolecciones(tipo)}>⬇ Excel</button></div>
+          {reporte.sinCosto>0&&<p className="missingCost">{fmt(reporte.sinCosto)} pieza(s) sin costo registrado. El importe mostrado es parcial.</p>}
+          <div className="tableWrap"><table><thead><tr><th>Periodo</th><th>Distrito</th><th>Piezas</th><th>Costo identificado</th><th>Piezas sin costo</th></tr></thead><tbody>{grupos.map((r,i)=><tr key={`${r.periodo}-${r.distrito}-${i}`}><td>{r.periodo}</td><td>{r.distrito}</td><td>{fmt(r.cantidad)}</td><td>{mxn(r.costo)}</td><td>{fmt(r.sinCosto)}</td></tr>)}{!grupos.length&&<tr><td colSpan="5" className="empty">Sin registros para este periodo.</td></tr>}</tbody></table></div>
         </div>
       })}</div>
     </section>
