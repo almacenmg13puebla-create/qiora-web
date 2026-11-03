@@ -143,9 +143,9 @@ const MODULOS = [
   {
     permiso: 'dashboard',
     nombre: 'Dashboard',
-    descripcion: 'Indicadores y reportes de operación.',
+    descripcion: 'Indicadores, solicitudes, traspasos, inventarios y recolecciones.',
     ruta: '/dashboard',
-    disponible: false,
+    disponible: true,
   },
 ]
 
