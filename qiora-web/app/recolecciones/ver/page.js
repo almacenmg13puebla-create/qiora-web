@@ -161,162 +161,36 @@ export default function VerRecoleccionesPage() {
     try {
       if (cargandoPerfil) throw new Error('Espera a que se valide el usuario y su centro.')
       if (!perfil) throw new Error('No existe perfil activo.')
-      const puestoActual = limpiar(perfil.puesto).toUpperCase()
-      const adminPadre = puestoActual === 'ADMIN_PADRE'
-      if (!adminPadre && !almacenesCentro.length) {
-        setResultados([])
-        setAviso(`No hay almacenes configurados para el centro ${centroActivo}.`)
-        return
+
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError) throw sessionError
+      const token = sessionData?.session?.access_token
+      if (!token) throw new Error('La sesión expiró. Inicia sesión nuevamente.')
+
+      const params = new URLSearchParams()
+      if (fechaInicial) params.set('desde', fechaInicial)
+      if (fechaFinal) params.set('hasta', fechaFinal)
+      if (limpiar(almacen)) params.set('almacen', limpiar(almacen))
+      if (limpiar(folio)) params.set('folio', limpiar(folio))
+      if (limpiar(serie)) params.set('serie', limpiar(serie))
+
+      const response = await fetch(`/api/recolecciones/ver?${params.toString()}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-store'
+      })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok || payload.ok !== true) {
+        throw new Error(payload.error || 'No fue posible consultar las recolecciones.')
       }
 
-      let consulta =
-        supabase
-          .from('recolecciones_equipos')
-          .select(`
-            id,
-            folio,
-            fecha,
-            almacen,
-            tecnico,
-            recibe,
-            telefono,
-            serie,
-            material,
-            descripcion,
-            lote,
-            dias_en_cajuela,
-            estado,
-            actualizado_en
-          `)
-          .order(
-            'fecha',
-            {
-              ascending: false
-            }
-          )
-          .order(
-            'folio',
-            {
-              ascending: false
-            }
-          )
-
-      // No se confía en un filtro de centro introducido por el usuario.
-      // Los almacenes permitidos proceden del perfil y catálogo del distrito.
-      if (!adminPadre) {
-        consulta = consulta.in('almacen', almacenesCentro)
-      }
-
-      /*
-        FECHA INICIAL
-      */
-      if (fechaInicial) {
-        consulta =
-          consulta.gte(
-            'fecha',
-            `${fechaInicial}T00:00:00-06:00`
-          )
-      }
-
-      /*
-        FECHA FINAL INCLUSIVA
-      */
-      if (fechaFinal) {
-        const fin =
-          new Date(
-            `${fechaFinal}T00:00:00`
-          )
-
-        fin.setDate(
-          fin.getDate() + 1
-        )
-
-        const siguiente =
-          [
-            fin.getFullYear(),
-            String(
-              fin.getMonth() + 1
-            ).padStart(2, '0'),
-            String(
-              fin.getDate()
-            ).padStart(2, '0')
-          ].join('-')
-
-        consulta =
-          consulta.lt(
-            'fecha',
-            `${siguiente}T00:00:00-06:00`
-          )
-      }
-
-      /*
-        ALMACÉN
-      */
-      if (limpiar(almacen)) {
-        consulta =
-          consulta.ilike(
-            'almacen',
-            `%${limpiar(almacen)}%`
-          )
-      }
-
-      /*
-        FOLIO
-      */
-      if (limpiar(folio)) {
-        consulta =
-          consulta.ilike(
-            'folio',
-            `%${limpiar(folio)}%`
-          )
-      }
-
-      /*
-        SERIE
-      */
-      if (limpiar(serie)) {
-        consulta =
-          consulta.ilike(
-            'serie',
-            `%${limpiar(serie)}%`
-          )
-      }
-
-      const {
-        data,
-        error: consultaError
-      } = await consulta
-
-      if (consultaError) {
-        throw consultaError
-      }
-
-      const filas =
-        Array.isArray(data)
-          ? data
-          : []
-
+      const filas = Array.isArray(payload.data) ? payload.data : []
       setResultados(filas)
-
-      if (!filas.length) {
-        setAviso(
-          'No se encontraron recolecciones con los filtros seleccionados.'
-        )
-      }
-
+      if (!filas.length) setAviso('No se encontraron recolecciones con los filtros seleccionados.')
     } catch (e) {
-      console.error(
-        'ERROR VER RECOLECCIONES:',
-        e
-      )
-
-      setError(
-        e?.message ||
-        'No fue posible consultar las recolecciones.'
-      )
-
+      console.error('ERROR VER RECOLECCIONES:', e)
+      setError(e?.message || 'No fue posible consultar las recolecciones.')
       setResultados([])
-
     } finally {
       setCargando(false)
     }
