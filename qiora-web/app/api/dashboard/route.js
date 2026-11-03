@@ -240,21 +240,25 @@ export async function GET(request) {
     }
   })
 
+  const tecnicosActivos = new Map(
+    all.usuarios.filter(u => u.activo === true && norm(u.puesto) === 'TECNICO')
+      .map(u => [`${norm(u.distrito)}|${alm(u.usuario_almacen)}`, txt(u.nombre) || alm(u.usuario_almacen)])
+  )
   const valGroups = new Map()
   all.stock.forEach(r => {
     const warehouse=alm(r.almacen), sku=txt(r.sku || r.material)
     const taggedDistrict=norm(r.distrito || r.centro)
     const mapped=districtByWarehouse.get(warehouse)
-    const district=taggedDistrict && distritos.includes(taggedDistrict) ? taggedDistrict : (mapped && mapped.size===1 ? [...mapped][0] : '')
-    if (!distritos.includes(district) || !warehouse || !sku) return
+    const district=taggedDistrict ? taggedDistrict : (mapped && mapped.size===1 ? [...mapped][0] : '')
+    if (!distritos.includes(district) || !warehouse || !sku || !tecnicosActivos.has(`${district}|${warehouse}`)) return
     const qty=num(r.disponible ?? r.libre_utilizacion ?? r.cantidad)
     if (qty<=0) return
-    const cost=costBySku.get(sku)||0, value=qty*cost, tech=userByKey.get(`${district}|${warehouse}`)||txt(r.tecnico)||warehouse
+    const cost=costBySku.get(sku) ?? 0, value=qty*cost, tech=tecnicosActivos.get(`${district}|${warehouse}`)
     const key=`${district}|${warehouse}|${tech}`
     const g=valGroups.get(key)||{key,distrito:district,almacen:warehouse,tecnico:tech,piezas:0,total:0}
     g.piezas+=qty;g.total+=value;valGroups.set(key,g)
     if(!details.valor[key])details.valor[key]=[]
-    details.valor[key].push({sku,material:r.material,disponible:qty,costo:cost,valor:value})
+    details.valor[key].push({sku,material:r.material,disponible:qty,costo:cost,valor:value,costoConocido:costBySku.has(sku)})
   })
 
   const centerGroups = new Map()
@@ -262,10 +266,20 @@ export async function GET(request) {
     const district=norm(r.distrito), sku=txt(r.sku || r.material)
     if (!distritos.includes(district) || !sku) return
     const qty=num(r.disponible ?? r.libre_utilizacion ?? r.cantidad ?? r.stock)
-    const value=qty*(costBySku.get(sku)||0)
-    if(!centerGroups.has(district))centerGroups.set(district,{distrito:district,almacen:district,tecnico:'Stock de centro',total:0,piezas:0})
+    const value=qty*(costBySku.get(sku) ?? 0)
+    if(!centerGroups.has(district))centerGroups.set(district,{key:district,distrito:district,almacen:district,tecnico:'Stock de centro',total:0,piezas:0})
     const g=centerGroups.get(district);g.total+=value;g.piezas+=qty
+    if (!details.valorCentro) details.valorCentro = {}
+    if (!details.valorCentro[district]) details.valorCentro[district] = []
+    details.valorCentro[district].push({sku,material:r.material,disponible:qty,costo:costBySku.get(sku) ?? 0,valor:value,costoConocido:costBySku.has(sku)})
   })
+
+  const skuSinCosto = new Set()
+  for (const r of [...all.stock, ...all.stockCentro]) {
+    const sku = txt(r.sku || r.material)
+    if (sku && !costBySku.has(sku)) skuSinCosto.add(sku)
+  }
+  if (skuSinCosto.size) advertencias.push(`Hay ${skuSinCosto.size} SKU sin costo SAP identificado; los importes de inventario son parciales.`)
 
   // Reportes de recolecciones: recibidas y enviadas a Totalplay, independientes.
   // Solo se incluyen filas con distrito explícito o almacén que pertenezca
@@ -321,6 +335,65 @@ export async function GET(request) {
     enviadasTP: { ...resumenEventos(eventosEnviadas), registros: eventosEnviadas },
   }
 
+  // Recibidas y enviadas son procesos separados. El faltante es una diferencia
+  // agregada del periodo, NO un cotejo por serie. Evitar inventar una meta de auditorías.
+  const resumenDistrito = new Map(distritos.map(d => [d, {
+    distrito:d, recibidasPiezas:0, recibidasCosto:0, recibidasSinCosto:0,
+    entregadasPiezas:0, entregadasCosto:0, entregadasSinCosto:0,
+    pendientesPiezas:0, pendientesCosto:0, pendientesSinCosto:0,
+    faltantesPiezas:0, faltantesCosto:null,
+    auditoriasRealizadas:0, auditoriasFaltantes:null,
+    valorCajuela:0, valorCentro:0
+  }]))
+  for (const r of eventosRecibidas) {
+    const g=resumenDistrito.get(r.distrito)
+    if(!g)continue
+    g.recibidasPiezas+=r.cantidad
+    if(r.costoConocido)g.recibidasCosto+=r.costo
+    else g.recibidasSinCosto+=r.cantidad
+  }
+  for (const r of eventosEnviadas) {
+    const g=resumenDistrito.get(r.distrito)
+    if(!g)continue
+    g.entregadasPiezas+=r.cantidad
+    if(r.costoConocido)g.entregadasCosto+=r.costo
+    else g.entregadasSinCosto+=r.cantidad
+  }
+  for (const [key,items] of Object.entries(details.recoleccionesPendientes)) {
+    const distrito=key.split('|')[0], g=resumenDistrito.get(distrito)
+    if(!g)continue
+    for (const r of items) {
+      g.pendientesPiezas++
+      const sku=txt(r.sku)
+      if(costBySku.has(sku))g.pendientesCosto+=costBySku.get(sku)
+      else g.pendientesSinCosto++
+    }
+  }
+  for (const r of auditGroups) {
+    const g=resumenDistrito.get(r.distrito)
+    if(g)g.auditoriasRealizadas++ // un folio auditado, no una fila de material
+  }
+  for (const r of valGroups.values()) {
+    const g=resumenDistrito.get(r.distrito)
+    if(g)g.valorCajuela+=r.total
+  }
+  for (const r of centerGroups.values()) {
+    const g=resumenDistrito.get(r.distrito)
+    if(g)g.valorCentro+=r.total
+  }
+  for (const g of resumenDistrito.values()) {
+    g.faltantesPiezas=Math.max(0,g.recibidasPiezas-g.entregadasPiezas)
+    // El costo exacto de las piezas faltantes requiere cotejo individual de serie/SKU.
+    g.recibidasCosto=money(g.recibidasCosto)
+    g.entregadasCosto=money(g.entregadasCosto)
+    g.pendientesCosto=money(g.pendientesCosto)
+    g.valorCajuela=money(g.valorCajuela)
+    g.valorCentro=money(g.valorCentro)
+  }
+  advertencias.push('Piezas faltantes por entregar = recibidas menos enviadas del periodo, por distrito (diferencia agregada, no conciliación por serie). No se presenta costo faltante sin identificar las piezas exactas.')
+  advertencias.push('Auditorías faltantes: sin una meta verificable por distrito no es posible calcularlas.')
+  const porDistrito=[...resumenDistrito.values()]
+
   const rows = {
     solicitudes: solGroups,
     traspasos: traGroups,
@@ -342,11 +415,20 @@ export async function GET(request) {
   const kpis = {
     solicitudes: sum('solicitudes'), traspasos:sum('traspasos'), recolecciones:sum('recolecciones'),
     recoleccionesEntregadasTP: sum('recoleccionesEntregadasTP'),
-    auditoriasRealizadas: sum('auditorias'),
+    auditoriasRealizadas: rows.auditorias.length,
     valorCajuela, valorCentro, valorTotal:money(valorCajuela+valorCentro),
     criticos:sum('criticos'), materialMasTraspasado:rows.materialesTraspasados.reduce((a,b)=>a+num(b.cantidad),0),
     materialMasSolicitado:rows.materialesSolicitados.reduce((a,b)=>a+num(b.cantidad),0),
     recoleccionesPendientes:sum('recoleccionesPendientes'),maxDiasRecoleccionesPendientes:maxPendingDays,maxDiasCriticos:maxCritDays,
+    auditoriasFaltantes:null,
+    recibidasPiezas:porDistrito.reduce((a,g)=>a+g.recibidasPiezas,0),
+    recibidasCosto:money(porDistrito.reduce((a,g)=>a+g.recibidasCosto,0)),
+    entregadasPiezas:porDistrito.reduce((a,g)=>a+g.entregadasPiezas,0),
+    entregadasCosto:money(porDistrito.reduce((a,g)=>a+g.entregadasCosto,0)),
+    pendientesPiezas:porDistrito.reduce((a,g)=>a+g.pendientesPiezas,0),
+    pendientesCosto:money(porDistrito.reduce((a,g)=>a+g.pendientesCosto,0)),
+    faltantesPiezas:porDistrito.reduce((a,g)=>a+g.faltantesPiezas,0),
+    faltantesCosto:null,
   }
-  return response({ok:true,distrito:padre?'TODOS':norm(actor.distrito),desde:from,hasta:to,generado:new Date().toISOString(),kpis,tablas:rows,detalles:details,reporteRecolecciones,advertencias})
+  return response({ok:true,distrito:padre?'TODOS':norm(actor.distrito),desde:from,hasta:to,generado:new Date().toISOString(),kpis,tablas:rows,detalles:details,reporteRecolecciones,porDistrito,advertencias})
 }
