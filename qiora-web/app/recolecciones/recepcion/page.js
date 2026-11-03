@@ -103,8 +103,6 @@ export default function RecoleccionesPage() {
 
   const [folio, setFolio] = useState('')
   const [almacen, setAlmacen] = useState('')
-  const [almacenesDistrito, setAlmacenesDistrito] = useState([])
-  const [cargandoAlmacenes, setCargandoAlmacenes] = useState(false)
   const [datos, setDatos] = useState(null)
 
   const [recibe, setRecibe] = useState('')
@@ -187,34 +185,6 @@ export default function RecoleccionesPage() {
           setPuestoActivo(puestoPerfil)
         }
 
-        // Cargar el catálogo de técnicos activos exclusivamente del distrito
-        // del usuario autenticado. No usar el almacén del administrador como técnico.
-        if (centroPerfil) {
-          setCargandoAlmacenes(true)
-          const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
-          if (sessionError) throw sessionError
-          const token = sessionData?.session?.access_token
-          if (!token) throw new Error('La sesión expiró. Inicia sesión nuevamente.')
-
-          const response = await fetch('/api/recolecciones/almacenes', {
-            method: 'GET',
-            headers: { Authorization: `Bearer ${token}` },
-            cache: 'no-store',
-          })
-          const resultado = await response.json().catch(() => ({}))
-          if (!response.ok || !resultado.ok) {
-            throw new Error(resultado.error || 'No se pudo cargar el catálogo de técnicos del distrito.')
-          }
-
-          if (activo) {
-            const lista = Array.isArray(resultado.almacenes) ? resultado.almacenes : []
-            setAlmacenesDistrito(lista)
-            if (lista.length === 0) {
-              setError(`No hay técnicos activos registrados en el distrito ${centroPerfil}.`)
-            }
-          }
-        }
-
       } catch (e) {
         console.error(
           'ERROR CARGANDO USUARIO ACTIVO:',
@@ -231,7 +201,6 @@ export default function RecoleccionesPage() {
       } finally {
         if (activo) {
           setCargandoUsuario(false)
-          setCargandoAlmacenes(false)
         }
       }
     }
@@ -243,20 +212,38 @@ export default function RecoleccionesPage() {
     }
   }, [])
 
-  const validarAlmacenCentro = async almacenValor => {
-    const almacenLimpio = clean(almacenValor)
-    if (!almacenLimpio) throw new Error('Ingresa el almacén del técnico.')
-    if (puestoActivo === 'ADMIN_PADRE') return true
-    if (!centroActivo) throw new Error('No se pudo determinar el centro activo.')
-
-    const data = almacenesDistrito.find(t => clean(t.usuario_almacen) === almacenLimpio)
-    if (!data) throw new Error(`El almacén ${almacenLimpio} no está registrado como técnico activo en ${centroActivo}. Selecciónalo del catálogo del distrito.`)
-
-    const centroAlmacen = upper(data.distrito)
-    if (centroAlmacen !== upper(centroActivo)) {
-      throw new Error(`Acceso denegado: el almacén ${almacenLimpio} pertenece a ${centroAlmacen || 'un centro sin configurar'} y tu centro activo es ${centroActivo}.`)
+  const normalizarAlmacen = valor => {
+    const digitos = clean(valor).replace(/\D/g, '')
+    if (!/^\d{1,4}$/.test(digitos)) {
+      throw new Error('El almacén debe contener de 1 a 4 dígitos.')
     }
-    return true
+    return digitos.padStart(4, '0')
+  }
+
+  const validarAlmacenCentro = async almacenValor => {
+    const almacenLimpio = normalizarAlmacen(almacenValor)
+    if (!centroActivo || centroActivo === 'TODOS') {
+      throw new Error('La recepción requiere un distrito específico. ADMIN_PADRE debe ingresar desde una cuenta administradora del distrito correspondiente.')
+    }
+
+    // La consulta del catálogo se realiza en el servidor con Service Role,
+    // porque RLS puede impedir que el cliente lea los técnicos de su distrito.
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.access_token) throw new Error('La sesión venció. Inicia sesión nuevamente.')
+
+    const response = await fetch('/api/recolecciones/validar-almacen', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ almacen: almacenLimpio, distrito: centroActivo })
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || 'No se pudo validar el almacén en el distrito activo.')
+    }
+    return { almacen: almacenLimpio, tecnico: result.tecnico }
   }
 
   const ejecutar = async fn => {
@@ -279,15 +266,7 @@ export default function RecoleccionesPage() {
 
   const cargar = () =>
     ejecutar(async () => {
-      const almacenLimpio = clean(almacen)
-
-      if (!almacenLimpio) {
-        throw new Error(
-          'Ingresa el almacén del técnico.'
-        )
-      }
-
-      await validarAlmacenCentro(almacenLimpio)
+      const { almacen: almacenLimpio } = await validarAlmacenCentro(almacen)
 
       const {
         data,
@@ -491,7 +470,11 @@ export default function RecoleccionesPage() {
         )
       }
 
-      await validarAlmacenCentro(datos.almacen)
+      const { almacen: almacenValidado } = await validarAlmacenCentro(datos.almacen)
+      const distritoValidado = upper(datos.distrito || datos.centro || centroActivo)
+      if (distritoValidado !== upper(centroActivo)) {
+        throw new Error(`La recolección pertenece a ${distritoValidado}; tu distrito activo es ${centroActivo}.`)
+      }
 
       const pendientesAntesDeGuardar =
         Math.max(
@@ -507,7 +490,7 @@ export default function RecoleccionesPage() {
       } = await supabase.rpc(
         'qiora_rec_guardar_por_distrito',
         {
-          p_almacen: datos.almacen,
+          p_almacen: almacenValidado,
           p_distrito: centroActivo,
           p_recibe: clean(recibe),
           p_series: entregadas.map(
@@ -690,23 +673,23 @@ export default function RecoleccionesPage() {
 
               <input
                 ref={inputAlmacen}
+                placeholder="0008"
                 value={almacen}
-                inputMode="numeric"
-                maxLength={4}
-                placeholder={`Escribe el almacén de ${centroActivo || 'tu distrito'}`}
                 disabled={busy || !!guardado}
-                onChange={e => {
-                  setAlmacen(e.target.value.replace(/\D/g, '').slice(0, 4))
-                  setDatos(null)
-                  setEntregadas([])
-                  setGuardado(null)
-                  setError('')
-                }}
+                onChange={e =>
+                  setAlmacen(
+                    e.target.value
+                      .replace(/\D/g, '')
+                      .slice(0, 4)
+                  )
+                }
                 onKeyDown={e => {
-                  if (e.key === 'Enter') { e.preventDefault(); cargar() }
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    cargar()
+                  }
                 }}
               />
-              <small>Se buscará únicamente en {centroActivo || 'el distrito de tu sesión'} y entre técnicos activos.</small>
             </label>
 
             <label>
@@ -1043,7 +1026,7 @@ export default function RecoleccionesPage() {
           gap: 7px;
         }
 
-        input, select {
+        input {
           width: 100%;
           box-sizing: border-box;
           border: 1px solid #c9dfda;
@@ -1057,11 +1040,6 @@ export default function RecoleccionesPage() {
 
         input:read-only {
           background: #e5eded;
-        }
-
-        select:disabled {
-          opacity: .75;
-          cursor: wait;
         }
 
         .controls {
