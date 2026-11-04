@@ -1890,6 +1890,69 @@ async function stockEquiposTelegram(admin,p,payload) {
     hayTPE:false,tieneLoteTPE:false,series_filtros:[],total_series_disponibles:0}
 }
 
+async function consultarSerieTelegram(admin, perfil, payload) {
+  if (!perfil || perfil.activo !== true) return {ok:false,error:'Telegram no está vinculado a un usuario activo.'}
+  if (!tienePermisoEquipo(perfil,'equipos') && !tienePermisoEquipo(perfil,'stock_tecnicos'))
+    return {ok:false,error:'No tienes permiso para consultar SERIES en SAT.'}
+  const serie = clean(payload.serie || payload.consulta)
+  if (!serie || serie.length > 100) return {ok:false,error:'Escribe un número de serie válido.'}
+  const distrito = upper(perfil.distrito)
+  if (!distrito) return {ok:false,error:'Tu usuario no tiene distrito asignado.'}
+  const {data,error} = await admin.from('iq09_equipos')
+    .select('distrito,centro,almacen,serie,material,descripcion,lote,lote_stock,estatus_sap,tipo_stock')
+    .eq('distrito',distrito).eq('serie',serie).limit(20)
+  if (error) throw new Error(error.message)
+  const filas = data || []
+  if (!filas.length) return {ok:true,encontrada:false,total:0,distrito,mensaje:`🔎 SERIE NO ENCONTRADA\n\nSerie: ${serie}\nDistrito consultado: ${distrito}`}
+  const propias = filas.filter(x => upper(x.distrito) === distrito)
+  const esAlcanceDistrito = puedeVerTodos(perfil)
+  const permitidas = esAlcanceDistrito ? [] : await almacenesAutorizados(admin,perfil,false)
+  const permitidasSet = new Set(permitidas.flatMap(variantesAlmacenEquipo))
+  const visibles = esAlcanceDistrito ? propias : propias.filter(x => permitidasSet.has(normalizarAlmacenEquipo(x.almacen)))
+  if (!visibles.length) return {ok:true,encontrada:false,total:0,distrito,mensaje:`🔎 La serie existe en ${distrito}, pero no está en un almacén dentro de tu alcance autorizado.`}
+  const x = visibles[0]
+  const lote = clean(x.lote || x.lote_stock)
+  return {ok:true,encontrada:true,total:visibles.length,serie:x.serie,resultado:x,distrito,
+    mensaje:['🔎 SERIE ENCONTRADA EN IQ09','',`Serie: ${x.serie}`,`SKU / Material: ${clean(x.material) || 'NO REGISTRADO'}`,
+      `Descripción: ${clean(x.descripcion) || 'NO REGISTRADA'}`,`Distrito: ${distrito}`,`Centro: ${clean(x.centro) || 'NO REGISTRADO'}`,
+      `Almacén: ${clean(x.almacen) || 'NO REGISTRADO'}`,`Lote: ${lote || 'SIN LOTE'}`,
+      `Estado SAP: ${clean(x.estatus_sap) || 'NO REGISTRADO'}`].join('\n')}
+}
+
+async function consultarSeriesTelegram(admin, perfil, payload) {
+  if (!perfil || perfil.activo !== true) return {ok:false,error:'Telegram no está vinculado a un usuario activo.'}
+  if (!tienePermisoEquipo(perfil,'equipos') && !tienePermisoEquipo(perfil,'stock_tecnicos'))
+    return {ok:false,error:'No tienes permiso para consultar SERIES en SAT.'}
+  const distrito = upper(perfil.distrito)
+  if (!distrito) return {ok:false,error:'Tu usuario no tiene distrito asignado.'}
+  const consulta = upper(payload.consulta).slice(0,80)
+  const filtro = objetivoSolicitado(perfil,payload.objetivo)
+  if (filtro.error) return {ok:false,error:filtro.error}
+  const permitidos = filtro.todos ? [] : await almacenesAutorizados(admin,perfil,false)
+  if (!filtro.todos && filtro.almacen) {
+    const variantes = variantesAlmacenEquipo(filtro.almacen)
+    if (!permitidos.some(a=>variantes.includes(a))) return {ok:false,error:'No tienes acceso a ese almacén.'}
+  }
+  if (!filtro.todos && !permitidos.length) return {ok:true,total:0,distrito,mensaje:`🔎 SERIES - ${distrito}\n\nNo hay almacenes autorizados en tu alcance.`}
+  const rows = await obtenerFilasPaginas((a,b)=>{
+    let q = admin.from('iq09_equipos')
+      .select('distrito,centro,almacen,serie,material,descripcion,lote,lote_stock,estatus_sap,tipo_stock')
+      .eq('distrito',distrito).order('id',{ascending:true}).range(a,b)
+    if (!filtro.todos) q=q.in('almacen',permitidos.flatMap(variantesAlmacenEquipo))
+    return q
+  },15000)
+  const encontrados = rows.filter(x=>{
+    if (!clean(x.serie)) return false
+    if (!consulta) return true
+    return upper(x.serie).includes(consulta) || upper(x.material).includes(consulta) || upper(x.descripcion).includes(consulta)
+  })
+  const limite = encontrados.slice(0,40)
+  const lineas = [`🔎 SERIES - ${distrito}`,`Alcance: ${filtro.todos?'TODOS LOS ALMACENES AUTORIZADOS':filtro.almacen || perfil.usuario_almacen}`,`Resultados: ${encontrados.length}`,'']
+  for (const x of limite) lineas.push(`• ${clean(x.serie)} | SKU ${clean(x.material)} | ${clean(x.descripcion)} | Alm. ${clean(x.almacen)} | Lote ${clean(x.lote || x.lote_stock) || 'SIN LOTE'}`)
+  if (encontrados.length>limite.length) lineas.push('',`Mostrando ${limite.length} de ${encontrados.length}. Refina la búsqueda para ver menos resultados.`)
+  return {ok:true,distrito,total:encontrados.length,series:limite,mensaje:lineas.join('\n').slice(0,3900)}
+}
+
 async function accionMigrada(admin, payload) {
   const accion = clean(payload.accion || payload.action)
 
@@ -1905,6 +1968,8 @@ async function accionMigrada(admin, payload) {
   if (accion === 'telegram_stock') return stockEquiposTelegram(admin, perfil, payload)
   if (accion === 'telegram_recolecciones_por_entregar') return recoleccionesPendientesTelegram(admin, perfil, payload)
   if (accion === 'telegram_criticos') return equiposCriticosTelegram(admin, perfil, payload)
+  if (accion === 'telegram_serie') return consultarSerieTelegram(admin, perfil, payload)
+  if (accion === 'telegram_series') return consultarSeriesTelegram(admin, perfil, payload)
   if (accion === 'telegram_sap_crear_comando') return crearComandoSAPEnSupabase(admin, perfil, payload)
 
   if (accion === 'telegram_traspaso_nombre_almacen') return buscarAlmacenTraspaso(admin, perfil, payload)
