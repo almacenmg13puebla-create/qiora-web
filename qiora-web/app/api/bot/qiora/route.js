@@ -1083,9 +1083,6 @@ async function buscarSeriesTraspaso(admin, perfil, payload) {
   const sku = clean(payload.sku)
   const lote = clean(payload.lote)
   if (!sku) return { ok:false, error:'Falta SKU.' }
-  // En traspasos no se fuerza tipo_stock='01': IQ09 puede contener
-  // series validas con otro valor o NULL. El distrito, origen, material y
-  // lote se comprueban explicitamente antes de devolverlas.
   let q = admin.from('iq09_equipos').select('serie,material,descripcion,lote,lote_stock,estatus_sap,tipo_stock,almacen,distrito')
     .eq('distrito', validacion.distrito).eq('almacen', validacion.origen).eq('material', sku)
   if (lote) q = q.or(`lote.eq.${lote},lote_stock.eq.${lote}`)
@@ -1105,20 +1102,15 @@ async function buscarSeriesDirectasTraspaso(admin, perfil, payload) {
     .eq('distrito', validacion.distrito).eq('almacen', validacion.origen)
     .in('serie', solicitadas).limit(200)
   if (error) throw new Error(error.message)
-  const encontradas = (data || []).filter(x =>
-    clean(x.serie) && upper(x.distrito) === upper(validacion.distrito) &&
-    normalizarAlmacenTraspaso(x.almacen) === normalizarAlmacenTraspaso(validacion.origen)
-  )
+  const encontradas = data || []
   const porGrupo = new Map()
   const rechazadas = []
   for (const x of encontradas) {
     const lote = clean(x.lote || x.lote_stock)
     if (upper(lote) === 'TPE USADO') { rechazadas.push(clean(x.serie)); continue }
-    const sku = clean(x.material)
-    if (!sku) { rechazadas.push(clean(x.serie)); continue }
-    const key = `${sku}|${upper(lote)}`
-    const g = porGrupo.get(key) || { sku, descripcion:x.descripcion || '', lote, series:[], cantidad:0 }
-    if (!g.series.includes(clean(x.serie))) { g.series.push(clean(x.serie)); g.cantidad++ }
+    const key = `${clean(x.material)}|${upper(lote)}`
+    const g = porGrupo.get(key) || { sku:clean(x.material), descripcion:x.descripcion || '', lote, series:[], cantidad:0 }
+    g.series.push(clean(x.serie)); g.cantidad++
     porGrupo.set(key,g)
   }
   const vistas = new Set(encontradas.map(x=>clean(x.serie)))
@@ -1265,27 +1257,26 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
     const disponible = stocks.reduce((n,x)=>n+Number(x.disponible || 0),0)
     if (disponible < cantidad) return { ok:false, error:`Stock insuficiente para ${sku}. Disponible: ${disponible}; solicitado: ${cantidad}.` }
 
-    if (upper(lote) === 'TPE USADO') return { ok:false, error:`El lote TPE USADO no está permitido para traspasos (${sku}).` }
-    if (lote.toUpperCase().startsWith('TPE') && series.length !== cantidad) {
-      return { ok:false, error:`El material ${sku} requiere exactamente ${cantidad} series.` }
+    if (upper(lote) === 'TPE USADO') {
+      return { ok:false, error:`El lote TPE USADO no está permitido para traspasos (${sku}).` }
     }
-    // Toda serie capturada manualmente o seleccionada se vuelve a validar
-    // en IQ09, sin filtrar por tipo_stock. El distrito/origen/material son obligatorios.
-    if (series.length) {
+    if (upper(lote).startsWith('TPE')) {
+      if (series.length !== cantidad) return { ok:false, error:`El material ${sku} requiere exactamente ${cantidad} series.` }
       const { data: equipos, error: equipoError } = await admin.from('iq09_equipos')
-        .select('serie,material,lote,lote_stock,almacen,distrito,tipo_stock')
-        .eq('distrito', validacion.distrito).eq('almacen', validacion.origen)
-        .eq('material', sku).in('serie', series).limit(200)
+        .select('serie,material,lote,lote_stock,almacen,distrito')
+        .eq('distrito', validacion.distrito).eq('almacen', validacion.origen).eq('material', sku)
+        .in('serie',series).limit(200)
       if (equipoError) throw new Error(equipoError.message)
-      const equiposValidos = (equipos || []).filter(x =>
-        upper(x.distrito) === upper(validacion.distrito) &&
-        normalizarAlmacenTraspaso(x.almacen) === normalizarAlmacenTraspaso(validacion.origen) &&
-        clean(x.material) === sku && upper(x.lote || x.lote_stock) === upper(lote) &&
-        upper(x.lote || x.lote_stock) !== 'TPE USADO'
-      )
-      const disponibles = new Set(equiposValidos.map(x=>clean(x.serie)))
-      const faltan = series.filter(x=>!disponibles.has(x))
-      if (faltan.length) return { ok:false, error:`Series no válidas en IQ09 para distrito, origen, material y lote seleccionados: ${faltan.join(', ')}` }
+      const porSerie = new Map((equipos || []).map(x=>[clean(x.serie),x]))
+      const faltan = series.filter(serie => {
+        const equipo = porSerie.get(serie)
+        if (!equipo) return true
+        const loteIq09 = upper(equipo.lote || equipo.lote_stock)
+        return loteIq09 !== upper(lote) || loteIq09 === 'TPE USADO'
+      })
+      if (faltan.length) return { ok:false, error:`Series no disponibles o con lote distinto en origen: ${faltan.join(', ')}` }
+    } else if (series.length) {
+      return { ok:false, error:`El lote ${lote} no está configurado como material serializado; no se aceptan series manuales.` }
     }
     const desc = clean(m.descripcion || stocks?.[0]?.descripcion_material || stocks?.[0]?.descripcion || stocks?.[0]?.material)
     normalizados.push({ sku, material:sku, descripcion:desc, cantidad, lote:lote || 'NA', series })
