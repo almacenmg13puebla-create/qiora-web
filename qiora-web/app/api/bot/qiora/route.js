@@ -1579,11 +1579,40 @@ async function notificacionesComandosSAP(admin) {
     }
   }
 
+  // El reporte se construye desde Supabase, usando los registros cargados por VBA.
+  // Se relaciona por distrito + usuario_almacen; nunca solo por numero de almacen.
+  const reportes = new Map()
+  for (const cmd of avisosBase.filter(x => upper(x.proceso) === 'TRASPASOS_PENDIENTES_ENTRADA' && upper(x.estado) === 'REALIZADO')) {
+    const distrito = upper(cmd.distrito)
+    if (reportes.has(distrito)) continue
+    const { data: rows, error: rowsError } = await admin.from('qiora_traslados_sap')
+      .select('documento_traspaso,fecha,movimiento,almacen,almacen_receptor,documento_receptor,status_sap,dias')
+      .eq('distrito', distrito).order('fecha', { ascending: true }).limit(5000)
+    if (rowsError) throw new Error('No se pudo consultar traslados SAP: ' + rowsError.message)
+    const pendientes = (rows || []).filter(x => !clean(x.documento_receptor) && !['CERRADO','REALIZADO','RECIBIDO','ENTRADA','ENTRADA REALIZADA','FINALIZADO'].includes(upper(x.status_sap)))
+    const almacenes = [...new Set(pendientes.map(x => clean(x.almacen_receptor)).filter(Boolean))]
+    const { data: usuarios, error: usersError } = await admin.from('almacen_usuarios')
+      .select('usuario_almacen,nombre,puesto,telegram_chat_id,activo')
+      .eq('distrito', distrito).eq('activo', true).in('usuario_almacen', almacenes.length ? almacenes : ['__NO_MATCH__'])
+    if (usersError) throw new Error('No se pudieron consultar tecnicos: ' + usersError.message)
+    const porAlmacen = new Map((usuarios || []).map(u => [clean(u.usuario_almacen), u]))
+    const sinChat = [...new Set(pendientes.filter(x => !clean(porAlmacen.get(clean(x.almacen_receptor))?.telegram_chat_id)).map(x => clean(x.almacen_receptor)).filter(Boolean))]
+    const lines = ['📥 TRASPASOS PENDIENTES POR ENTRADA', '', `🏢 Distrito: ${distrito}`, `📊 Total: ${pendientes.length}`, `📨 Avisos privados nuevos: ${pendientes.filter(x => clean(porAlmacen.get(clean(x.almacen_receptor))?.telegram_chat_id)).length}`, `⚠️ Destinos sin TELEGRAM_CHAT_ID: ${sinChat.length ? sinChat.join(', ') : 'NINGUNO'}`, '']
+    const privados = []
+    pendientes.forEach((x, i) => {
+      const u = porAlmacen.get(clean(x.almacen_receptor))
+      lines.push([`${i+1}) 📄 Documento: ${clean(x.documento_traspaso)}`, `📅 Fecha: ${clean(x.fecha) || 'NO REGISTRADA'}`, `🔄 Movimiento: ${clean(x.movimiento) || 'NO REGISTRADO'}`, '⬅️ ORIGEN', `👤 Nombre: ${clean(x.almacen)}`, `🏢 Almacén: ${clean(x.almacen)}`, '➡️ DESTINO', `👤 Nombre: ${clean(u?.nombre) || 'NO REGISTRADO'}`, `🏢 Almacén: ${clean(x.almacen_receptor)}`, '🟡 PENDIENTE DE ENTRADA', ''].join('\n'))
+      if (u && clean(u.telegram_chat_id)) privados.push({ chat_id: clean(u.telegram_chat_id), almacen: clean(u.usuario_almacen), nombre: clean(u.nombre), documento: clean(x.documento_traspaso), mensaje: `📥 TRASPASO PENDIENTE DE ENTRADA\n\n📄 Documento: ${clean(x.documento_traspaso)}\n🏢 Distrito: ${distrito}\n⬅️ Origen: ${clean(x.almacen)}\n➡️ Tu almacén: ${clean(x.almacen_receptor)}\n📅 Fecha: ${clean(x.fecha)}\n🔄 Movimiento: ${clean(x.movimiento)}\n\n🟡 Favor de realizar la entrada correspondiente.` })
+    })
+    reportes.set(distrito, { reporte: lines.join('\n'), privados, total: pendientes.length })
+  }
+
   return {ok:true,avisos:avisosBase.map(x=>({
     id_comando:x.id_comando, telegram_chat_id:x.telegram_chat_id,
     distrito:x.distrito, proceso:x.proceso, estado:x.estado,
     pc:x.pc_ejecutora || '', resultado:x.resultado || x.resultado_mac || '',
-    ...(gruposPorDistrito.get(upper(x.distrito)) || {})
+    ...(gruposPorDistrito.get(upper(x.distrito)) || {}),
+    ...(reportes.get(upper(x.distrito)) || {})
   }))}
 }
 
