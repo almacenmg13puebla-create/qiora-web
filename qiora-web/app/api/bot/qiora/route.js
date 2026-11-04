@@ -1030,20 +1030,32 @@ async function buscarMaterialesTraspaso(admin, perfil, payload) {
   const consulta = upper(payload.consulta)
   if (consulta.length < 1 || consulta.length > 100) return { ok:false, error:'Escribe SKU o descripción.' }
 
+  console.log('[QIORA_TRASPASOS_DIAG] inicio', JSON.stringify({
+    distrito, origen, origen_central: validacion.origen_central, consulta
+  }))
+
   let data = []
   if (validacion.origen_central) {
     const { data: filas, error } = await admin.from('stock_almacen')
       .select('material,descripcion_material,descripcion,centro,almacen,lote,libre_utilizacion,disponible,distrito')
       .eq('distrito', distrito).eq('centro', distrito).eq('almacen', origen)
       .gt('disponible', 0).limit(3000)
-    if (error) throw new Error(error.message)
+    if (error) {
+      console.error('[QIORA_TRASPASOS_DIAG] stock_almacen error', error.message)
+      throw new Error(error.message)
+    }
+    console.log('[QIORA_TRASPASOS_DIAG] stock_almacen filas', (filas || []).length)
     data = (filas || []).filter(r => upper(r.material).includes(consulta) || upper(r.descripcion_material).includes(consulta) || upper(r.descripcion).includes(consulta))
       .map(r => ({ sku:clean(r.material), material:clean(r.material), descripcion:clean(r.descripcion_material || r.descripcion), lote:clean(r.lote), disponible:Number(r.disponible || 0) }))
   } else {
     const { data: filas, error } = await admin.from('stock_tecnicos')
       .select('sku,material,descripcion,centro,almacen,lote,cantidad,libre_utilizacion,disponible,distrito')
       .eq('distrito', distrito).eq('almacen', origen).gt('disponible', 0).limit(3000)
-    if (error) throw new Error(error.message)
+    if (error) {
+      console.error('[QIORA_TRASPASOS_DIAG] stock_tecnicos error', error.message)
+      throw new Error(error.message)
+    }
+    console.log('[QIORA_TRASPASOS_DIAG] stock_tecnicos filas', (filas || []).length)
     data = (filas || []).filter(r => upper(r.sku).includes(consulta) || upper(r.material).includes(consulta) || upper(r.descripcion).includes(consulta))
       .map(r => ({ sku:clean(r.sku), material:clean(r.material || r.sku), descripcion:clean(r.descripcion), lote:clean(r.lote), disponible:Number(r.disponible || 0) }))
   }
@@ -1056,6 +1068,10 @@ async function buscarMaterialesTraspaso(admin, perfil, payload) {
     actual.disponible += r.disponible
     agrupados.set(key, actual)
   }
+  console.log('[QIORA_TRASPASOS_DIAG] resultado', JSON.stringify({
+    fuente: validacion.origen_central ? 'stock_almacen' : 'stock_tecnicos',
+    coincidencias: data.length, materiales: agrupados.size
+  }))
   return { ok:true, fuente_inventario:validacion.origen_central ? 'stock_almacen' : 'stock_tecnicos', materiales:[...agrupados.values()].sort((a,b)=>a.sku.localeCompare(b.sku)).slice(0,50) }
 }
 
