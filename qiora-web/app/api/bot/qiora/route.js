@@ -948,41 +948,42 @@ async function validarTraspasoBot(admin, perfil, payload) {
   const destino = normalizarAlmacenTraspaso(payload.destino)
   if (!origen || !destino || origen === destino) return { ok:false, permitido:false, mensaje:'Origen o destino inválido.' }
 
-  const puesto = upper(perfil.puesto)
-  const esPadre = puesto === 'ADMIN_PADRE'
-  const esTecnico = puesto === 'TECNICO'
+  const esPadre = upper(perfil.puesto) === 'ADMIN_PADRE'
+  const esTecnico = upper(perfil.puesto) === 'TECNICO'
   const distritoUsuario = upper(perfil.distrito)
   if (!esPadre && !distritoUsuario) return { ok:false, permitido:false, mensaje:'Tu usuario no tiene distrito asignado.' }
 
-  // Un almacén central solo puede participar como ORIGEN. Nunca se acepta como destino.
-  const distritoValidar = esPadre ? '' : distritoUsuario
-  const origenCentral = distritoValidar ? esAlmacenCentral(distritoValidar, origen) : false
-  if (!esPadre && esAlmacenCentral(distritoUsuario, destino)) {
-    return { ok:false, permitido:false, mensaje:'El almacén central solo puede ser ORIGEN, nunca DESTINO.' }
-  }
+  // Primero identificar el distrito desde el técnico DESTINO. Esto también
+  // funciona para ADMIN_PADRE, que antes no detectaba almacenes centrales.
+  const destinos = await tecnicosTraspaso(admin, [destino], esPadre ? '' : distritoUsuario)
+  const candidatosDestino = destinos.filter(x => normalizarAlmacenTraspaso(x.usuario_almacen) === destino)
+  if (!candidatosDestino.length) return {ok:false, permitido:false, mensaje:'El DESTINO debe ser un técnico activo del distrito autorizado.'}
 
+  const distritosDestino = [...new Set(candidatosDestino.map(x => upper(x.distrito)).filter(Boolean))]
+  if (distritosDestino.length !== 1) return {ok:false, permitido:false, mensaje:'El almacén destino tiene una asignación de distrito ambigua. Contacta al administrador.'}
+  const distritoMovimiento = distritosDestino[0]
+  if (!esPadre && distritoMovimiento !== distritoUsuario) return {ok:false, permitido:false, mensaje:'El destino no pertenece a tu distrito.'}
+
+  // Nunca permitir el almacén central como DESTINO.
+  if (esAlmacenCentral(distritoMovimiento, destino)) return {ok:false, permitido:false, mensaje:'El almacén central solo puede ser ORIGEN, nunca DESTINO.'}
+
+  const tDestino = candidatosDestino[0]
+  const origenCentral = esAlmacenCentral(distritoMovimiento, origen)
   let tOrigen = null
-  let tDestino = null
   if (!origenCentral) {
-    const listaOrigen = await tecnicosTraspaso(admin, [origen], distritoValidar)
+    const listaOrigen = await tecnicosTraspaso(admin, [origen], distritoMovimiento)
     tOrigen = listaOrigen.find(x => normalizarAlmacenTraspaso(x.usuario_almacen) === origen) || null
-    if (!tOrigen) return { ok:false, permitido:false, mensaje:'El almacén de ORIGEN no pertenece a un técnico activo de tu distrito.' }
+    if (!tOrigen) return {ok:false, permitido:false, mensaje:'El ORIGEN debe ser un técnico activo del mismo distrito que el DESTINO, o su almacén central.'}
   }
 
-  const listaDestino = await tecnicosTraspaso(admin, [destino], distritoValidar)
-  tDestino = listaDestino.find(x => normalizarAlmacenTraspaso(x.usuario_almacen) === destino) || null
-  if (!tDestino) return { ok:false, permitido:false, mensaje:'El DESTINO debe ser un técnico activo de tu mismo distrito. Los almacenes de otros distritos no están permitidos.' }
-
-  if (!esPadre) {
-    if (upper(tDestino.distrito) !== distritoUsuario || (tOrigen && upper(tOrigen.distrito) !== distritoUsuario)) {
-      return { ok:false, permitido:false, mensaje:'El origen y destino deben pertenecer a tu distrito.' }
-    }
-  }
-  if (esTecnico && origen !== normalizarAlmacenTraspaso(perfil.usuario_almacen) && destino !== normalizarAlmacenTraspaso(perfil.usuario_almacen)) {
-    return { ok:false, permitido:false, mensaje:'Como técnico, solo puedes solicitar traspasos si tu almacén es ORIGEN o DESTINO.' }
+  // Desde el almacén central puede solicitar cualquier usuario autorizado
+  // del distrito; entre dos técnicos uno de los almacenes debe ser el suyo.
+  if (esTecnico && !origenCentral &&
+      origen !== normalizarAlmacenTraspaso(perfil.usuario_almacen) &&
+      destino !== normalizarAlmacenTraspaso(perfil.usuario_almacen)) {
+    return {ok:false, permitido:false, mensaje:'Entre técnicos solo puedes solicitar si tu almacén es ORIGEN o DESTINO.'}
   }
 
-  const distritoMovimiento = esPadre ? upper(tDestino.distrito) : distritoUsuario
   return {
     ok:true, permitido:true, origen, destino, distrito:distritoMovimiento,
     origen_central:origenCentral,
@@ -1015,6 +1016,7 @@ async function buscarAlmacenTraspaso(admin, perfil, payload) {
   const { data, error } = await query.limit(2000)
   if (error) throw new Error(error.message)
   for (const x of data || []) {
+    if (normalizarAlmacenTraspaso(x.usuario_almacen) === almacenCentralDistrito(upper(x.distrito))) continue
     if (normalizarLlave(x.usuario_almacen) === q || normalizarLlave(x.nombre).includes(q)) {
       lista.push({ almacen:normalizarAlmacenTraspaso(x.usuario_almacen), nombre:x.nombre || '', distrito:x.distrito || '', tipo:'TECNICO' })
     }
