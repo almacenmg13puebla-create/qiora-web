@@ -1052,14 +1052,23 @@ async function buscarMaterialesTraspaso(admin, perfil, payload) {
   } else {
     const { data: filas, error } = await admin.from('stock_tecnicos')
       .select('sku,material,descripcion,centro,almacen,lote,cantidad,libre_utilizacion,disponible,distrito')
-      .eq('distrito', distrito).eq('almacen', origen).gt('disponible', 0).limit(3000)
+      .eq('distrito', distrito).eq('almacen', origen).limit(3000)
     if (error) {
       console.error('[QIORA_TRASPASOS_DIAG] stock_tecnicos error', error.message)
       throw new Error(error.message)
     }
     console.log('[QIORA_TRASPASOS_DIAG] stock_tecnicos filas', (filas || []).length)
-    data = (filas || []).filter(r => upper(r.sku).includes(consulta) || upper(r.material).includes(consulta) || upper(r.descripcion).includes(consulta))
-      .map(r => ({ sku:clean(r.sku), material:clean(r.material || r.sku), descripcion:clean(r.descripcion), lote:clean(r.lote), disponible:Number(r.disponible || 0) }))
+    data = (filas || []).map(r => ({
+      sku: clean(r.sku),
+      material: clean(r.material || r.sku),
+      descripcion: clean(r.descripcion || r.material || r.sku),
+      lote: clean(r.lote),
+      disponible: Number(r.disponible ?? r.libre_utilizacion ?? r.cantidad ?? 0),
+      distrito: upper(r.distrito),
+      almacen: normalizarAlmacenTraspaso(r.almacen)
+    })).filter(r => r.distrito === distrito && r.almacen === origen && r.disponible > 0 && (
+      upper(r.sku).includes(consulta) || upper(r.material).includes(consulta) || upper(r.descripcion).includes(consulta)
+    ))
   }
 
   const agrupados = new Map()
