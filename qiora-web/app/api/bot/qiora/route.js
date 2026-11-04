@@ -910,11 +910,12 @@ function normalizarAlmacenTraspaso(v) {
 
 function almacenCentralDistrito(distrito) {
   const d = upper(distrito)
+  if (!d) return ''
   return d === 'MG13' ? 'ME13' : d
 }
 
 function esAlmacenCentral(distrito, almacen) {
-  return Boolean(distrito && almacen && almacenCentralDistrito(distrito) === upper(almacen))
+  return Boolean(distrito && almacen && almacenCentralDistrito(distrito) === normalizarAlmacenTraspaso(almacen))
 }
 
 function permisoTraspasos(perfil) {
@@ -927,11 +928,12 @@ function permisoTraspasos(perfil) {
 
 async function tecnicosTraspaso(admin, almacenes, distrito = '') {
   const keys = [...new Set(almacenes.map(normalizarAlmacenTraspaso).filter(Boolean))]
+  if (!keys.length) return []
   let q = admin.from('almacen_usuarios')
     .select('id,usuario_almacen,nombre,puesto,distrito,telegram_chat_id,activo,auth_user_id')
     .eq('activo', true)
-    .eq('puesto', 'TECNICO')
     .in('usuario_almacen', keys)
+    .eq('puesto', 'TECNICO')
   if (distrito) q = q.eq('distrito', upper(distrito))
   const { data, error } = await q
   if (error) throw new Error(error.message)
@@ -948,57 +950,45 @@ async function validarTraspasoBot(admin, perfil, payload) {
 
   const puesto = upper(perfil.puesto)
   const esPadre = puesto === 'ADMIN_PADRE'
-  const esAdmin = puesto === 'ADMIN' || puesto === 'ADMINISTRADOR' || puesto.startsWith('ADMIN_')
   const esTecnico = puesto === 'TECNICO'
-  if (!(esPadre || esAdmin || puesto === 'ALMACENISTA' || esTecnico)) return { ok:false, permitido:false, mensaje:'Tu puesto no puede capturar traspasos.' }
+  const distritoUsuario = upper(perfil.distrito)
+  if (!esPadre && !distritoUsuario) return { ok:false, permitido:false, mensaje:'Tu usuario no tiene distrito asignado.' }
 
-  // Los técnicos nunca pueden elegir un distrito distinto al de su perfil.
-  const distritoPerfil = upper(perfil.distrito)
-  if (!distritoPerfil && !esPadre) return { ok:false, permitido:false, mensaje:'Tu usuario no tiene distrito configurado.' }
-
-  // Para un almacén central como ORIGEN, el distrito se deduce de su código;
-  // MG13 es la única excepción: su almacén central es ME13.
-  let distritoMovimiento = ''
-  if (esAlmacenCentral(distritoPerfil, origen)) distritoMovimiento = distritoPerfil
-  else {
-    const [tecOrigen] = await tecnicosTraspaso(admin, [origen], distritoPerfil || '')
-    if (tecOrigen) distritoMovimiento = upper(tecOrigen.distrito)
+  // Un almacén central solo puede participar como ORIGEN. Nunca se acepta como destino.
+  const distritoValidar = esPadre ? '' : distritoUsuario
+  const origenCentral = distritoValidar ? esAlmacenCentral(distritoValidar, origen) : false
+  if (!esPadre && esAlmacenCentral(distritoUsuario, destino)) {
+    return { ok:false, permitido:false, mensaje:'El almacén central solo puede ser ORIGEN, nunca DESTINO.' }
   }
 
-  if (!distritoMovimiento && esPadre) {
-    // ADMIN_PADRE puede operar cualquier distrito, pero ambos extremos deben
-    // quedar identificados dentro del mismo distrito.
-    const [tecOrigen] = await tecnicosTraspaso(admin, [origen])
-    if (tecOrigen) distritoMovimiento = upper(tecOrigen.distrito)
-    else {
-      const centralCandidate = upper(origen) === 'ME13' ? 'MG13' : upper(origen)
-      if (esAlmacenCentral(centralCandidate, origen)) distritoMovimiento = centralCandidate
+  let tOrigen = null
+  let tDestino = null
+  if (!origenCentral) {
+    const listaOrigen = await tecnicosTraspaso(admin, [origen], distritoValidar)
+    tOrigen = listaOrigen.find(x => normalizarAlmacenTraspaso(x.usuario_almacen) === origen) || null
+    if (!tOrigen) return { ok:false, permitido:false, mensaje:'El almacén de ORIGEN no pertenece a un técnico activo de tu distrito.' }
+  }
+
+  const listaDestino = await tecnicosTraspaso(admin, [destino], distritoValidar)
+  tDestino = listaDestino.find(x => normalizarAlmacenTraspaso(x.usuario_almacen) === destino) || null
+  if (!tDestino) return { ok:false, permitido:false, mensaje:'El DESTINO debe ser un técnico activo de tu mismo distrito. Los almacenes de otros distritos no están permitidos.' }
+
+  if (!esPadre) {
+    if (upper(tDestino.distrito) !== distritoUsuario || (tOrigen && upper(tOrigen.distrito) !== distritoUsuario)) {
+      return { ok:false, permitido:false, mensaje:'El origen y destino deben pertenecer a tu distrito.' }
     }
   }
-  if (!distritoMovimiento) return { ok:false, permitido:false, mensaje:'No se pudo identificar el distrito del almacén origen.' }
-
-  const origenCentral = esAlmacenCentral(distritoMovimiento, origen)
-  const destinoCentral = esAlmacenCentral(distritoMovimiento, destino)
-  if (destinoCentral) return { ok:false, permitido:false, mensaje:'El almacén central solamente puede ser ORIGEN, nunca DESTINO.' }
-
-  const [tOrigen] = origenCentral ? [null] : await tecnicosTraspaso(admin, [origen], distritoMovimiento)
-  const [tDestino] = await tecnicosTraspaso(admin, [destino], distritoMovimiento)
-  if (!origenCentral && !tOrigen) return { ok:false, permitido:false, mensaje:'El almacén ORIGEN no pertenece a tu distrito o no es un técnico activo.' }
-  if (!tDestino) return { ok:false, permitido:false, mensaje:'El DESTINO no pertenece a tu distrito o no es un técnico activo.' }
-
-  if (!esPadre && upper(perfil.distrito) !== distritoMovimiento) {
-    return { ok:false, permitido:false, mensaje:'El origen y destino deben pertenecer a tu distrito.' }
-  }
-  if (esTecnico && !origenCentral && ![origen, destino].includes(normalizarAlmacenTraspaso(perfil.usuario_almacen))) {
-    return { ok:false, permitido:false, mensaje:'Como técnico, solo puedes realizar traspasos entre técnicos si tu almacén es origen o destino.' }
+  if (esTecnico && origen !== normalizarAlmacenTraspaso(perfil.usuario_almacen) && destino !== normalizarAlmacenTraspaso(perfil.usuario_almacen)) {
+    return { ok:false, permitido:false, mensaje:'Como técnico, solo puedes solicitar traspasos si tu almacén es ORIGEN o DESTINO.' }
   }
 
+  const distritoMovimiento = esPadre ? upper(tDestino.distrito) : distritoUsuario
   return {
     ok:true, permitido:true, origen, destino, distrito:distritoMovimiento,
     origen_central:origenCentral,
-    nombre_origen: origenCentral ? `ALMACÉN CENTRAL ${distritoMovimiento}` : (tOrigen?.nombre || ''),
+    nombre_origen:origenCentral ? `ALMACÉN CENTRAL ${distritoMovimiento}` : (tOrigen?.nombre || ''),
     nombre_destino:tDestino.nombre || '',
-    tecnico_origen: origenCentral ? `ALMACÉN CENTRAL ${distritoMovimiento}` : (tOrigen?.nombre || ''),
+    tecnico_origen:origenCentral ? `ALMACÉN CENTRAL ${distritoMovimiento}` : (tOrigen?.nombre || ''),
     tecnico_destino:tDestino.nombre || '',
     puesto:perfil.puesto || '', usuario_almacen:normalizarAlmacenTraspaso(perfil.usuario_almacen)
   }
@@ -1007,77 +997,66 @@ async function validarTraspasoBot(admin, perfil, payload) {
 async function buscarAlmacenTraspaso(admin, perfil, payload) {
   if (!perfil || !permisoTraspasos(perfil)) return { ok:false, error:'No tienes permiso para capturar traspasos.' }
   const consulta = clean(payload.almacen)
-  const paso = upper(payload.paso || '')
   if (consulta.length < 1 || consulta.length > 100) return { ok:false, error:'Escribe un almacén o nombre válido.' }
   const distrito = upper(perfil.distrito)
-  if (!distrito && upper(perfil.puesto) !== 'ADMIN_PADRE') return { ok:false, error:'Tu usuario no tiene distrito configurado.' }
+  if (!distrito && upper(perfil.puesto) !== 'ADMIN_PADRE') return { ok:false, error:'Tu usuario no tiene distrito asignado.' }
   const q = normalizarLlave(consulta)
   const lista = []
 
-  // El central solo aparece como origen y solo para el distrito del usuario.
-  if (paso === 'ORIGEN' && distrito) {
-    const central = almacenCentralDistrito(distrito)
-    if (normalizarLlave(central) === q || normalizarLlave(distrito) === q) {
-      lista.push({ almacen:central, nombre:`ALMACÉN CENTRAL ${distrito}`, distrito, tipo:'CENTRAL' })
-    }
+  // Permite seleccionar el almacén central únicamente al escribir su código.
+  if (distrito && normalizarLlave(almacenCentralDistrito(distrito)) === q) {
+    lista.push({ almacen:almacenCentralDistrito(distrito), nombre:`ALMACÉN CENTRAL ${distrito}`, distrito, tipo:'CENTRAL' })
   }
 
   let query = admin.from('almacen_usuarios')
     .select('usuario_almacen,nombre,puesto,distrito')
-    .eq('activo', true)
-    .eq('puesto', 'TECNICO')
-  if (distrito && upper(perfil.puesto) !== 'ADMIN_PADRE') query = query.eq('distrito', distrito)
-  const { data, error } = await query.limit(1000)
+    .eq('activo', true).eq('puesto', 'TECNICO')
+  if (distrito) query = query.eq('distrito', distrito)
+  const { data, error } = await query.limit(2000)
   if (error) throw new Error(error.message)
-  const tecnicos = (data || []).filter(x => {
-    if (distrito && upper(perfil.puesto) !== 'ADMIN_PADRE' && upper(x.distrito) !== distrito) return false
-    return normalizarLlave(x.usuario_almacen) === q || normalizarLlave(x.nombre).includes(q)
-  }).slice(0,20).map(x => ({ almacen:normalizarAlmacenTraspaso(x.usuario_almacen), nombre:x.nombre || '', distrito:x.distrito || '', tipo:'TECNICO' }))
-
-  return { ok:true, encontrados:[...lista,...tecnicos].slice(0,20) }
+  for (const x of data || []) {
+    if (normalizarLlave(x.usuario_almacen) === q || normalizarLlave(x.nombre).includes(q)) {
+      lista.push({ almacen:normalizarAlmacenTraspaso(x.usuario_almacen), nombre:x.nombre || '', distrito:x.distrito || '', tipo:'TECNICO' })
+    }
+  }
+  return { ok:true, encontrados:lista.slice(0,20) }
 }
 
 async function buscarMaterialesTraspaso(admin, perfil, payload) {
   const validacion = await validarTraspasoBot(admin, perfil, payload)
   if (!validacion.ok) return validacion
   const origen = validacion.origen
+  const distrito = upper(validacion.distrito)
   const consulta = upper(payload.consulta)
   if (consulta.length < 1 || consulta.length > 100) return { ok:false, error:'Escribe SKU o descripción.' }
 
-  let data, error, fuente
+  let data = []
   if (validacion.origen_central) {
-    fuente = 'stock_almacen'
-    const respuesta = await admin.from('stock_almacen')
+    const { data: filas, error } = await admin.from('stock_almacen')
       .select('material,descripcion_material,descripcion,centro,almacen,lote,libre_utilizacion,disponible,distrito')
-      .eq('distrito', validacion.distrito)
-      .eq('almacen', origen)
-      .gt('disponible', 0)
-      .limit(2000)
-    data = respuesta.data; error = respuesta.error
+      .eq('distrito', distrito).eq('centro', distrito).eq('almacen', origen)
+      .gt('disponible', 0).limit(3000)
+    if (error) throw new Error(error.message)
+    data = (filas || []).filter(r => upper(r.material).includes(consulta) || upper(r.descripcion_material).includes(consulta) || upper(r.descripcion).includes(consulta))
+      .map(r => ({ sku:clean(r.material), material:clean(r.material), descripcion:clean(r.descripcion_material || r.descripcion), lote:clean(r.lote), disponible:Number(r.disponible || 0) }))
   } else {
-    fuente = 'stock_tecnicos'
-    const respuesta = await admin.from('stock_tecnicos')
-      .select('sku,material,centro,almacen,lote,cantidad,libre_utilizacion,tecnico,solicita,disponible,distrito,descripcion')
-      .eq('distrito', validacion.distrito)
-      .eq('almacen', origen)
-      .gt('disponible', 0)
-      .limit(2000)
-    data = respuesta.data; error = respuesta.error
+    const { data: filas, error } = await admin.from('stock_tecnicos')
+      .select('sku,material,descripcion,centro,almacen,lote,cantidad,libre_utilizacion,disponible,distrito')
+      .eq('distrito', distrito).eq('almacen', origen).gt('disponible', 0).limit(3000)
+    if (error) throw new Error(error.message)
+    data = (filas || []).filter(r => upper(r.sku).includes(consulta) || upper(r.material).includes(consulta) || upper(r.descripcion).includes(consulta))
+      .map(r => ({ sku:clean(r.sku), material:clean(r.material || r.sku), descripcion:clean(r.descripcion), lote:clean(r.lote), disponible:Number(r.disponible || 0) }))
   }
-  if (error) throw new Error(error.message)
 
   const agrupados = new Map()
-  for (const r of data || []) {
-    const sku = clean(validacion.origen_central ? r.material : r.sku)
-    const desc = clean(r.descripcion_material || r.descripcion || r.material)
-    if (!(upper(sku).includes(consulta) || upper(desc).includes(consulta))) continue
-    const lote = clean(r.lote)
-    const key = `${sku}|${lote}`
-    const actual = agrupados.get(key) || { sku, material:sku, descripcion:desc, disponible:0, lote }
-    actual.disponible += Number(r.disponible ?? r.libre_utilizacion ?? 0)
+  for (const r of data) {
+    if (!r.sku || r.disponible <= 0) continue
+    const key = `${r.sku}|${r.lote}`
+    const actual = agrupados.get(key) || { sku:r.sku, material:r.sku, descripcion:r.descripcion, disponible:0, lote:r.lote }
+    actual.disponible += r.disponible
     agrupados.set(key, actual)
   }
-  return { ok:true, fuente_inventario:fuente, materiales:[...agrupados.values()].sort((a,b)=>a.sku.localeCompare(b.sku)).slice(0,50) }
+  return { ok:true, fuente_inventario:validacion.origen_central ? 'stock_almacen' : 'stock_tecnicos', materiales:[...agrupados.values()].sort((a,b)=>a.sku.localeCompare(b.sku)).slice(0,50) }
 }
 
 async function buscarSeriesTraspaso(admin, perfil, payload) {
@@ -1086,12 +1065,12 @@ async function buscarSeriesTraspaso(admin, perfil, payload) {
   const sku = clean(payload.sku)
   const lote = clean(payload.lote)
   if (!sku) return { ok:false, error:'Falta SKU.' }
-  let q = admin.from('iq09_equipos').select('serie,material,descripcion,lote,estatus_sap,tipo_stock,almacen,distrito')
-    .eq('almacen', validacion.origen).eq('distrito', validacion.distrito).eq('material', sku).eq('tipo_stock', '01')
-  if (lote) q = q.eq('lote', lote)
+  let q = admin.from('iq09_equipos').select('serie,material,descripcion,lote,lote_stock,estatus_sap,tipo_stock,almacen,distrito')
+    .eq('distrito', validacion.distrito).eq('almacen', validacion.origen).eq('material', sku).eq('tipo_stock', '01')
+  if (lote) q = q.or(`lote.eq.${lote},lote_stock.eq.${lote}`)
   const { data, error } = await q.limit(1000)
   if (error) throw new Error(error.message)
-  const series = (data || []).filter(x => clean(x.serie)).map(x => ({ serie:x.serie, material:x.material, descripcion:x.descripcion || '', lote:x.lote || '' }))
+  const series = (data || []).filter(x => clean(x.serie)).map(x => ({ serie:x.serie, material:x.material, descripcion:x.descripcion || '', lote:x.lote || x.lote_stock || '' }))
   return { ok:true, series }
 }
 
@@ -1101,18 +1080,16 @@ async function buscarSeriesDirectasTraspaso(admin, perfil, payload) {
   const solicitadas = [...new Set(String(payload.series || '').split(/[,;\n\s]+/).map(clean).filter(Boolean))]
   if (!solicitadas.length || solicitadas.length > 100) return { ok:false, error:'Indica entre 1 y 100 series.' }
   const { data, error } = await admin.from('iq09_equipos')
-    .select('serie,material,descripcion,lote,estatus_sap,tipo_stock,almacen')
-    .eq('almacen', validacion.origen)
-    .eq('distrito', validacion.distrito)
-    .in('serie', solicitadas)
-    .eq('tipo_stock', '01')
-    .limit(200)
+    .select('serie,material,descripcion,lote,lote_stock,estatus_sap,tipo_stock,almacen,distrito')
+    .eq('distrito', validacion.distrito).eq('almacen', validacion.origen)
+    .in('serie', solicitadas).eq('tipo_stock', '01').limit(200)
   if (error) throw new Error(error.message)
   const encontradas = data || []
   const porGrupo = new Map()
   for (const x of encontradas) {
-    const key = `${x.material}|${x.lote}`
-    const g = porGrupo.get(key) || { sku:x.material, descripcion:x.descripcion || '', lote:x.lote || '', series:[], cantidad:0 }
+    const lote = x.lote || x.lote_stock || ''
+    const key = `${x.material}|${lote}`
+    const g = porGrupo.get(key) || { sku:x.material, descripcion:x.descripcion || '', lote, series:[], cantidad:0 }
     g.series.push(x.serie); g.cantidad++
     porGrupo.set(key,g)
   }
@@ -1242,20 +1219,21 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
     const series = Array.isArray(m.series) ? [...new Set(m.series.map(clean).filter(Boolean))] : []
     if (!sku || !Number.isFinite(cantidad) || cantidad <= 0) return { ok:false, error:`Material o cantidad inválida: ${sku || 'SIN SKU'}` }
 
-    let stocksBase, stockError
+    let stocks = []
     if (validacion.origen_central) {
-      const r = await admin.from('stock_almacen')
-        .select('material,descripcion_material,almacen,disponible,lote,distrito')
-        .eq('distrito', validacion.distrito).eq('almacen', validacion.origen).eq('material', sku).limit(200)
-      stocksBase = r.data; stockError = r.error
+      const { data: stocksBase, error: stockError } = await admin.from('stock_almacen')
+        .select('material,descripcion_material,descripcion,almacen,distrito,disponible,lote')
+        .eq('distrito', validacion.distrito).eq('centro', validacion.distrito)
+        .eq('almacen', validacion.origen).eq('material', sku).limit(500)
+      if (stockError) throw new Error(stockError.message)
+      stocks = (stocksBase || []).filter(x => (clean(x.lote) || 'NA') === (lote || 'NA'))
     } else {
-      const r = await admin.from('stock_tecnicos')
-        .select('sku,material,almacen,disponible,lote,distrito')
-        .eq('distrito', validacion.distrito).eq('almacen', validacion.origen).eq('sku', sku).limit(200)
-      stocksBase = r.data; stockError = r.error
+      const { data: stocksBase, error: stockError } = await admin.from('stock_tecnicos')
+        .select('sku,material,descripcion,almacen,distrito,disponible,lote')
+        .eq('distrito', validacion.distrito).eq('almacen', validacion.origen).eq('sku', sku).limit(500)
+      if (stockError) throw new Error(stockError.message)
+      stocks = (stocksBase || []).filter(x => (clean(x.lote) || 'NA') === (lote || 'NA'))
     }
-    if (stockError) throw new Error(stockError.message)
-    const stocks = (stocksBase || []).filter(x => (clean(x.lote) || 'NA') === (lote || 'NA'))
     const disponible = stocks.reduce((n,x)=>n+Number(x.disponible || 0),0)
     if (disponible < cantidad) return { ok:false, error:`Stock insuficiente para ${sku}. Disponible: ${disponible}; solicitado: ${cantidad}.` }
 
@@ -1263,7 +1241,7 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
       if (series.length !== cantidad) return { ok:false, error:`El material ${sku} requiere exactamente ${cantidad} series.` }
       const { data: equipos, error: equipoError } = await admin.from('iq09_equipos')
         .select('serie,material,lote,almacen,tipo_stock')
-        .eq('almacen', validacion.origen).eq('distrito', validacion.distrito).eq('material', sku).eq('lote', lote)
+        .eq('distrito', validacion.distrito).eq('almacen', validacion.origen).eq('material', sku).eq('lote', lote)
         .eq('tipo_stock','01').in('serie',series).limit(200)
       if (equipoError) throw new Error(equipoError.message)
       const disponibles = new Set((equipos || []).map(x=>x.serie))
@@ -1272,7 +1250,7 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
     } else if (series.length) {
       return { ok:false, error:`El lote ${lote} no está configurado como material serializado; no se aceptan series manuales.` }
     }
-    const desc = clean(m.descripcion || stocks?.[0]?.material)
+    const desc = clean(m.descripcion || stocks?.[0]?.descripcion_material || stocks?.[0]?.descripcion || stocks?.[0]?.material)
     normalizados.push({ sku, material:sku, descripcion:desc, cantidad, lote:lote || 'NA', series })
   }
 
@@ -1875,23 +1853,6 @@ async function stockEquiposTelegram(admin,p,payload) {
     hayTPE:false,tieneLoteTPE:false,series_filtros:[],total_series_disponibles:0}
 }
 
-
-async function consultarSerieTelegram(admin, perfil, payload) {
-  if (!perfil) return { ok:false, error:'Telegram no está vinculado a un usuario activo.' }
-  const serie = clean(payload.serie)
-  if (!serie) return { ok:false, error:'Escribe la serie completa.' }
-  let q = admin.from('iq09_equipos')
-    .select('serie,material,descripcion,lote,estatus_sap,tipo_stock,almacen,distrito,centro,denom_status')
-    .eq('serie', serie)
-  if (upper(perfil.puesto) !== 'ADMIN_PADRE') q = q.eq('distrito', upper(perfil.distrito))
-  const { data, error } = await q.limit(20)
-  if (error) throw new Error(error.message)
-  if (!data?.length) return { ok:true, total:0, mensaje:`🔎 SERIE ${serie}\n\nNo se encontró en tu distrito (${upper(perfil.distrito)}).` }
-  const lineas = [`🔎 CONSULTA DE SERIE: ${serie}`, `Distrito: ${upper(perfil.distrito)}`, '']
-  for (const x of data) lineas.push(`Serie: ${x.serie}`, `Material: ${x.material || ''}`, `Descripción: ${x.descripcion || ''}`, `Lote: ${x.lote || ''}`, `Almacén: ${x.almacen || ''}`, `Estado: ${x.denom_status || x.estatus_sap || ''}`, '')
-  return { ok:true, total:data.length, resultados:data, mensaje:lineas.join('\n').slice(0,3800) }
-}
-
 async function accionMigrada(admin, payload) {
   const accion = clean(payload.accion || payload.action)
 
@@ -1903,7 +1864,6 @@ async function accionMigrada(admin, payload) {
   if (accion === 'telegram_sap_marcar_notificado') return marcarComandoSAPNotificado(admin, payload)
 
   const perfil = await perfilTelegram(admin, payload.telegram_chat_id)
-  if (accion === 'telegram_serie') return consultarSerieTelegram(admin, perfil, payload)
   if (accion === 'telegram_stock_menu') return menuStockTelegram(perfil)
   if (accion === 'telegram_stock') return stockEquiposTelegram(admin, perfil, payload)
   if (accion === 'telegram_recolecciones_por_entregar') return recoleccionesPendientesTelegram(admin, perfil, payload)
