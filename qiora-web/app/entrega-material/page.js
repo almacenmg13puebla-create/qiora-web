@@ -18,6 +18,64 @@ const normalizar = (m, i) => ({
   series: Array.isArray(m.series) ? m.series.map(normal).filter(Boolean) : []
 })
 
+function escaparHtml(valor) {
+  return String(valor ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]))
+}
+
+function htmlComprobanteEntrega({ data, materiales, almacen, tecnico, folio, distrito, manual }) {
+  const fecha = new Date().toLocaleString('es-MX', {
+    timeZone: 'America/Mexico_City', dateStyle: 'long', timeStyle: 'short'
+  })
+  const totalPiezas = materiales.reduce((n, m) => n + cantidad(m), 0)
+  const filas = materiales.map((m, i) => `
+    <tr>
+      <td>${i + 1}</td><td>${escaparHtml(m.sku)}</td>
+      <td>${escaparHtml(m.descripcion || m.material)}</td>
+      <td class="num">${escaparHtml(m.cantidad)}</td>
+      <td>${escaparHtml(m.lote || 'SIN LOTE')}</td>
+    </tr>
+    ${m.series?.length ? `<tr class="series"><td></td><td colspan="4"><strong>Series:</strong><br>${m.series.map(escaparHtml).join('<br>')}</td></tr>` : ''}
+  `).join('')
+
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Comprobante ${escaparHtml(data?.folio_control || '')}</title>
+  <style>
+    *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#17231f;margin:0;background:#eef2ef}
+    .sheet{width:210mm;min-height:297mm;margin:18px auto;padding:15mm;background:#fff;box-shadow:0 2px 16px #0002}
+    .top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #087653;padding-bottom:14px}
+    .brand{font-size:24px;font-weight:800;color:#087653;letter-spacing:1px}.subtitle{font-size:12px;color:#50635b;margin-top:5px}
+    h1{font-size:20px;margin:0;text-align:right;color:#123d30}.folio{text-align:right;font-size:13px;margin-top:9px;font-weight:bold}
+    h2{font-size:13px;color:#087653;border-bottom:1px solid #cbd8d1;padding-bottom:6px;margin:22px 0 10px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 22px;font-size:12px}.field{padding:5px 0;border-bottom:1px solid #e3e9e5}.label{font-size:10px;color:#60736a;text-transform:uppercase;display:block;margin-bottom:3px}
+    table{width:100%;border-collapse:collapse;font-size:11px}th{background:#087653;color:#fff;text-align:left;padding:9px 7px}td{border:1px solid #d5dfd9;padding:8px 7px;vertical-align:top}.num{text-align:center}.series td{background:#f5faf7;line-height:1.55}
+    .totals{display:flex;justify-content:flex-end;gap:28px;margin:16px 0;font-size:12px;font-weight:bold}.signatures{display:grid;grid-template-columns:1fr 1fr;gap:45px;margin-top:65px;text-align:center;font-size:11px}.sign{border-top:1px solid #253a31;padding-top:8px}.foot{border-top:1px solid #d5dfd9;margin-top:55px;padding-top:10px;text-align:center;color:#718078;font-size:9px}
+    .actions{width:210mm;margin:12px auto;text-align:right}.actions button{background:#087653;color:white;border:0;border-radius:5px;padding:10px 18px;font-weight:bold;cursor:pointer}
+    @page{size:A4 portrait;margin:0} @media print{body{background:#fff}.sheet{margin:0;width:210mm;min-height:297mm;box-shadow:none;padding:15mm}.actions{display:none}}
+    @media screen and (max-width:800px){.sheet,.actions{width:100%;margin:0}.sheet{padding:18px;min-height:100vh}.top{gap:15px}h1{font-size:16px}}
+  </style></head><body>
+  <div class="actions"><button onclick="window.print()">Imprimir</button></div>
+  <article class="sheet">
+    <div class="top"><div><div class="brand">QIORA</div><div class="subtitle">CONTROL DE ALMACÉN · COMPROBANTE DE ENTREGA</div></div>
+      <div><h1>ENTREGA DE MATERIAL</h1><div class="folio">FOLIO CONTROL: ${escaparHtml(data?.folio_control || 'NO GENERADO')}</div></div></div>
+    <h2>DATOS DE LA ENTREGA</h2><div class="grid">
+      <div class="field"><span class="label">Folio de solicitud</span>${escaparHtml(data?.folio || folio || (manual ? 'SIN SOLICITUD' : 'NO REGISTRADO'))}</div>
+      <div class="field"><span class="label">Fecha de registro</span>${escaparHtml(fecha)}</div>
+      <div class="field"><span class="label">Distrito</span>${escaparHtml(distrito || 'Consultar asignación SAT')}</div>
+      <div class="field"><span class="label">Estado</span>PENDIENTE SAP</div>
+      <div class="field"><span class="label">Almacén destino</span>${escaparHtml(almacen)}</div>
+      <div class="field"><span class="label">Técnico que recibe</span>${escaparHtml(tecnico)}</div>
+    </div>
+    <h2>DETALLE DE MATERIALES</h2><table><thead><tr><th>#</th><th>SKU</th><th>DESCRIPCIÓN</th><th>CANT.</th><th>LOTE</th></tr></thead><tbody>${filas}</tbody></table>
+    <div class="totals"><span>PARTIDAS: ${materiales.length}</span><span>TOTAL DE PIEZAS: ${totalPiezas}</span></div>
+    <div class="signatures"><div class="sign">ENTREGA<br>Nombre y firma</div><div class="sign">RECIBE<br>Nombre y firma</div></div>
+    <div class="foot">QIORA · Comprobante generado desde el registro confirmado en Supabase. Conserve este documento como respaldo.</div>
+  </article>
+  </body></html>`
+}
+
+
 export default function EntregaMaterial() {
   const router = useRouter()
   const [busqueda, setBusqueda] = useState('')
@@ -338,6 +396,15 @@ export default function EntregaMaterial() {
   async function guardar() {
     if (!puedeGuardar) {setError('Faltan series de lotes TPE o hay series duplicadas.'); return}
     setBusy(true);setError('');setExito('')
+    // Abrir la ventana sincrónicamente desde el clic para evitar bloqueadores de ventanas emergentes.
+    const ventanaImpresion = window.open('', '_blank')
+    if (!ventanaImpresion) {
+      setBusy(false)
+      setError('El navegador bloqueó la ventana del comprobante. Permite ventanas emergentes para este sitio e inténtalo de nuevo.')
+      return
+    }
+    ventanaImpresion.document.write('<!doctype html><title>Preparando comprobante...</title><p style="font:16px Arial;padding:24px">Guardando entrega y preparando comprobante...</p>')
+    ventanaImpresion.document.close()
     try {
       const payload = materiales.map(m => ({
         id: m.id, sku:m.sku, descripcion:m.descripcion, material:m.material,
@@ -348,7 +415,15 @@ export default function EntregaMaterial() {
         ? await supabase.rpc('qiora_material_guardar_sin_solicitud',{p_almacen:almacen,p_materiales:payload})
         : await supabase.rpc('qiora_material_guardar_entrega', {p_folio_solicitud:folio, p_almacen:almacen, p_materiales:payload})
       if(e)throw e
-      setExito(`Entrega registrada en MIGO. FOLIO ${str(data?.folio)} · FOLIO_CONTROL ${str(data?.folio_control)} · PENDIENTE SAP`)
+      if (!data?.folio_control) throw new Error('Supabase no devolvió FOLIO_CONTROL; no se puede generar el comprobante.')
+      const html = htmlComprobanteEntrega({
+        data, materiales, almacen, tecnico, folio,
+        distrito: manualDistrito, manual
+      })
+      ventanaImpresion.document.open()
+      ventanaImpresion.document.write(html)
+      ventanaImpresion.document.close()
+      setExito(`Entrega registrada en MIGO. FOLIO ${str(data?.folio)} · FOLIO_CONTROL ${str(data?.folio_control)} · PENDIENTE SAP. Comprobante abierto para imprimir.`)
       setEstatus('EN_PROCESO_SAP')
       // Las series son definitivas en qiora_entregas_registro.materiales.
       // No limpiar la vista: recuperar los datos ya persistidos en Supabase.
@@ -357,7 +432,10 @@ export default function EntregaMaterial() {
         try { window.localStorage.removeItem('qiora_series_draft_' + folio);if(manual)window.localStorage.removeItem('qiora_manual_draft_'+manualDistrito+'_'+almacen) } catch (_) {}
         await cargarGuardada(ctl)
       }
-    }catch(e){setError(e?.message||'Error al guardar entrega.')}finally{setBusy(false)}
+    }catch(e){
+      try { ventanaImpresion.close() } catch (_) {}
+      setError(e?.message||'Error al guardar entrega.')
+    }finally{setBusy(false)}
   }
 
   return <main className="em"><div className="wrap">
