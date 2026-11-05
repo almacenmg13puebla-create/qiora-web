@@ -1110,13 +1110,18 @@ async function buscarSeriesDirectasTraspaso(admin, perfil, payload) {
   if (!validacion.ok) return validacion
   const solicitadas = [...new Set(String(payload.series || '').split(/[,;\n\s]+/).map(clean).filter(Boolean))]
   if (!solicitadas.length || solicitadas.length > 100) return { ok:false, error:'Indica entre 1 y 100 series.' }
+  // No usar .in('serie', solicitadas): la comparación exacta distingue
+  // mayúsculas/minúsculas y puede omitir series válidas capturadas en minúsculas.
+  // Primero limitar por distrito y almacén; después comparar series normalizadas.
   const { data, error } = await admin.from('iq09_equipos')
     .select('serie,material,descripcion,lote,lote_stock,estatus_sap,tipo_stock,almacen,distrito')
     .eq('distrito', validacion.distrito).eq('almacen', validacion.origen)
-    .in('serie', solicitadas).limit(200)
+    .limit(5000)
   if (error) throw new Error(error.message)
+  const solicitadasNormalizadas = new Set(solicitadas.map(upper))
   const encontradas = (data || []).filter(x =>
-    clean(x.serie) && upper(x.distrito) === upper(validacion.distrito) &&
+    clean(x.serie) && solicitadasNormalizadas.has(upper(x.serie)) &&
+    upper(x.distrito) === upper(validacion.distrito) &&
     normalizarAlmacenTraspaso(x.almacen) === normalizarAlmacenTraspaso(validacion.origen)
   )
   const porGrupo = new Map()
@@ -1285,16 +1290,18 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
       const { data: equipos, error: equipoError } = await admin.from('iq09_equipos')
         .select('serie,material,lote,lote_stock,almacen,distrito,tipo_stock')
         .eq('distrito', validacion.distrito).eq('almacen', validacion.origen)
-        .eq('material', sku).in('serie', series).limit(200)
+        .eq('material', sku).limit(5000)
       if (equipoError) throw new Error(equipoError.message)
+      const seriesSolicitadasNormalizadas = new Set(series.map(upper))
       const equiposValidos = (equipos || []).filter(x =>
+        seriesSolicitadasNormalizadas.has(upper(x.serie)) &&
         upper(x.distrito) === upper(validacion.distrito) &&
         normalizarAlmacenTraspaso(x.almacen) === normalizarAlmacenTraspaso(validacion.origen) &&
         clean(x.material) === sku && upper(x.lote || x.lote_stock) === upper(lote) &&
         upper(x.lote || x.lote_stock) !== 'TPE USADO'
       )
-      const disponibles = new Set(equiposValidos.map(x=>clean(x.serie)))
-      const faltan = series.filter(x=>!disponibles.has(x))
+      const disponibles = new Set(equiposValidos.map(x=>upper(x.serie)))
+      const faltan = series.filter(x=>!disponibles.has(upper(x)))
       if (faltan.length) return { ok:false, error:`Series no válidas en IQ09 para distrito, origen, material y lote seleccionados: ${faltan.join(', ')}` }
     }
     const desc = clean(m.descripcion || stocks?.[0]?.descripcion_material || stocks?.[0]?.descripcion || stocks?.[0]?.material)
