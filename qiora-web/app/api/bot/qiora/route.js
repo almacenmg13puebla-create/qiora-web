@@ -1048,7 +1048,10 @@ async function buscarMaterialesTraspaso(admin, perfil, payload) {
     }
     console.log('[QIORA_TRASPASOS_DIAG] stock_almacen filas', (filas || []).length)
     data = (filas || []).filter(r => upper(r.material).includes(consulta) || upper(r.descripcion_material).includes(consulta) || upper(r.descripcion).includes(consulta))
-      .map(r => ({ sku:clean(r.material), material:clean(r.material), descripcion:clean(r.descripcion_material || r.descripcion), lote:clean(r.lote), disponible:Number(r.disponible || 0) }))
+      .map(r => {
+        const descripcion = clean(r.descripcion_material || r.descripcion)
+        return { sku:clean(r.material), material:clean(r.material), descripcion, lote:clean(r.lote), disponible:Number(r.disponible || 0) }
+      })
   } else {
     const { data: filas, error } = await admin.from('stock_tecnicos')
       .select('sku,material,descripcion,centro,almacen,lote,cantidad,libre_utilizacion,disponible,distrito')
@@ -1059,14 +1062,21 @@ async function buscarMaterialesTraspaso(admin, perfil, payload) {
     }
     console.log('[QIORA_TRASPASOS_DIAG] stock_tecnicos filas', (filas || []).length)
     data = (filas || []).filter(r => upper(r.sku).includes(consulta) || upper(r.material).includes(consulta) || upper(r.descripcion).includes(consulta))
-      .map(r => ({ sku:clean(r.sku), material:clean(r.material || r.sku), descripcion:clean(r.descripcion), lote:clean(r.lote), disponible:Number(r.disponible || 0) }))
+      .map(r => {
+        const materialTexto = clean(r.material)
+        const skuTexto = clean(r.sku)
+        const descripcion = clean(r.descripcion || (materialTexto && materialTexto !== skuTexto ? materialTexto : ''))
+        return { sku:skuTexto, material:materialTexto || skuTexto, descripcion, lote:clean(r.lote), disponible:Number(r.disponible || r.libre_utilizacion || r.cantidad || 0) }
+      })
   }
 
   const agrupados = new Map()
   for (const r of data) {
     if (!r.sku || r.disponible <= 0) continue
     const key = `${r.sku}|${r.lote}`
-    const actual = agrupados.get(key) || { sku:r.sku, material:r.sku, descripcion:r.descripcion, disponible:0, lote:r.lote }
+    const actual = agrupados.get(key) || { sku:r.sku, material:r.material || r.sku, descripcion:r.descripcion || '', disponible:0, lote:r.lote }
+    if (!actual.descripcion && r.descripcion) actual.descripcion = r.descripcion
+    if (!actual.material && r.material) actual.material = r.material
     actual.disponible += r.disponible
     agrupados.set(key, actual)
   }
