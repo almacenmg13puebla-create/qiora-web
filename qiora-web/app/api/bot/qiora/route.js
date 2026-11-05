@@ -1048,10 +1048,7 @@ async function buscarMaterialesTraspaso(admin, perfil, payload) {
     }
     console.log('[QIORA_TRASPASOS_DIAG] stock_almacen filas', (filas || []).length)
     data = (filas || []).filter(r => upper(r.material).includes(consulta) || upper(r.descripcion_material).includes(consulta) || upper(r.descripcion).includes(consulta))
-      .map(r => {
-        const descripcion = clean(r.descripcion_material || r.descripcion)
-        return { sku:clean(r.material), material:clean(r.material), descripcion, lote:clean(r.lote), disponible:Number(r.disponible || 0) }
-      })
+      .map(r => ({ sku:clean(r.material), material:clean(r.material), descripcion:clean(r.descripcion_material || r.descripcion), lote:clean(r.lote), disponible:Number(r.disponible || 0) }))
   } else {
     const { data: filas, error } = await admin.from('stock_tecnicos')
       .select('sku,material,descripcion,centro,almacen,lote,cantidad,libre_utilizacion,disponible,distrito')
@@ -1062,21 +1059,14 @@ async function buscarMaterialesTraspaso(admin, perfil, payload) {
     }
     console.log('[QIORA_TRASPASOS_DIAG] stock_tecnicos filas', (filas || []).length)
     data = (filas || []).filter(r => upper(r.sku).includes(consulta) || upper(r.material).includes(consulta) || upper(r.descripcion).includes(consulta))
-      .map(r => {
-        const materialTexto = clean(r.material)
-        const skuTexto = clean(r.sku)
-        const descripcion = clean(r.descripcion || (materialTexto && materialTexto !== skuTexto ? materialTexto : ''))
-        return { sku:skuTexto, material:materialTexto || skuTexto, descripcion, lote:clean(r.lote), disponible:Number(r.disponible || r.libre_utilizacion || r.cantidad || 0) }
-      })
+      .map(r => ({ sku:clean(r.sku), material:clean(r.material || r.sku), descripcion:clean(r.descripcion), lote:clean(r.lote), disponible:Number(r.disponible || 0) }))
   }
 
   const agrupados = new Map()
   for (const r of data) {
     if (!r.sku || r.disponible <= 0) continue
     const key = `${r.sku}|${r.lote}`
-    const actual = agrupados.get(key) || { sku:r.sku, material:r.material || r.sku, descripcion:r.descripcion || '', disponible:0, lote:r.lote }
-    if (!actual.descripcion && r.descripcion) actual.descripcion = r.descripcion
-    if (!actual.material && r.material) actual.material = r.material
+    const actual = agrupados.get(key) || { sku:r.sku, material:r.sku, descripcion:r.descripcion, disponible:0, lote:r.lote }
     actual.disponible += r.disponible
     agrupados.set(key, actual)
   }
@@ -1110,18 +1100,13 @@ async function buscarSeriesDirectasTraspaso(admin, perfil, payload) {
   if (!validacion.ok) return validacion
   const solicitadas = [...new Set(String(payload.series || '').split(/[,;\n\s]+/).map(clean).filter(Boolean))]
   if (!solicitadas.length || solicitadas.length > 100) return { ok:false, error:'Indica entre 1 y 100 series.' }
-  // No usar .in('serie', solicitadas): la comparación exacta distingue
-  // mayúsculas/minúsculas y puede omitir series válidas capturadas en minúsculas.
-  // Primero limitar por distrito y almacén; después comparar series normalizadas.
   const { data, error } = await admin.from('iq09_equipos')
     .select('serie,material,descripcion,lote,lote_stock,estatus_sap,tipo_stock,almacen,distrito')
     .eq('distrito', validacion.distrito).eq('almacen', validacion.origen)
-    .limit(5000)
+    .in('serie', solicitadas).limit(200)
   if (error) throw new Error(error.message)
-  const solicitadasNormalizadas = new Set(solicitadas.map(upper))
   const encontradas = (data || []).filter(x =>
-    clean(x.serie) && solicitadasNormalizadas.has(upper(x.serie)) &&
-    upper(x.distrito) === upper(validacion.distrito) &&
+    clean(x.serie) && upper(x.distrito) === upper(validacion.distrito) &&
     normalizarAlmacenTraspaso(x.almacen) === normalizarAlmacenTraspaso(validacion.origen)
   )
   const porGrupo = new Map()
@@ -1290,18 +1275,16 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
       const { data: equipos, error: equipoError } = await admin.from('iq09_equipos')
         .select('serie,material,lote,lote_stock,almacen,distrito,tipo_stock')
         .eq('distrito', validacion.distrito).eq('almacen', validacion.origen)
-        .eq('material', sku).limit(5000)
+        .eq('material', sku).in('serie', series).limit(200)
       if (equipoError) throw new Error(equipoError.message)
-      const seriesSolicitadasNormalizadas = new Set(series.map(upper))
       const equiposValidos = (equipos || []).filter(x =>
-        seriesSolicitadasNormalizadas.has(upper(x.serie)) &&
         upper(x.distrito) === upper(validacion.distrito) &&
         normalizarAlmacenTraspaso(x.almacen) === normalizarAlmacenTraspaso(validacion.origen) &&
         clean(x.material) === sku && upper(x.lote || x.lote_stock) === upper(lote) &&
         upper(x.lote || x.lote_stock) !== 'TPE USADO'
       )
-      const disponibles = new Set(equiposValidos.map(x=>upper(x.serie)))
-      const faltan = series.filter(x=>!disponibles.has(upper(x)))
+      const disponibles = new Set(equiposValidos.map(x=>clean(x.serie)))
+      const faltan = series.filter(x=>!disponibles.has(x))
       if (faltan.length) return { ok:false, error:`Series no válidas en IQ09 para distrito, origen, material y lote seleccionados: ${faltan.join(', ')}` }
     }
     const desc = clean(m.descripcion || stocks?.[0]?.descripcion_material || stocks?.[0]?.descripcion || stocks?.[0]?.material)
@@ -1907,6 +1890,82 @@ async function stockEquiposTelegram(admin,p,payload) {
     hayTPE:false,tieneLoteTPE:false,series_filtros:[],total_series_disponibles:0}
 }
 
+async function buscarSerieIQ09Telegram(admin, perfil, payload) {
+  if (!perfil || perfil.activo !== true) {
+    return { ok:false, error:'Telegram no está vinculado a un usuario activo.' }
+  }
+
+  const distrito = upper(perfil.distrito)
+  const serie = upper(payload.serie)
+  if (!distrito) return { ok:false, error:'Tu usuario no tiene distrito asignado.' }
+  if (!/^[A-Z0-9_-]{4,80}$/.test(serie)) {
+    return { ok:false, error:'Número de serie inválido. Verifica que esté completo.' }
+  }
+
+  // Consulta exacta sin distinguir mayúsculas/minúsculas y siempre limitada
+  // al distrito del perfil autenticado. No filtrar tipo_stock ni estatus_sap:
+  // IQ09 puede contener NULL en esos campos.
+  const { data, error } = await admin
+    .from('iq09_equipos')
+    .select('distrito,centro,almacen,serie,material,descripcion,lote,lote_stock,tipo_stock,estatus_sap')
+    .eq('distrito', distrito)
+    .ilike('serie', serie)
+    .limit(20)
+
+  if (error) throw new Error(`No se pudo consultar IQ09: ${error.message}`)
+
+  const filas = (data || []).filter(x =>
+    upper(x.distrito) === distrito && upper(x.serie) === serie
+  )
+
+  if (!filas.length) {
+    return {
+      ok:true,
+      encontrada:false,
+      distrito,
+      serie,
+      total:0,
+      mensaje:[
+        '🔎 CONSULTA DE SERIES IQ09', '',
+        `Serie: ${serie}`,
+        `Distrito: ${distrito}`, '',
+        '❌ No se encontró esta serie en IQ09 dentro de tu distrito.'
+      ].join('\n')
+    }
+  }
+
+  const lineas = [
+    '🔎 RESULTADO DE SERIE IQ09', '',
+    `Distrito autorizado: ${distrito}`,
+    `Serie: ${serie}`,
+    `Coincidencias: ${filas.length}`, ''
+  ]
+
+  filas.forEach((x, i) => {
+    lineas.push(
+      `${i + 1}. EQUIPO ENCONTRADO`,
+      `Centro: ${clean(x.centro) || 'NO REGISTRADO'}`,
+      `Almacén: ${clean(x.almacen) || 'NO REGISTRADO'}`,
+      `SKU: ${clean(x.material) || 'NO REGISTRADO'}`,
+      `Descripción: ${clean(x.descripcion) || 'NO REGISTRADA'}`,
+      `Lote: ${clean(x.lote || x.lote_stock) || 'NO REGISTRADO'}`,
+      `Tipo stock: ${clean(x.tipo_stock) || 'NO REGISTRADO'}`,
+      `Estatus SAP: ${clean(x.estatus_sap) || 'NO REGISTRADO'}`,
+      ''
+    )
+  })
+
+  return {
+    ok:true,
+    encontrada:true,
+    distrito,
+    serie,
+    total:filas.length,
+    resultados:filas,
+    mensaje:lineas.join('\n').slice(0,3800)
+  }
+}
+
 async function accionMigrada(admin, payload) {
   const accion = clean(payload.accion || payload.action)
 
@@ -1922,6 +1981,7 @@ async function accionMigrada(admin, payload) {
   if (accion === 'telegram_stock') return stockEquiposTelegram(admin, perfil, payload)
   if (accion === 'telegram_recolecciones_por_entregar') return recoleccionesPendientesTelegram(admin, perfil, payload)
   if (accion === 'telegram_criticos') return equiposCriticosTelegram(admin, perfil, payload)
+  if (accion === 'telegram_serie') return buscarSerieIQ09Telegram(admin, perfil, payload)
   if (accion === 'telegram_sap_crear_comando') return crearComandoSAPEnSupabase(admin, perfil, payload)
 
   if (accion === 'telegram_traspaso_nombre_almacen') return buscarAlmacenTraspaso(admin, perfil, payload)
