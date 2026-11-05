@@ -1052,23 +1052,14 @@ async function buscarMaterialesTraspaso(admin, perfil, payload) {
   } else {
     const { data: filas, error } = await admin.from('stock_tecnicos')
       .select('sku,material,descripcion,centro,almacen,lote,cantidad,libre_utilizacion,disponible,distrito')
-      .eq('distrito', distrito).eq('almacen', origen).limit(3000)
+      .eq('distrito', distrito).eq('almacen', origen).gt('disponible', 0).limit(3000)
     if (error) {
       console.error('[QIORA_TRASPASOS_DIAG] stock_tecnicos error', error.message)
       throw new Error(error.message)
     }
     console.log('[QIORA_TRASPASOS_DIAG] stock_tecnicos filas', (filas || []).length)
-    data = (filas || []).map(r => ({
-      sku: clean(r.sku),
-      material: clean(r.material || r.sku),
-      descripcion: clean(r.descripcion || r.material || r.sku),
-      lote: clean(r.lote),
-      disponible: Number(r.disponible ?? r.libre_utilizacion ?? r.cantidad ?? 0),
-      distrito: upper(r.distrito),
-      almacen: normalizarAlmacenTraspaso(r.almacen)
-    })).filter(r => r.distrito === distrito && r.almacen === origen && r.disponible > 0 && (
-      upper(r.sku).includes(consulta) || upper(r.material).includes(consulta) || upper(r.descripcion).includes(consulta)
-    ))
+    data = (filas || []).filter(r => upper(r.sku).includes(consulta) || upper(r.material).includes(consulta) || upper(r.descripcion).includes(consulta))
+      .map(r => ({ sku:clean(r.sku), material:clean(r.material || r.sku), descripcion:clean(r.descripcion), lote:clean(r.lote), disponible:Number(r.disponible || 0) }))
   }
 
   const agrupados = new Map()
@@ -1092,6 +1083,9 @@ async function buscarSeriesTraspaso(admin, perfil, payload) {
   const sku = clean(payload.sku)
   const lote = clean(payload.lote)
   if (!sku) return { ok:false, error:'Falta SKU.' }
+  // En traspasos no se fuerza tipo_stock='01': IQ09 puede contener
+  // series validas con otro valor o NULL. El distrito, origen, material y
+  // lote se comprueban explicitamente antes de devolverlas.
   let q = admin.from('iq09_equipos').select('serie,material,descripcion,lote,lote_stock,estatus_sap,tipo_stock,almacen,distrito')
     .eq('distrito', validacion.distrito).eq('almacen', validacion.origen).eq('material', sku)
   if (lote) q = q.or(`lote.eq.${lote},lote_stock.eq.${lote}`)
@@ -1111,15 +1105,20 @@ async function buscarSeriesDirectasTraspaso(admin, perfil, payload) {
     .eq('distrito', validacion.distrito).eq('almacen', validacion.origen)
     .in('serie', solicitadas).limit(200)
   if (error) throw new Error(error.message)
-  const encontradas = data || []
+  const encontradas = (data || []).filter(x =>
+    clean(x.serie) && upper(x.distrito) === upper(validacion.distrito) &&
+    normalizarAlmacenTraspaso(x.almacen) === normalizarAlmacenTraspaso(validacion.origen)
+  )
   const porGrupo = new Map()
   const rechazadas = []
   for (const x of encontradas) {
     const lote = clean(x.lote || x.lote_stock)
     if (upper(lote) === 'TPE USADO') { rechazadas.push(clean(x.serie)); continue }
-    const key = `${clean(x.material)}|${upper(lote)}`
-    const g = porGrupo.get(key) || { sku:clean(x.material), descripcion:x.descripcion || '', lote, series:[], cantidad:0 }
-    g.series.push(clean(x.serie)); g.cantidad++
+    const sku = clean(x.material)
+    if (!sku) { rechazadas.push(clean(x.serie)); continue }
+    const key = `${sku}|${upper(lote)}`
+    const g = porGrupo.get(key) || { sku, descripcion:x.descripcion || '', lote, series:[], cantidad:0 }
+    if (!g.series.includes(clean(x.serie))) { g.series.push(clean(x.serie)); g.cantidad++ }
     porGrupo.set(key,g)
   }
   const vistas = new Set(encontradas.map(x=>clean(x.serie)))
@@ -1266,26 +1265,27 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
     const disponible = stocks.reduce((n,x)=>n+Number(x.disponible || 0),0)
     if (disponible < cantidad) return { ok:false, error:`Stock insuficiente para ${sku}. Disponible: ${disponible}; solicitado: ${cantidad}.` }
 
-    if (upper(lote) === 'TPE USADO') {
-      return { ok:false, error:`El lote TPE USADO no está permitido para traspasos (${sku}).` }
+    if (upper(lote) === 'TPE USADO') return { ok:false, error:`El lote TPE USADO no está permitido para traspasos (${sku}).` }
+    if (lote.toUpperCase().startsWith('TPE') && series.length !== cantidad) {
+      return { ok:false, error:`El material ${sku} requiere exactamente ${cantidad} series.` }
     }
-    if (upper(lote).startsWith('TPE')) {
-      if (series.length !== cantidad) return { ok:false, error:`El material ${sku} requiere exactamente ${cantidad} series.` }
+    // Toda serie capturada manualmente o seleccionada se vuelve a validar
+    // en IQ09, sin filtrar por tipo_stock. El distrito/origen/material son obligatorios.
+    if (series.length) {
       const { data: equipos, error: equipoError } = await admin.from('iq09_equipos')
-        .select('serie,material,lote,lote_stock,almacen,distrito')
-        .eq('distrito', validacion.distrito).eq('almacen', validacion.origen).eq('material', sku)
-        .in('serie',series).limit(200)
+        .select('serie,material,lote,lote_stock,almacen,distrito,tipo_stock')
+        .eq('distrito', validacion.distrito).eq('almacen', validacion.origen)
+        .eq('material', sku).in('serie', series).limit(200)
       if (equipoError) throw new Error(equipoError.message)
-      const porSerie = new Map((equipos || []).map(x=>[clean(x.serie),x]))
-      const faltan = series.filter(serie => {
-        const equipo = porSerie.get(serie)
-        if (!equipo) return true
-        const loteIq09 = upper(equipo.lote || equipo.lote_stock)
-        return loteIq09 !== upper(lote) || loteIq09 === 'TPE USADO'
-      })
-      if (faltan.length) return { ok:false, error:`Series no disponibles o con lote distinto en origen: ${faltan.join(', ')}` }
-    } else if (series.length) {
-      return { ok:false, error:`El lote ${lote} no está configurado como material serializado; no se aceptan series manuales.` }
+      const equiposValidos = (equipos || []).filter(x =>
+        upper(x.distrito) === upper(validacion.distrito) &&
+        normalizarAlmacenTraspaso(x.almacen) === normalizarAlmacenTraspaso(validacion.origen) &&
+        clean(x.material) === sku && upper(x.lote || x.lote_stock) === upper(lote) &&
+        upper(x.lote || x.lote_stock) !== 'TPE USADO'
+      )
+      const disponibles = new Set(equiposValidos.map(x=>clean(x.serie)))
+      const faltan = series.filter(x=>!disponibles.has(x))
+      if (faltan.length) return { ok:false, error:`Series no válidas en IQ09 para distrito, origen, material y lote seleccionados: ${faltan.join(', ')}` }
     }
     const desc = clean(m.descripcion || stocks?.[0]?.descripcion_material || stocks?.[0]?.descripcion || stocks?.[0]?.material)
     normalizados.push({ sku, material:sku, descripcion:desc, cantidad, lote:lote || 'NA', series })
@@ -1890,69 +1890,6 @@ async function stockEquiposTelegram(admin,p,payload) {
     hayTPE:false,tieneLoteTPE:false,series_filtros:[],total_series_disponibles:0}
 }
 
-async function consultarSerieTelegram(admin, perfil, payload) {
-  if (!perfil || perfil.activo !== true) return {ok:false,error:'Telegram no está vinculado a un usuario activo.'}
-  if (!tienePermisoEquipo(perfil,'equipos') && !tienePermisoEquipo(perfil,'stock_tecnicos'))
-    return {ok:false,error:'No tienes permiso para consultar SERIES en SAT.'}
-  const serie = clean(payload.serie || payload.consulta)
-  if (!serie || serie.length > 100) return {ok:false,error:'Escribe un número de serie válido.'}
-  const distrito = upper(perfil.distrito)
-  if (!distrito) return {ok:false,error:'Tu usuario no tiene distrito asignado.'}
-  const {data,error} = await admin.from('iq09_equipos')
-    .select('distrito,centro,almacen,serie,material,descripcion,lote,lote_stock,estatus_sap,tipo_stock')
-    .eq('distrito',distrito).eq('serie',serie).limit(20)
-  if (error) throw new Error(error.message)
-  const filas = data || []
-  if (!filas.length) return {ok:true,encontrada:false,total:0,distrito,mensaje:`🔎 SERIE NO ENCONTRADA\n\nSerie: ${serie}\nDistrito consultado: ${distrito}`}
-  const propias = filas.filter(x => upper(x.distrito) === distrito)
-  const esAlcanceDistrito = puedeVerTodos(perfil)
-  const permitidas = esAlcanceDistrito ? [] : await almacenesAutorizados(admin,perfil,false)
-  const permitidasSet = new Set(permitidas.flatMap(variantesAlmacenEquipo))
-  const visibles = esAlcanceDistrito ? propias : propias.filter(x => permitidasSet.has(normalizarAlmacenEquipo(x.almacen)))
-  if (!visibles.length) return {ok:true,encontrada:false,total:0,distrito,mensaje:`🔎 La serie existe en ${distrito}, pero no está en un almacén dentro de tu alcance autorizado.`}
-  const x = visibles[0]
-  const lote = clean(x.lote || x.lote_stock)
-  return {ok:true,encontrada:true,total:visibles.length,serie:x.serie,resultado:x,distrito,
-    mensaje:['🔎 SERIE ENCONTRADA EN IQ09','',`Serie: ${x.serie}`,`SKU / Material: ${clean(x.material) || 'NO REGISTRADO'}`,
-      `Descripción: ${clean(x.descripcion) || 'NO REGISTRADA'}`,`Distrito: ${distrito}`,`Centro: ${clean(x.centro) || 'NO REGISTRADO'}`,
-      `Almacén: ${clean(x.almacen) || 'NO REGISTRADO'}`,`Lote: ${lote || 'SIN LOTE'}`,
-      `Estado SAP: ${clean(x.estatus_sap) || 'NO REGISTRADO'}`].join('\n')}
-}
-
-async function consultarSeriesTelegram(admin, perfil, payload) {
-  if (!perfil || perfil.activo !== true) return {ok:false,error:'Telegram no está vinculado a un usuario activo.'}
-  if (!tienePermisoEquipo(perfil,'equipos') && !tienePermisoEquipo(perfil,'stock_tecnicos'))
-    return {ok:false,error:'No tienes permiso para consultar SERIES en SAT.'}
-  const distrito = upper(perfil.distrito)
-  if (!distrito) return {ok:false,error:'Tu usuario no tiene distrito asignado.'}
-  const consulta = upper(payload.consulta).slice(0,80)
-  const filtro = objetivoSolicitado(perfil,payload.objetivo)
-  if (filtro.error) return {ok:false,error:filtro.error}
-  const permitidos = filtro.todos ? [] : await almacenesAutorizados(admin,perfil,false)
-  if (!filtro.todos && filtro.almacen) {
-    const variantes = variantesAlmacenEquipo(filtro.almacen)
-    if (!permitidos.some(a=>variantes.includes(a))) return {ok:false,error:'No tienes acceso a ese almacén.'}
-  }
-  if (!filtro.todos && !permitidos.length) return {ok:true,total:0,distrito,mensaje:`🔎 SERIES - ${distrito}\n\nNo hay almacenes autorizados en tu alcance.`}
-  const rows = await obtenerFilasPaginas((a,b)=>{
-    let q = admin.from('iq09_equipos')
-      .select('distrito,centro,almacen,serie,material,descripcion,lote,lote_stock,estatus_sap,tipo_stock')
-      .eq('distrito',distrito).order('id',{ascending:true}).range(a,b)
-    if (!filtro.todos) q=q.in('almacen',permitidos.flatMap(variantesAlmacenEquipo))
-    return q
-  },15000)
-  const encontrados = rows.filter(x=>{
-    if (!clean(x.serie)) return false
-    if (!consulta) return true
-    return upper(x.serie).includes(consulta) || upper(x.material).includes(consulta) || upper(x.descripcion).includes(consulta)
-  })
-  const limite = encontrados.slice(0,40)
-  const lineas = [`🔎 SERIES - ${distrito}`,`Alcance: ${filtro.todos?'TODOS LOS ALMACENES AUTORIZADOS':filtro.almacen || perfil.usuario_almacen}`,`Resultados: ${encontrados.length}`,'']
-  for (const x of limite) lineas.push(`• ${clean(x.serie)} | SKU ${clean(x.material)} | ${clean(x.descripcion)} | Alm. ${clean(x.almacen)} | Lote ${clean(x.lote || x.lote_stock) || 'SIN LOTE'}`)
-  if (encontrados.length>limite.length) lineas.push('',`Mostrando ${limite.length} de ${encontrados.length}. Refina la búsqueda para ver menos resultados.`)
-  return {ok:true,distrito,total:encontrados.length,series:limite,mensaje:lineas.join('\n').slice(0,3900)}
-}
-
 async function accionMigrada(admin, payload) {
   const accion = clean(payload.accion || payload.action)
 
@@ -1968,8 +1905,6 @@ async function accionMigrada(admin, payload) {
   if (accion === 'telegram_stock') return stockEquiposTelegram(admin, perfil, payload)
   if (accion === 'telegram_recolecciones_por_entregar') return recoleccionesPendientesTelegram(admin, perfil, payload)
   if (accion === 'telegram_criticos') return equiposCriticosTelegram(admin, perfil, payload)
-  if (accion === 'telegram_serie') return consultarSerieTelegram(admin, perfil, payload)
-  if (accion === 'telegram_series') return consultarSeriesTelegram(admin, perfil, payload)
   if (accion === 'telegram_sap_crear_comando') return crearComandoSAPEnSupabase(admin, perfil, payload)
 
   if (accion === 'telegram_traspaso_nombre_almacen') return buscarAlmacenTraspaso(admin, perfil, payload)
