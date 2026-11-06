@@ -274,6 +274,7 @@ export default function InventariosPage() {
     : esEquipos
       ? [
           ['almacen', 'Almacén'],
+          ['tecnico', 'Técnico'],
           ['material', 'Material'],
           ['descripcion', 'Descripción'],
           ['serie', 'Serie'],
