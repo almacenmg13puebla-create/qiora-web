@@ -17,7 +17,6 @@ const sections = [
   ['recolecciones','Recolecciones recibidas'],
   ['recoleccionesEntregadasTP','Recolecciones entregadas a Totalplay'],
   ['recoleccionesPendientes','Recolecciones pendientes'],
-  ['faltantes','Piezas faltantes por entregar'],
   ['auditorias','Auditorías realizadas'],
   ['valor','Valor en cajuela (solo técnicos activos)'],
   ['valorCentro','Valor por centro'],
@@ -97,7 +96,7 @@ export default function DashboardPage() {
   const k=data?.kpis||{}
   const tables=data?.tablas||{}
   const list=useMemo(()=>{
-    const rows=section==='valorTotal'?[{concepto:'Valor en cajuela',total:k.valorCajuela},{concepto:'Valor por centro',total:k.valorCentro},{concepto:'VALOR TOTAL',total:k.valorTotal}]:section==='faltantes'?(data?.porDistrito||[]).map(g=>({distrito:g.distrito,piezas:g.faltantesPiezas,costo:'Sin conciliar'})):tables[section]||[]
+    const rows=section==='valorTotal'?[{concepto:'Valor en cajuela',total:k.valorCajuela},{concepto:'Valor por centro',total:k.valorCentro},{concepto:'VALOR TOTAL',total:k.valorTotal}]:tables[section]||[]
     const q=search.trim().toLocaleLowerCase('es-MX')
     return rows.filter(r=>!q||Object.values(r).some(v=>String(v??'').toLocaleLowerCase('es-MX').includes(q)))
   },[section,tables,k,search])
@@ -116,13 +115,11 @@ export default function DashboardPage() {
       criticos:[['Almacén','almacen'],['Técnico','tecnico'],['Piezas','total'],['Días máx.','maxDias']],
       recoleccionesPendientes:[['Almacén','almacen'],['Técnico','tecnico'],['Piezas pendientes','total'],['Días máx.','maxDias']],
 
-      faltantes:[['Distrito','distrito'],['Piezas','piezas'],['Costo','costo']],
     }
     return maps[section]||[]
   },[section])
 
   function detailFor(row,index){
-    if(section==='faltantes'){setDetail({title:'Faltantes estimados por distrito',rows:[row],columns:[['Distrito','distrito'],['Piezas','piezas'],['Costo','costo']]});return}
     if(section==='valorTotal'){setDetail({title:'Composición del valor total',rows:[{concepto:'Valor en cajuela',total:k.valorCajuela},{concepto:'Valor por centro',total:k.valorCentro},{concepto:'Total',total:k.valorTotal}],columns:[['Concepto','concepto'],['Valor','total']]});return}
     const key=row.key||row.sku||String(index)
     const rows=(data?.detalles?.[section]||{})[key]||[]
