@@ -1309,23 +1309,36 @@ async function confirmarTraspasoBot(admin, perfil, payload) {
 
   const folio = registro.folio_control
   const mensaje = mensajeTraspasoNuevo(folio, validacion, normalizados, capturista)
-  const tecnicosNotificacion = await tecnicosTraspaso(admin, [validacion.origen, validacion.destino])
-  const perfilOrigen = tecnicosNotificacion.find(x=>normalizarAlmacenTraspaso(x.usuario_almacen)===validacion.origen)
-  const perfilDestino = tecnicosNotificacion.find(x=>normalizarAlmacenTraspaso(x.usuario_almacen)===validacion.destino)
-  const perfilCapturista = {
+  // Destinatarios privados: exclusivamente origen y destino del MISMO distrito
+  // validado para este movimiento. Nunca buscar solo por numero de almacen,
+  // porque ese codigo puede repetirse en otros distritos.
+  const distritoMovimiento = upper(validacion.distrito)
+  const tecnicosNotificacion = await tecnicosTraspaso(
+    admin, [validacion.origen, validacion.destino], distritoMovimiento
+  )
+  const perfilOrigen = tecnicosNotificacion.find(x =>
+    upper(x.distrito) === distritoMovimiento &&
+    normalizarAlmacenTraspaso(x.usuario_almacen) === validacion.origen
+  )
+  const perfilDestino = tecnicosNotificacion.find(x =>
+    upper(x.distrito) === distritoMovimiento &&
+    normalizarAlmacenTraspaso(x.usuario_almacen) === validacion.destino
+  )
+  const perfilCapturista = upper(perfil.distrito) === distritoMovimiento ? {
     usuario_almacen: perfil.usuario_almacen,
     nombre: perfil.nombre,
     distrito: perfil.distrito,
     telegram_chat_id: clean(perfil.telegram_chat_id || payload.telegram_chat_id)
-  }
+  } : null
   const chatsPrivados = [perfilOrigen, perfilDestino, perfilCapturista]
     .filter(x=>clean(x?.telegram_chat_id))
   const privados = [...new Map(chatsPrivados.map(x=>[clean(x.telegram_chat_id),x])).values()]
     .map(x=>({ telegram_chat_id:clean(x.telegram_chat_id), usuario:x.usuario_almacen, mensaje }))
 
-  const distritos = [...new Set([upper(perfilOrigen?.distrito), upper(perfilDestino?.distrito), upper(validacion.distrito)].filter(Boolean))]
+  // Un solo grupo: el configurado para el distrito validado del movimiento.
   const { data: configs, error: cfgError } = await admin.from('qiora_distritos_telegram')
-    .select('centro,chat_traspasos,token_cifrado').in('centro',distritos)
+    .select('centro,chat_traspasos,token_cifrado')
+    .eq('centro', distritoMovimiento)
   if (cfgError) throw new Error(cfgError.message)
   const grupos = [...new Map((configs || [])
     .filter(x=>clean(x.chat_traspasos) && clean(x.token_cifrado))
@@ -1397,16 +1410,14 @@ async function prepararAvisosFinalesTraspaso(admin) {
     if (error) throw new Error(error.message)
     usuarios=data || []
   }
+  // La llave incluye distrito + almacen; los codigos de almacen no son globales.
   const usuariosPorCodigo = new Map()
   for (const u of usuarios) {
-    const k=normalizarAlmacenTraspaso(u.usuario_almacen)
+    const k=`${upper(u.distrito)}|${normalizarAlmacenTraspaso(u.usuario_almacen)}`
     if (!usuariosPorCodigo.has(k)) usuariosPorCodigo.set(k,u)
   }
 
-  const distritos = [...new Set([
-    ...movimientos.map(m=>upper(m.distrito)),
-    ...usuarios.map(u=>upper(u.distrito))
-  ].filter(Boolean))]
+  const distritos = [...new Set(movimientos.map(m=>upper(m.distrito)).filter(Boolean))]
   const gruposPorDistrito = new Map()
   if (distritos.length) {
     const { data, error } = await admin.from('qiora_distritos_telegram')
@@ -1433,9 +1444,10 @@ async function prepararAvisosFinalesTraspaso(admin) {
     if (!foliosConAvisoInicial.has(clean(mov.folio_control))) continue
     const estado=upper(mov.estado)
     const fase=estado === 'REALIZADO' ? 'REALIZADO' : 'NO_REALIZADO'
-    const origen=usuariosPorCodigo.get(normalizarAlmacenTraspaso(mov.origen))
-    const destino=usuariosPorCodigo.get(normalizarAlmacenTraspaso(mov.destino))
-    const capturista=usuariosPorCodigo.get(normalizarAlmacenTraspaso(codigoSolicitanteTraspaso(mov.solicitado_por)))
+    const distritoMov=upper(mov.distrito)
+    const origen=usuariosPorCodigo.get(`${distritoMov}|${normalizarAlmacenTraspaso(mov.origen)}`)
+    const destino=usuariosPorCodigo.get(`${distritoMov}|${normalizarAlmacenTraspaso(mov.destino)}`)
+    const capturista=usuariosPorCodigo.get(`${distritoMov}|${normalizarAlmacenTraspaso(codigoSolicitanteTraspaso(mov.solicitado_por))}`)
     const privados=[origen,destino,capturista]
       .map(x=>clean(x?.telegram_chat_id)).filter(Boolean)
     for (const chat of [...new Set(privados)]) {
@@ -1446,8 +1458,9 @@ async function prepararAvisosFinalesTraspaso(admin) {
         existe.add(pk)
       }
     }
-    const ds=[upper(origen?.distrito),upper(destino?.distrito),upper(mov.distrito)].filter(Boolean)
-    const grupos=[...new Map([...new Set(ds)].map(d=>[gruposPorDistrito.get(d),d]).filter(([chat])=>clean(chat))).entries()]
+    // La notificacion de grupo solo corresponde al distrito dueño del movimiento.
+    const chatGrupo=gruposPorDistrito.get(distritoMov)
+    const grupos=chatGrupo ? [[chatGrupo,distritoMov]] : []
     for (const [chat,distrito] of grupos) {
       const key=`FINAL:${fase}:GRUPO_${distrito}`
       const pk=`${clean(mov.folio_control)}|${key}`
@@ -1516,13 +1529,28 @@ async function listarAvisosTraspasoPendientes(admin) {
     if (!mov) continue
     const info=destinoRealAvisoTraspaso(a.destino)
     const destino=clean(info.destino)
+    const distritoMovimiento=upper(mov.distrito)
     let chat=''
     if (destino.startsWith('GRUPO_')) {
       const distrito=destino.slice(6).toUpperCase()
+      // Bloqueo defensivo: aunque exista una fila vieja en cola, no enviar
+      // un movimiento a un grupo que no sea exactamente su distrito.
+      if (!distritoMovimiento || distrito !== distritoMovimiento) continue
       const cfgGrupo = gruposPorDistrito.get(distrito) || {}
       chat=clean(cfgGrupo.chat)
     } else if (destino.startsWith('PRIVADO:')) {
       chat=destino.slice(8)
+      // Validar que el chat pertenezca a origen/destino/capturista activo
+      // del mismo distrito antes de entregar avisos pendientes antiguos.
+      const codigosPermitidos=[mov.origen,mov.destino,codigoSolicitanteTraspaso(mov.solicitado_por)]
+        .map(normalizarAlmacenTraspaso).filter(Boolean)
+      const {data:destinatariosValidos,error:destError}=await admin.from('almacen_usuarios')
+        .select('telegram_chat_id,usuario_almacen,distrito')
+        .eq('distrito',distritoMovimiento).eq('activo',true)
+        .in('usuario_almacen',codigosPermitidos.length?codigosPermitidos:['__NO_MATCH__'])
+      if (destError) throw new Error(destError.message)
+      const chatsValidos=new Set((destinatariosValidos||[]).map(x=>clean(x.telegram_chat_id)).filter(Boolean))
+      if (!chatsValidos.has(chat)) continue
     }
     if (!chat) continue
     const validacion={
