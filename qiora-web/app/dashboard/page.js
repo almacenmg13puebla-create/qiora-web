@@ -106,7 +106,7 @@ export default function DashboardPage() {
 
       traspasos:[['Almacén','almacen'],['Técnico','tecnico'],['Pend.','pendientes'],['Realizados','realizados'],['Error','error'],['Total','total'],['Piezas','piezas']],
       recolecciones:[['Almacén','almacen'],['Técnico','tecnico'],['Piezas','total']],
-      recoleccionesEntregadasTP:[['Distrito','distrito'],['Pedido / almacén','almacen'],['Salida / técnico','tecnico'],['Piezas','total']],
+      recoleccionesEntregadasTP:[['Distrito','distrito'],['Pedido TP','almacen'],['Salida SAP','tecnico'],['Piezas','total'],['Costo identificado','costo'],['Piezas sin costo','costoSinIdentificar']],
       auditorias:[['Distrito','distrito'],['Almacén','almacen'],['Técnico','tecnico'],['Folio','folio'],['Fecha','fecha'],['Tipos','tipos'],['Registros','total']],
 
       valor:[['Almacén','almacen'],['Técnico','tecnico'],['Piezas','piezas'],['Valor','total']],
