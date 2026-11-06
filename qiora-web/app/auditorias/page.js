@@ -805,39 +805,34 @@ export default function AuditoriasPage() {
         // La lógica original de QIORA clasifica por SERIE con esta prioridad:
         // VALIDACION BRM -> ENTREGADO -> ENTRADA PENDIENTE -> FALTANTE.
         const filasBRM = await consultarSeriesPorBloques(
-          'validacion_brm',
+          'validaciones_brm',
           seriesSistema,
-          'serie'
+          'serie,distrito,almacen,estado'
         )
 
         const filasRecolecciones = await consultarSeriesPorBloques(
           'recolecciones_equipos',
           seriesSistema,
-          'serie,estado'
+          'serie,distrito,almacen,estado'
         )
+
+        const coincideContexto = (fila) =>
+          texto(fila.distrito).toUpperCase() === distritoAuditoria &&
+          normalizarAlmacen(fila.almacen) === almacen4
 
         const seriesBRM = new Set(
-          filasBRM.map((x) => normalizarSerie(x.serie))
+          filasBRM.filter(coincideContexto).map((x) => normalizarSerie(x.serie))
         )
 
-        const seriesEntregadas = new Set(
-          filasRecolecciones
-            .filter((x) => {
-              const e = normalizarSerie(x.estado)
-              return (
-                e.includes('ENTREG') ||
-                [
-                  'RECIBIDO',
-                  'RECIBIDA',
-                  'FINALIZADO',
-                  'FINALIZADA',
-                  'CERRADO',
-                  'CERRADA',
-                ].includes(e)
-              )
-            })
-            .map((x) => normalizarSerie(x.serie))
-        )
+        const estadoRecoleccionPorSerie = new Map()
+        filasRecolecciones.filter(coincideContexto).forEach((x) => {
+          const estadoFila = normalizarSerie(x.estado)
+          const clave = normalizarSerie(x.serie)
+          if (estadoFila === 'RECOLECTADA') estadoRecoleccionPorSerie.set(clave, 'RECOLECTADA')
+          else if (estadoFila === 'ENTREGADA' && !estadoRecoleccionPorSerie.has(clave)) {
+            estadoRecoleccionPorSerie.set(clave, 'ENTREGADO COMO RECOLECCION')
+          }
+        })
 
         nuevosEquipos = equiposSistema.map((x) => {
           const serieNormal = normalizarSerie(x.serie)
@@ -846,10 +841,10 @@ export default function AuditoriasPage() {
 
           if (seriesBRM.has(serieNormal)) {
             estado = 'VALIDACION BRM'
-          } else if (seriesEntregadas.has(serieNormal)) {
-            estado = 'ENTREGADO'
+          } else if (estadoRecoleccionPorSerie.has(serieNormal)) {
+            estado = estadoRecoleccionPorSerie.get(serieNormal)
           } else if (tipoStock === '04' || tipoStock === '4') {
-            estado = 'ENTRADA PENDIENTE'
+            estado = 'PENDIENTE POR RECIBIR'
           }
 
           return {
@@ -1463,72 +1458,80 @@ export default function AuditoriasPage() {
     setHistFaltanteGlobal(false)
   }
 
-  function registrarSerie(e) {
+  async function registrarSerie(e) {
     e.preventDefault()
     limpiarMensajes()
 
-    const s = texto(serie).toUpperCase()
-
+    const s = normalizarSerie(serie)
     if (!s) return
-
-    const existe = equipos.some(
-      (x) => texto(x.serie).toUpperCase() === s
-    )
-
-    if (existe) {
-      setEquipos((actual) =>
-        actual.map((x) =>
-          texto(x.serie).toUpperCase() === s
-            ? {
-                ...x,
-                escaneado: true,
-                estado: [
-                  'VALIDACION BRM',
-                  'ENTRADA PENDIENTE',
-                  'ENTREGADO',
-                ].includes(x.estado)
-                  ? x.estado
-                  : 'COINCIDE',
-              }
-            : x
-        )
-      )
-
-      const equipo = equipos.find(
-        (x) => normalizarSerie(x.serie) === normalizarSerie(s)
-      )
-      const estadoResultado = [
-        'VALIDACION BRM',
-        'ENTRADA PENDIENTE',
-        'ENTREGADO',
-      ].includes(equipo?.estado)
-        ? equipo.estado
-        : 'COINCIDE'
-
-      setMensaje(`Serie ${s}: ${estadoResultado}.`)
-    } else {
-      setEquipos((actual) => [
-        ...actual,
-        {
-          serie: s,
-          material: '-',
-          descripcion: '-',
-          lote: '-',
-          estatusSAP: '',
-          tipoStock: '',
-          escaneado: true,
-          estado: 'NO EXISTE EN SISTEMA',
-          estadoOriginal: 'NO EXISTE EN SISTEMA',
-          existeSistema: false,
-        },
-      ])
-
-      setMensaje(
-        `Serie ${s}: NO EXISTE EN SISTEMA.`
-      )
+    if (!tecnico || !perfil?.distrito || !almacen) {
+      setError('Primero carga la auditoría para identificar distrito y almacén.')
+      return
     }
 
-    setSerie('')
+    const existente = equipos.find((x) => normalizarSerie(x.serie) === s)
+    const distritoAuditoria = texto(perfil.distrito).toUpperCase()
+    const almacenAuditoria = normalizarAlmacen(almacen)
+    setCargando(true)
+
+    try {
+      // Cada escaneo consulta las tres fuentes, incluso si la serie no estaba
+      // inicialmente en la lista IQ09 cargada para este almacén.
+      const [brmResp, recResp, iq09Resp] = await Promise.all([
+        supabase.from('validaciones_brm')
+          .select('serie,distrito,almacen,sku,descripcion,lote,estado')
+          .ilike('serie', s).eq('distrito', distritoAuditoria)
+          .eq('almacen', almacenAuditoria).limit(1),
+        supabase.from('recolecciones_equipos')
+          .select('serie,distrito,almacen,material,descripcion,lote,estado')
+          .ilike('serie', s).eq('distrito', distritoAuditoria)
+          .eq('almacen', almacenAuditoria).order('actualizado_en', {ascending:false}).limit(10),
+        supabase.from('iq09_equipos')
+          .select('serie,distrito,almacen,material,descripcion,lote,estatus_sap,denom_status,tipo_stock')
+          .ilike('serie', s).eq('distrito', distritoAuditoria)
+          .eq('almacen', almacenAuditoria).limit(1),
+      ])
+      const err = brmResp.error || recResp.error || iq09Resp.error
+      if (err) throw err
+
+      const brm = brmResp.data?.[0]
+      const recolecciones = recResp.data || []
+      const iq09 = iq09Resp.data?.[0]
+      const recRecolectada = recolecciones.find(x => normalizarSerie(x.estado) === 'RECOLECTADA')
+      const recEntregada = recolecciones.find(x => normalizarSerie(x.estado) === 'ENTREGADA')
+      let estado = 'NO EXISTE EN SISTEMA'
+      if (brm) estado = 'VALIDACION BRM'
+      else if (recRecolectada) estado = 'RECOLECTADA'
+      else if (recEntregada) estado = 'ENTREGADO COMO RECOLECCION'
+      else if (iq09 && ['04','4'].includes(normalizarSerie(iq09.tipo_stock))) estado = 'PENDIENTE POR RECIBIR'
+      else if (iq09) estado = 'COINCIDE'
+
+      const fuente = brm || recRecolectada || recEntregada || iq09 || existente || {}
+      const fila = {
+        ...(existente || {}),
+        serie: s,
+        material: texto(fuente.material || fuente.sku || existente?.material) || '-',
+        descripcion: texto(fuente.descripcion || existente?.descripcion) || '-',
+        lote: texto(fuente.lote || existente?.lote) || '-',
+        estatusSAP: texto(iq09?.estatus_sap || iq09?.denom_status || existente?.estatusSAP),
+        tipoStock: texto(iq09?.tipo_stock || existente?.tipoStock),
+        escaneado: true,
+        estado,
+        estadoOriginal: estado,
+        existeSistema: Boolean(brm || recRecolectada || recEntregada || iq09),
+      }
+      setEquipos(actual => {
+        const idx = actual.findIndex(x => normalizarSerie(x.serie) === s)
+        if (idx < 0) return [...actual, fila]
+        return actual.map((x,i) => i === idx ? fila : x)
+      })
+      setMensaje(`Serie ${s}: ${estado}.`)
+      setSerie('')
+    } catch (err) {
+      setError(err?.message || 'No fue posible validar la serie en Supabase.')
+    } finally {
+      setCargando(false)
+    }
   }
 
   function eliminarEscaneo(serieEliminar) {
@@ -1589,7 +1592,7 @@ export default function AuditoriasPage() {
     const escaneados = equipos.filter(x => x.escaneado === true).length
     const matHechos = materiales.filter(x => x.capturado === true).length
     const herHechos = herramientas.filter(x => x.capturado === true).length
-    const eqHechos = equipos.filter(x => x.escaneado === true || ['ENTREGADO','ENTRADA PENDIENTE','VALIDACION BRM'].includes(x.estado)).length
+    const eqHechos = equipos.filter(x => x.escaneado === true || ['ENTREGADO','ENTREGADO COMO RECOLECCION','RECOLECTADA','PENDIENTE POR RECIBIR','ENTRADA PENDIENTE','VALIDACION BRM'].includes(x.estado)).length
     const faltantes = materiales.filter(x => x.capturado && numero(x.fisico)<numero(x.sistema)).length
       + herramientas.filter(x => x.capturado && numero(x.fisico)<numero(x.sistema)).length
       + equipos.filter(x => x.estado === 'FALTANTE').length
@@ -1599,8 +1602,8 @@ export default function AuditoriasPage() {
     const coinciden = materiales.filter(x => x.capturado && numero(x.fisico)===numero(x.sistema)).length
       + herramientas.filter(x => x.capturado && numero(x.fisico)===numero(x.sistema)).length
       + equipos.filter(x => x.estado === 'COINCIDE').length
-    const entregados = equipos.filter(x=>x.estado === 'ENTREGADO').length
-    const pendientes = equipos.filter(x=>x.estado === 'ENTRADA PENDIENTE').length
+    const entregados = equipos.filter(x=>['ENTREGADO','ENTREGADO COMO RECOLECCION'].includes(x.estado)).length
+    const pendientes = equipos.filter(x=>['ENTRADA PENDIENTE','PENDIENTE POR RECIBIR'].includes(x.estado)).length
     const total = totalMat + totalHer + equipos.length
     const hechos = matHechos + herHechos + eqHechos
     return {totalMat,totalHer,eqSistema:eqSistema.length,escaneados,matHechos,herHechos,eqHechos,
@@ -1721,7 +1724,7 @@ export default function AuditoriasPage() {
                     <td style={styles.td}>{grupo==='equipos' ? fila.lote : `${fila.sistema} · ${fila.lote || ''}`}</td>
                     <td style={styles.td}>{grupo==='equipos' ? (
                       <select style={styles.input} value={fila.estado || 'FALTANTE'} onChange={e=>cambiarFilaEdicion(grupo,i,'estado',e.target.value)}>
-                        {['FALTANTE','COINCIDE','ENTREGADO','VALIDACION BRM','ENTRADA PENDIENTE','NO EXISTE EN SISTEMA'].map(v=><option key={v} value={v}>{v}</option>)}
+                        {['FALTANTE','COINCIDE','ENTREGADO','ENTREGADO COMO RECOLECCION','RECOLECTADA','VALIDACION BRM','PENDIENTE POR RECIBIR','ENTRADA PENDIENTE','NO EXISTE EN SISTEMA'].map(v=><option key={v} value={v}>{v}</option>)}
                       </select>
                     ) : <input type="number" min="0" step="1" style={styles.inputTabla} value={fila.fisico} onChange={e=>cambiarFilaEdicion(grupo,i,'fisico',e.target.value)} />}</td>
                   </tr>)}</tbody>
