@@ -3,162 +3,220 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
+import html2canvas from 'html2canvas'
 import { supabase } from '../../lib/supabase'
 
+const verde = '#087b5b'
 const fmt = n => Number(n || 0).toLocaleString('es-MX')
 const mxn = n => Number(n || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })
-const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
-const monthStart = () => { const d = new Date(); d.setDate(1); return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d) }
-const tabs = [['resumen','Resumen','▦'],['recolecciones','Recolecciones','▣'],['auditorias','Auditorías','▤'],['equipos','Equipos','▱'],['bajas','Bajas','▥'],['cobros','Cobros','◉'],['reportes','Reportes','▥']]
+const safe = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+const today = () => new Intl.DateTimeFormat('en-CA',{timeZone:'America/Mexico_City',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
+const monthAgo = () => { const d=new Date(); d.setDate(1); return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Mexico_City',year:'numeric',month:'2-digit',day:'2-digit'}).format(d) }
+
+const sections = [
+  ['recolecciones','Recolecciones recibidas'],
+  ['recoleccionesEntregadasTP','Recolecciones entregadas a Totalplay'],
+  ['recoleccionesPendientes','Recolecciones pendientes'],
+  ['faltantes','Piezas faltantes por entregar'],
+  ['auditorias','Auditorías realizadas'],
+  ['valor','Valor en cajuela (solo técnicos activos)'],
+  ['valorCentro','Valor por centro'],
+  ['valorTotal','Valor total'],
+  ['traspasos','Traspasos'],
+  ['criticos','Críticos +30 días'],
+]
 
 export default function DashboardPage() {
   const router = useRouter()
-  const [perfil, setPerfil] = useState(null)
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [desde, setDesde] = useState(monthStart())
-  const [hasta, setHasta] = useState(today())
-  const [distrito, setDistrito] = useState('')
-  const [tab, setTab] = useState('resumen')
-  const [search, setSearch] = useState('')
+  const [perfil,setPerfil] = useState(null)
+  const [loading,setLoading] = useState(true)
+  const [busy,setBusy] = useState(false)
+  const [error,setError] = useState('')
+  const [data,setData] = useState(null)
+  const [desde,setDesde] = useState(monthAgo())
+  const [hasta,setHasta] = useState(today())
+  const [section,setSection] = useState('recolecciones')
+  const [activeTab,setActiveTab] = useState('resumen')
+  const [detail,setDetail] = useState(null)
+  const [search,setSearch] = useState('')
+  const [periodoReco,setPeriodoReco] = useState('dia')
 
-  useEffect(() => {
-    let live = true
-    ;(async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) { router.replace('/'); return }
-        const { data: p, error: e } = await supabase.rpc('qiora_mi_perfil')
-        if (e) throw e
-        const profile = Array.isArray(p) ? p[0] : p
-        if (!profile?.activo) throw new Error('Perfil inactivo o no disponible.')
-        if (String(profile.puesto || '').toUpperCase() !== 'ADMIN_PADRE' && profile.dashboard !== true) throw new Error('Tu perfil no tiene permiso para consultar el Dashboard.')
-        if (live) setPerfil(profile)
-      } catch (e) { if (live) setError(e.message || 'No fue posible validar el acceso.') }
-      finally { if (live) setLoading(false) }
-    })()
-    return () => { live = false }
-  }, [router])
-
-  const cargar = useCallback(async () => {
-    setBusy(true); setError('')
+  useEffect(()=>{let live=true;(async()=>{
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session?.access_token) throw new Error('La sesión venció. Inicia sesión nuevamente.')
-      const qs = new URLSearchParams({ desde, hasta })
-      if (distrito) qs.set('distrito', distrito)
-      const res = await fetch(`/api/dashboard?${qs}`, { headers: { Authorization: `Bearer ${session.access_token}` }, cache: 'no-store' })
-      const json = await res.json().catch(() => ({}))
-      if (!res.ok || !json.ok) throw new Error(json.error || 'No se pudo cargar el Dashboard.')
+      const {data:{user}}=await supabase.auth.getUser()
+      if(!user){router.replace('/');return}
+      const {data:p,error:e}=await supabase.rpc('qiora_mi_perfil')
+      if(e)throw e
+      const profile=Array.isArray(p)?p[0]:p
+      if(!profile?.activo)throw new Error('Perfil inactivo o no disponible.')
+      if(String(profile.puesto||'').toUpperCase()!=='ADMIN_PADRE' && profile.dashboard!==true)throw new Error('Tu perfil no tiene permiso para consultar el Dashboard.')
+      if(live)setPerfil(profile)
+    } catch(e) { if(live)setError(e.message||'No fue posible validar el acceso.') }
+    finally { if(live)setLoading(false) }
+  })();return()=>{live=false}},[router])
+
+  const cargar = useCallback(async()=>{
+    setBusy(true);setError('')
+    try {
+      const {data:{session}}=await supabase.auth.getSession()
+      if(!session?.access_token)throw new Error('La sesión venció. Inicia sesión nuevamente.')
+      const qs=new URLSearchParams({desde,hasta})
+      const res=await fetch(`/api/dashboard?${qs}`,{headers:{Authorization:`Bearer ${session.access_token}`},cache:'no-store'})
+      const json=await res.json().catch(()=>({}))
+      if(!res.ok||!json.ok)throw new Error(json.error||'No se pudo cargar el dashboard.')
       setData(json)
-      if (!distrito && json.distrito) setDistrito(json.distrito)
-    } catch (e) { setError(e.message || 'Error al consultar el Dashboard.') }
-    finally { setBusy(false) }
-  }, [desde, hasta, distrito])
+    } catch(e) {setError(e.message||'Error al consultar el dashboard.')} finally {setBusy(false)}
+  },[desde,hasta])
 
-  useEffect(() => { if (perfil) cargar() }, [perfil, cargar])
+  useEffect(()=>{if(perfil)cargar()},[perfil,cargar])
 
-  const k = data?.kpis || {}
-  const tables = data?.tablas || {}
-  const recoReport = data?.reporteRecolecciones || {}
-  const isParent = String(perfil?.puesto || '').toUpperCase() === 'ADMIN_PADRE'
+  const agruparRecolecciones = useCallback((eventos=[]) => {
+    const grupos = new Map()
+    for (const r of eventos) {
+      const clave = periodoReco==='anio' ? r.fecha.slice(0,4) : periodoReco==='mes' ? r.fecha.slice(0,7) : r.fecha
+      const distrito = r.distrito || ''
+      const key = `${clave}|${distrito}`
+      const x = grupos.get(key) || { periodo: clave, distrito, cantidad: 0, costo: 0, sinCosto: 0 }
+      x.cantidad += Number(r.cantidad || 0)
+      if (r.costoConocido) x.costo += Number(r.costo || 0)
+      else x.sinCosto += Number(r.cantidad || 0)
+      grupos.set(key, x)
+    }
+    return [...grupos.values()].sort((a,b)=>b.periodo.localeCompare(a.periodo) || a.distrito.localeCompare(b.distrito))
+  }, [periodoReco])
+  const exportarRecolecciones = (tipo) => {
+    const eventos=data?.reporteRecolecciones?.[tipo]?.registros||[]
+    const resumen=agruparRecolecciones(eventos)
+    if(!resumen.length){setError('No hay registros de recolecciones para exportar.');return}
+    const filas=resumen.map(r=>({PERIODO:r.periodo,DISTRITO:r.distrito,PIEZAS:r.cantidad,
+      'COSTO CONOCIDO MXN':Math.round(r.costo*100)/100,'PIEZAS SIN COSTO':r.sinCosto}))
+    const libro=XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(libro,XLSX.utils.json_to_sheet(filas),'Resumen')
+    XLSX.writeFile(libro,`QIORA_RECOLECCIONES_${tipo}_${periodoReco}.xlsx`)
+  }
+  const k=data?.kpis||{}
+  const tables=data?.tablas||{}
+  const list=useMemo(()=>{
+    const rows=section==='valorTotal'?[{concepto:'Valor en cajuela',total:k.valorCajuela},{concepto:'Valor por centro',total:k.valorCentro},{concepto:'VALOR TOTAL',total:k.valorTotal}]:section==='faltantes'?(data?.porDistrito||[]).map(g=>({distrito:g.distrito,piezas:g.faltantesPiezas,costo:'Sin conciliar'})):tables[section]||[]
+    const q=search.trim().toLocaleLowerCase('es-MX')
+    return rows.filter(r=>!q||Object.values(r).some(v=>String(v??'').toLocaleLowerCase('es-MX').includes(q)))
+  },[section,tables,k,search])
 
-  const summaryCards = [
-    ['Recolecciones recibidas', fmt(k.recibidasPiezas), 'Piezas registradas', 'box'],
-    ['Entregadas a Totalplay', fmt(k.entregadasPiezas), 'Concentrado RECUS TP', 'truck'],
-    ['Pendientes por recibir', fmt(k.pendientesPiezas), 'IQ09 · TPE USADO · técnicos activos', 'clock'],
-    ['Auditorías realizadas', fmt(k.auditoriasRealizadas), 'Folios auditados', 'audit'],
-    ['Valor en cajuela', mxn(k.valorCajuela), 'Stock de técnicos activos', 'coins'],
-    ['Valor por centro', mxn(k.valorCentro), 'Stock de almacén', 'warehouse'],
-    ['Valor total', mxn(k.valorTotal), 'Cajuela + centro', 'total'],
-    ['Equipos críticos', fmt(k.criticos), 'Más de 30 días · excluye TPE USADO', 'alert'],
-  ]
+  const cols = useMemo(()=>{
+    const maps={
 
-  const received = recoReport.recibidas || { registros: [], cantidad: 0, costoConocido: 0, sinCosto: 0 }
-  const sent = recoReport.enviadasTP || { registros: [], cantidad: 0, costoConocido: 0, sinCosto: 0 }
-  const detailRows = tab === 'recolecciones' ? (tables.recolecciones || []) : tab === 'auditorias' ? (tables.auditorias || []) : tab === 'equipos' ? (tables.criticos || []) : tab === 'reportes' ? (data?.porDistrito || []) : []
-  const filteredRows = useMemo(() => {
-    const q = search.trim().toLocaleLowerCase('es-MX')
-    if (!q) return detailRows
-    return detailRows.filter(r => Object.values(r).some(v => String(v ?? '').toLocaleLowerCase('es-MX').includes(q)))
-  }, [detailRows, search])
+      traspasos:[['Almacén','almacen'],['Técnico','tecnico'],['Pend.','pendientes'],['Realizados','realizados'],['Error','error'],['Total','total'],['Piezas','piezas']],
+      recolecciones:[['Almacén','almacen'],['Técnico','tecnico'],['Piezas','total']],
+      recoleccionesEntregadasTP:[['Distrito','distrito'],['Pedido / almacén','almacen'],['Salida / técnico','tecnico'],['Piezas','total']],
+      auditorias:[['Distrito','distrito'],['Almacén','almacen'],['Técnico','tecnico'],['Folio','folio'],['Fecha','fecha'],['Tipos','tipos'],['Registros','total']],
 
-  const exportRows = (rows, name) => {
-    if (!rows?.length) { setError('No hay registros para exportar.'); return }
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'QIORA')
-    XLSX.writeFile(wb, `QIORA_${name}_${data?.distrito || distrito}_${desde}_${hasta}.xlsx`)
+      valor:[['Almacén','almacen'],['Técnico','tecnico'],['Piezas','piezas'],['Valor','total']],
+      valorCentro:[['Distrito','distrito'],['Centro','almacen'],['Concepto','tecnico'],['Piezas','piezas'],['Valor','total']],
+      valorTotal:[['Concepto','concepto'],['Valor','total']],
+      criticos:[['Almacén','almacen'],['Técnico','tecnico'],['Piezas','total'],['Días máx.','maxDias']],
+      recoleccionesPendientes:[['Almacén','almacen'],['Técnico','tecnico'],['Piezas pendientes','total'],['Días máx.','maxDias']],
+
+      faltantes:[['Distrito','distrito'],['Piezas','piezas'],['Costo','costo']],
+    }
+    return maps[section]||[]
+  },[section])
+
+  function detailFor(row,index){
+    if(section==='faltantes'){setDetail({title:'Faltantes estimados por distrito',rows:[row],columns:[['Distrito','distrito'],['Piezas','piezas'],['Costo','costo']]});return}
+    if(section==='valorTotal'){setDetail({title:'Composición del valor total',rows:[{concepto:'Valor en cajuela',total:k.valorCajuela},{concepto:'Valor por centro',total:k.valorCentro},{concepto:'Total',total:k.valorTotal}],columns:[['Concepto','concepto'],['Valor','total']]});return}
+    const key=row.key||row.sku||String(index)
+    const rows=(data?.detalles?.[section]||{})[key]||[]
+    setDetail({title:`Detalle · ${row.tecnico||row.material||row.almacen||key}`,rows,columns:rows.length?Object.keys(rows[0]).map(k=>[k.replace(/_/g,' '),k]):[]})
   }
 
-  const table = (rows, columns, emptyText = 'No hay registros para este periodo.') => (
-    <div className="q-table-scroll"><table className="q-table"><thead><tr>{columns.map(c => <th key={c[0]}>{c[0]}</th>)}</tr></thead><tbody>
-      {rows?.length ? rows.map((r, i) => <tr key={r.key || r.folio || i}>{columns.map(([label, key]) => <td key={key}>{key.toLowerCase().includes('costo') || key.toLowerCase().includes('valor') ? mxn(r[key]) : typeof r[key] === 'number' ? fmt(r[key]) : String(r[key] ?? '—')}</td>)}</tr>) : <tr><td className="q-empty" colSpan={columns.length}>{emptyText}</td></tr>}
-    </tbody></table></div>
-  )
+  async function copiarHtml(id){
+    try {
+      const el=document.getElementById(id)
+      if(!el)throw new Error('No se encontró el contenido que deseas copiar.')
+      if(!navigator.clipboard?.write || !window.ClipboardItem)throw new Error('El navegador no permite copiar imágenes desde esta página.')
+      const canvas=await html2canvas(el,{scale:2,backgroundColor:'#062e24',useCORS:true,scrollX:0,scrollY:0,width:el.scrollWidth,height:el.scrollHeight,windowWidth:Math.max(document.documentElement.scrollWidth,el.scrollWidth),windowHeight:Math.max(document.documentElement.scrollHeight,el.scrollHeight)})
+      const blob=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('No se pudo generar la imagen.')),'image/png'))
+      await navigator.clipboard.write([new ClipboardItem({'image/png':blob})])
+    } catch(e){setError(`No se pudo copiar la imagen: ${e.message}`)}
+  }
+  function exportar(){
+    const rows=list.map(r=>({...r}))
+    if(!rows.length){setError('No hay registros para exportar.');return}
+    const ws=XLSX.utils.json_to_sheet(rows),wb=XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb,ws,section.slice(0,31))
+    XLSX.writeFile(wb,`QIORA_DASHBOARD_${section}_${desde}_${hasta}.xlsx`)
+  }
 
-  if (loading) return <main className="q-dashboard"><div className="q-loading">Validando acceso a QIORA...</div></main>
-  if (!perfil) return <main className="q-dashboard"><div className="q-loading"><button onClick={() => router.push('/')}>Regresar</button><p>{error || 'Acceso no autorizado.'}</p></div></main>
+  if(loading)return <main className="dash"><div className="shell">Validando acceso...</div></main>
+  if(!perfil)return <main className="dash"><div className="shell"><button className="back" onClick={()=>router.push('/')}>← Regresar</button><p className="error">{error||'Acceso no autorizado.'}</p></div></main>
 
-  return <main className="q-dashboard">
-    <aside className="q-sidebar">
-      <div className="q-brand"><div className="q-mark">Q</div><div><b>QIORA</b><small>Sistema Nacional de Almacenes</small></div></div>
-      <div className="q-side-label">MENÚ PRINCIPAL</div>
-      {tabs.map(([id, label, icon]) => <button key={id} className={`q-side-link ${tab === id ? 'selected' : ''}`} onClick={() => { setTab(id); setSearch('') }}><span>{icon}</span>{label}</button>)}
-      <div className="q-side-bottom"><small>QIORA · Gestión logística</small><small>Distrito {data?.distrito || distrito || perfil.distrito}</small></div>
-    </aside>
+  const cards=[
+    ['recolecciones','RECOLECCIONES RECIBIDAS',fmt(k.recibidasPiezas),`Piezas · Costo identificado: ${mxn(k.recibidasCosto)}`],
+    ['recoleccionesEntregadasTP','ENTREGADAS A TOTALPLAY',fmt(k.entregadasPiezas),`Piezas · Costo identificado: ${mxn(k.entregadasCosto)}`],
+    ['recoleccionesPendientes','RECOLECCIONES PENDIENTES',fmt(k.pendientesPiezas),`Piezas · Costo identificado: ${mxn(k.pendientesCosto)}`],
+    ['auditorias','AUDITORÍAS REALIZADAS',fmt(k.auditoriasRealizadas),'Faltantes: sin meta definida'],
+    ['valor','VALOR EN CAJUELA',mxn(k.valorCajuela),'Solo stock_tecnicos de técnicos activos'],
+    ['valorCentro','VALOR POR CENTRO',mxn(k.valorCentro),'Solo stock_almacen'],
+    ['valorTotal','VALOR TOTAL',mxn(k.valorTotal),'Cajuela + centro'],
+    ['traspasos','TRASPASOS',fmt(k.traspasos),'Por técnico / almacén'],
+    ['criticos','CRÍTICOS +30 DÍAS',fmt(k.criticos),`Más antiguo: ${fmt(k.maxDiasCriticos)} días`],
+  ]
 
-    <section className="q-main">
-      <header className="q-header">
-        <div><div className="q-overline">SISTEMA NACIONAL DE ALMACENES</div><h1>Dashboard QIORA</h1><p>Vista general por distrito · {data?.distrito || distrito || perfil.distrito || 'Distrito activo'}</p></div>
-        <div className="q-user"><span className="q-avatar">{String(perfil.nombre || 'U').slice(0,1).toUpperCase()}</span><div><b>{perfil.nombre || 'Usuario'}</b><small>{perfil.puesto || 'Usuario'} · {data?.distrito || distrito || perfil.distrito}</small></div><button onClick={() => router.push('/')}>Salir</button></div>
-      </header>
+  const tabs = [
+    ['resumen','Resumen'],['recolecciones','Recolecciones'],['auditorias','Auditorías'],
+    ['equipos','Equipos'],['bajas','Bajas'],['cobros','Cobros'],['reportes','Reportes']
+  ]
+  const recoKpis = [
+    ['RECOLECCIONES RECIBIDAS', fmt(k.recibidasPiezas), mxn(k.recibidasCosto)],
+    ['ENVIADAS A TOTALPLAY', fmt(k.entregadasPiezas), mxn(k.entregadasCosto)],
+    ['PENDIENTES POR RECIBIR', fmt(k.pendientesPiezas), mxn(k.pendientesCosto)],
+  ]
+  const auditKpis = [
+    ['AUDITORÍAS REALIZADAS',fmt(k.auditoriasRealizadas),'Folios registrados'],
+    ['TÉCNICOS ACTIVOS',fmt(data?.tecnicosActivos ?? '—'),'Dato pendiente de exponer por API'],
+    ['AUDITORÍAS FALTANTES','—','Requiere meta/programación de auditorías'],
+  ]
+  const equipoKpis = [
+    ['EQUIPOS CRÍTICOS',fmt(k.criticos),'Más de 30 días · excluye TPE USADO'],
+    ['FUERA DE TIEMPO','—','Requiere desglose de antigüedad en API'],
+    ['EN TIEMPO','—','Requiere desglose de antigüedad en API'],
+  ]
+  const currentRows = list
+  const renderTable = (rows, columns, empty) => <div className="tableWrap"><table><thead><tr>{columns.map(([label])=><th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map((r,i)=><tr key={r.key||r.folio||i}>{columns.map(([label,key])=><td key={key}>{key.toLowerCase().includes('costo')||key==='total'&&typeof r[key]==='number'&&label.toLowerCase().includes('valor')?mxn(r[key]):(typeof r[key]==='number'?fmt(r[key]):String(r[key]??'—'))}</td>)}</tr>)}{!rows.length&&<tr><td className="empty" colSpan={columns.length}>{empty}</td></tr>}</tbody></table></div>
 
-      <div className="q-filterbar">
-        <label>Distrito activo{isParent ? <select value={distrito || data?.distrito || ''} onChange={e => setDistrito(e.target.value)}>{(data?.distritosDisponibles || [data?.distrito || perfil.distrito]).filter(Boolean).map(d => <option key={d} value={d}>{d}</option>)}</select> : <input value={data?.distrito || perfil.distrito || ''} readOnly />}</label>
-        <label>Fecha inicial<input type="date" value={desde} onChange={e => setDesde(e.target.value)} /></label>
-        <label>Fecha final<input type="date" value={hasta} onChange={e => setHasta(e.target.value)} /></label>
-        <button className="q-search" onClick={cargar} disabled={busy}>{busy ? 'Consultando...' : '⌕ Buscar'}</button>
-      </div>
-
-      {error && <div className="q-error">{error}</div>}
-      {!!data?.advertencias?.length && <details className="q-warnings"><summary>Advertencias de datos ({data.advertencias.length})</summary><ul>{data.advertencias.map((a, i) => <li key={i}>{a}</li>)}</ul></details>}
-
-      <nav className="q-tabs">{tabs.map(([id, label]) => <button key={id} onClick={() => { setTab(id); setSearch('') }} className={tab === id ? 'active' : ''}>{label}</button>)}</nav>
-
-      {tab === 'resumen' && <>
-        <div className="q-title-row"><div><h2>Resumen del distrito {data?.distrito || distrito}</h2><p>Periodo: {desde} — {hasta}</p></div><span className="q-live">● Datos del distrito activo</span></div>
-        <div className="q-kpi-grid">{summaryCards.map(([label, value, sub, icon], i) => <article className={`q-kpi ${icon === 'alert' ? 'critical' : ''}`} key={label}><div className="q-kpi-icon">{['▣','↗','◷','☑','▤','⌂','∑','⚠'][i]}</div><div className="q-kpi-copy"><span>{label}</span><strong>{value}</strong><small>{sub}</small></div></article>)}</div>
-        <div className="q-summary-grid">
-          <section className="q-panel"><div className="q-panel-heading"><h3>Estado de equipos</h3><small>IQ09 · excluye TPE USADO</small></div><div className="q-state-content"><div className="q-donut"><div><b>{fmt(k.criticos)}</b><small>Críticos</small></div></div><div className="q-legend"><p><i className="green"/>En tiempo <b>—</b></p><p><i className="yellow"/>Fuera de tiempo <b>—</b></p><p><i className="red"/>Crítico <b>{fmt(k.criticos)}</b></p><small>El desglose completo requiere exponer las tres categorías desde la consulta IQ09.</small></div></div></section>
-          <section className="q-panel"><div className="q-panel-heading"><h3>Resumen del distrito</h3><small>{data?.distrito}</small></div>{table(data?.porDistrito || [], [['Distrito','distrito'],['Recibidas','recibidasPiezas'],['Enviadas TP','entregadasPiezas'],['Pendientes','pendientesPiezas'],['Auditorías','auditoriasRealizadas'],['Valor cajuela','valorCajuela'],['Valor centro','valorCentro']])}</section>
-        </div>
-        <section className="q-panel q-detail-panel"><div className="q-panel-heading"><div><h3>Últimas recolecciones registradas</h3><small>Movimientos del distrito en el periodo seleccionado</small></div><button onClick={() => setTab('recolecciones')}>Ver todas →</button></div>{table((tables.recolecciones || []).slice(0,8), [['Almacén','almacen'],['Técnico','tecnico'],['Piezas','total']], 'No hay recolecciones para este periodo.')}</section>
+  return <main className="dash"><div className="shell">
+    <header className="top"><button className="back" onClick={()=>router.push('/')}>← Regresar al menú</button><div><h1>Dashboard QIORA</h1><p>Vista general por distrito · {data?.distrito||perfil.distrito} · Actualizado {data?.generado?new Date(data.generado).toLocaleString('es-MX'):'—'}</p></div></header>
+    <form className="filters" onSubmit={e=>{e.preventDefault();cargar()}}>
+      <label>Fecha inicial<input type="date" value={desde} onChange={e=>setDesde(e.target.value)}/></label>
+      <label>Fecha final<input type="date" value={hasta} onChange={e=>setHasta(e.target.value)}/></label>
+      <button disabled={busy}>{busy?'Buscando...':'🔎 Buscar'}</button>
+      <button type="button" className="secondary" onClick={()=>copiarHtml('tabContent')}>📋 Copiar pestaña</button>
+    </form>
+    {error&&<div className="error" role="alert">{error}</div>}
+    {data?.advertencias?.length>0&&<details className="warnings"><summary>Advertencias de datos ({data.advertencias.length})</summary><ul>{data.advertencias.map((x,i)=><li key={i}>{x}</li>)}</ul></details>}
+    <nav className="tabs" aria-label="Secciones del dashboard">{tabs.map(([id,label])=><button key={id} className={activeTab===id?'active':''} onClick={()=>{setActiveTab(id);setSearch('');setDetail(null)}}>{label}</button>)}</nav>
+    <div id="tabContent">
+      {activeTab==='resumen'&&<>
+        <div className="kpis">{cards.map(([id,title,value,sub])=><button key={id} className={`kpi ${id==='criticos'?'red':id==='recoleccionesPendientes'?'lime':''}`} onClick={()=>{setSection(id);setActiveTab(id==='auditorias'?'auditorias':id==='criticos'?'equipos':'recolecciones');setSearch('');setDetail(null)}}><span>{title}</span><b>{value}</b><small>{sub}</small></button>)}</div>
+        <section className="tableCard"><div className="tableHead"><h2>Resumen por distrito</h2><small>Movimientos según fechas seleccionadas; inventario actual.</small></div>{renderTable(data?.porDistrito||[],[['Distrito','distrito'],['Recibidas','recibidasPiezas'],['Costo recibidas','recibidasCosto'],['Enviadas TP','entregadasPiezas'],['Costo enviadas','entregadasCosto'],['Pendientes','pendientesPiezas'],['Costo pendientes','pendientesCosto'],['Auditorías','auditoriasRealizadas'],['Valor cajuela','valorCajuela'],['Valor centro','valorCentro']],'Sin información por distrito.')}</section>
+        <section className="tableCard"><div className="tableHead"><div><h2>Recolecciones por periodo</h2><small>Desglose diario, mensual o anual.</small></div><select value={periodoReco} onChange={e=>setPeriodoReco(e.target.value)}><option value="dia">Por día</option><option value="mes">Por mes</option><option value="anio">Por año</option></select></div><div className="recoGrid">{[['recibidas','RECOLECCIONES RECIBIDAS'],['enviadasTP','RECOLECCIONES ENVIADAS A TOTALPLAY']].map(([tipo,titulo])=>{const rep=data?.reporteRecolecciones?.[tipo]||{registros:[],cantidad:0,costoConocido:0,sinCosto:0};const grupos=agruparRecolecciones(rep.registros);return <div className="recoPanel" key={tipo}><div className="tableHead"><div><h3>{titulo}</h3><small>{fmt(rep.cantidad)} piezas · {mxn(rep.costoConocido)} identificado</small></div><button onClick={()=>exportarRecolecciones(tipo)}>Excel</button></div>{renderTable(grupos,[['Periodo','periodo'],['Distrito','distrito'],['Piezas','cantidad'],['Costo','costo'],['Sin costo','sinCosto']],'Sin registros en el periodo.')}</div>})}</div></section>
       </>}
-
-      {tab === 'recolecciones' && <>
-        <div className="q-title-row"><div><h2>Recolecciones por distrito</h2><p>Control operativo del distrito {data?.distrito}</p></div></div>
-        <div className="q-three-kpis">{[['Recolecciones recibidas', received.cantidad, received.costoConocido, 'reco'], ['Recolecciones enviadas a TP', sent.cantidad, sent.costoConocido, 'tp'], ['Pendientes por recibir', k.pendientesPiezas, k.pendientesCosto, 'pending']].map(([name, qty, cost, id]) => <article className="q-panel q-reco-kpi" key={id}><span>{name}</span><strong>{fmt(qty)}</strong><small>piezas</small><b>{mxn(cost)}</b><small>Costo identificado</small></article>)}</div>
-        <div className="q-summary-grid"><section className="q-panel"><div className="q-panel-heading"><h3>Recolecciones recibidas</h3><button onClick={() => exportRows(received.registros, 'RECIBIDAS')}>Excel</button></div>{table((received.registros || []).slice(0,50), [['Fecha','fecha'],['Almacén','almacen'],['Serie','serie'],['Piezas','cantidad'],['Costo','costo']], 'Sin recepciones en el periodo.')}</section><section className="q-panel"><div className="q-panel-heading"><h3>Enviadas a Totalplay</h3><button onClick={() => exportRows(sent.registros, 'ENVIADAS_TP')}>Excel</button></div>{table((sent.registros || []).slice(0,50), [['Fecha','fecha'],['Almacén','almacen'],['Serie','serie'],['Piezas','cantidad'],['Costo','costo']], 'Sin entregas TP en el periodo.')}</section></div>
-        <section className="q-panel q-detail-panel"><div className="q-panel-heading"><h3>Pendientes por recibir · TPE USADO</h3><small>Únicamente técnicos activos del distrito</small></div>{table(tables.recoleccionesPendientes || [], [['Almacén','almacen'],['Técnico','tecnico'],['Piezas','total'],['Días máximos','maxDias']], 'Sin equipos TPE USADO pendientes.')}</section>
+      {activeTab==='recolecciones'&&<>
+        <div className="sectionTitle"><h2>Recolecciones por distrito</h2><p>Recibidas desde recolecciones_equipos; enviadas a Totalplay desde RECUS TP; pendientes desde IQ09 con lote TPE USADO de técnicos activos.</p></div>
+        <div className="kpis three">{recoKpis.map(([t,v,sub],i)=><div className={`kpi ${i===2?'lime':''}`} key={t}><span>{t}</span><b>{v}</b><small>Costo identificado: {sub}</small></div>)}</div>
+        <section className="tableCard"><div className="tableHead"><h2>Recibidas y enviadas a Totalplay</h2><small>El costo no identificado se informa por separado.</small></div><div className="recoGrid">{[['recibidas','RECOLECCIONES RECIBIDAS'],['enviadasTP','RECOLECCIONES ENVIADAS A TOTALPLAY']].map(([tipo,titulo])=>{const rep=data?.reporteRecolecciones?.[tipo]||{registros:[],cantidad:0,costoConocido:0,sinCosto:0};const grupos=agruparRecolecciones(rep.registros);return <div className="recoPanel" key={tipo}><div className="tableHead"><h3>{titulo}</h3><button onClick={()=>exportarRecolecciones(tipo)}>Excel</button></div><p>{fmt(rep.cantidad)} piezas · {mxn(rep.costoConocido)} costo identificado · {fmt(rep.sinCosto)} sin costo</p>{renderTable(grupos,[['Periodo','periodo'],['Distrito','distrito'],['Piezas','cantidad'],['Costo','costo'],['Sin costo','sinCosto']],'Sin registros.')}</div>})}</div></section>
+        <section className="tableCard"><div className="tableHead"><h2>Pendientes por recibir · TPE USADO</h2><small>Exclusivamente técnicos activos del distrito.</small></div>{renderTable(tables.recoleccionesPendientes||[],[['Almacén','almacen'],['Técnico','tecnico'],['Piezas','total'],['Días máximos','maxDias']],'Sin equipos TPE USADO pendientes.')}</section>
       </>}
-
-      {tab === 'auditorias' && <><div className="q-title-row"><div><h2>Auditorías técnicas</h2><p>Seguimiento de auditorías registradas por técnico, almacén y folio.</p></div></div><div className="q-three-kpis"><article className="q-kpi"><span>Técnicos activos</span><strong>{fmt(data?.tecnicosActivos ?? '—')}</strong><small>Almacen_usuarios</small></article><article className="q-kpi"><span>Auditorías realizadas</span><strong>{fmt(k.auditoriasRealizadas)}</strong><small>Folios auditados</small></article><article className="q-kpi"><span>Auditorías faltantes</span><strong>—</strong><small>Requiere meta/programación</small></article></div><section className="q-panel q-detail-panel"><div className="q-panel-heading"><h3>Detalle de auditorías</h3><button onClick={() => exportRows(tables.auditorias || [], 'AUDITORIAS')}>Excel</button></div>{table(tables.auditorias || [], [['Distrito','distrito'],['Almacén','almacen'],['Técnico','tecnico'],['Folio','folio'],['Fecha','fecha'],['Tipos','tipos'],['Registros','total']], 'Sin auditorías en el periodo.')}</section></>}
-
-      {tab === 'equipos' && <><div className="q-title-row"><div><h2>Semáforo de equipos</h2><p>IQ09 · excluye lote TPE USADO · antigüedad calculada con fecha SAP</p></div></div><div className="q-three-kpis"><article className="q-kpi critical"><span>Críticos · más de 30 días</span><strong>{fmt(k.criticos)}</strong></article><article className="q-kpi amber"><span>Fuera de tiempo · 15 a 30 días</span><strong>—</strong></article><article className="q-kpi"><span>En tiempo · 0 a 14 días</span><strong>—</strong></article></div><section className="q-panel q-detail-panel"><div className="q-panel-heading"><h3>Equipos críticos identificados</h3><button onClick={() => exportRows(tables.criticos || [], 'EQUIPOS_CRITICOS')}>Excel</button></div>{table(tables.criticos || [], [['Almacén','almacen'],['Técnico','tecnico'],['Equipos','total'],['Días máximos','maxDias']], 'Sin equipos críticos.')}</section><p className="q-note">Los comparativos semanales se habilitarán al guardar fotografías históricas diarias de IQ09. No se generan datos históricos ficticios.</p></>}
-
-      {tab === 'bajas' && <section className="q-panel q-placeholder"><h2>Bajas del distrito</h2><p>Esta pestaña mostrará bajas del mes, costos, faltantes, equipos, materiales y herramientas, con comparativo mensual. Falta identificar la tabla real de bajas en Supabase; no se muestran cifras simuladas.</p></section>}
-      {tab === 'cobros' && <section className="q-panel q-placeholder"><h2>Cobros del distrito</h2><p>Esta pestaña mostrará cobros totales, realizados, pendientes, saldo y desglose por faltantes, equipos, materiales y herramientas. Falta identificar la tabla real de cobros en Supabase; no se muestran cifras simuladas.</p></section>}
-      {tab === 'reportes' && <><div className="q-title-row"><div><h2>Centro de reportes</h2><p>Exportaciones del distrito {data?.distrito} y periodo seleccionado.</p></div></div><div className="q-report-grid">{[['Resumen por distrito', data?.porDistrito || []],['Recolecciones recibidas', received.registros || []],['Entregadas a Totalplay', sent.registros || []],['Auditorías', tables.auditorias || []],['Equipos críticos', tables.criticos || []],['Pendientes TPE USADO', tables.recoleccionesPendientes || []]].map(([label, rows]) => <article className="q-report-card" key={label}><h3>{label}</h3><p>{fmt(rows.length)} registros disponibles</p><button onClick={() => exportRows(rows, label.replaceAll(' ','_').toUpperCase())}>Descargar Excel</button></article>)}</div></>}
-
-      <footer className="q-footer">QIORA · Sistema Nacional de Almacenes · Distrito activo: {data?.distrito || distrito} · Actualizado {data?.generado ? new Date(data.generado).toLocaleString('es-MX') : '—'}</footer>
-    </section>
-
+      {activeTab==='auditorias'&&<><div className="sectionTitle"><h2>Auditorías técnicas</h2><p>Seguimiento por distrito y periodo. Las faltantes requieren una meta de auditorías definida.</p></div><div className="kpis three">{auditKpis.map(([t,v,sub])=><div className="kpi" key={t}><span>{t}</span><b>{v}</b><small>{sub}</small></div>)}</div><section className="tableCard"><div className="tableHead"><h2>Auditorías realizadas</h2><button onClick={()=>{setSection('auditorias');exportar()}}>Excel</button></div>{renderTable(tables.auditorias||[],[['Distrito','distrito'],['Almacén','almacen'],['Técnico','tecnico'],['Folio','folio'],['Fecha','fecha'],['Tipos','tipos'],['Registros','total']],'Sin auditorías en el periodo.')}</section></>}
+      {activeTab==='equipos'&&<><div className="sectionTitle"><h2>Semáforo de equipos IQ09</h2><p>Excluye lote TPE USADO. El estado se calcula con la fecha de modificación disponible en IQ09.</p></div><div className="kpis three"><div className="kpi red"><span>CRÍTICOS · MÁS DE 30 DÍAS</span><b>{fmt(k.criticos)}</b><small>Equipos · excluye TPE USADO</small></div><div className="kpi amber"><span>FUERA DE TIEMPO · 15 A 30 DÍAS</span><b>—</b><small>Desglose aún no expuesto por API</small></div><div className="kpi lime"><span>EN TIEMPO · 0 A 14 DÍAS</span><b>—</b><small>Desglose aún no expuesto por API</small></div></div><section className="tableCard"><div className="tableHead"><h2>Equipos críticos identificados</h2></div>{renderTable(tables.criticos||[],[['Almacén','almacen'],['Técnico','tecnico'],['Equipos','total'],['Días máximos','maxDias']],'Sin equipos críticos.')}</section><p className="note">Los comparativos semanales requieren fotografías históricas de IQ09; no se inventan datos históricos a partir de la carga actual.</p></>}
+      {activeTab==='bajas'&&<section className="tableCard emptyPanel"><h2>Bajas por distrito</h2><p>La interfaz de esta pestaña está preparada. Falta identificar la tabla real de bajas en Supabase para mostrar cantidades, categorías, costos y comparativos mensuales.</p></section>}
+      {activeTab==='cobros'&&<section className="tableCard emptyPanel"><h2>Cobros por distrito</h2><p>La interfaz de esta pestaña está preparada. Falta identificar la tabla real de cobros para mostrar importes cobrados, pendientes, saldos y comparativos mensuales.</p></section>}
+      {activeTab==='reportes'&&<><div className="sectionTitle"><h2>Centro de reportes</h2><p>Exportaciones de la información disponible para el distrito y rango de fechas seleccionados.</p></div><div className="reportGrid">{[['Recolecciones','recolecciones'],['Auditorías','auditorias'],['Traspasos','traspasos'],['Equipos críticos','criticos'],['Pendientes TPE USADO','recoleccionesPendientes'],['Valor en cajuela','valor']].map(([label,id])=><button key={id} className="reportTile" onClick={()=>{setSection(id);setSearch('');setActiveTab('detalle')}}><strong>{label}</strong><small>Consultar y exportar</small></button>)}</div><section className="tableCard"><div className="tableHead"><h2>Exportar resumen por distrito</h2><button onClick={()=>{const ws=XLSX.utils.json_to_sheet(data?.porDistrito||[]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Resumen');XLSX.writeFile(wb,`QIORA_RESUMEN_${desde}_${hasta}.xlsx`)}}>Descargar Excel</button></div><p>El archivo respeta el rango de fechas y los distritos autorizados por la API.</p></section></>}
+      {activeTab==='detalle'&&<section className="tableCard"><div className="tableHead"><h2>{sections.find(x=>x[0]===section)?.[1]||'Detalle'}</h2><div className="tools"><input placeholder="Buscar en esta tabla..." value={search} onChange={e=>setSearch(e.target.value)}/><button onClick={exportar}>Excel</button></div></div>{renderTable(currentRows,cols,'No hay registros para los filtros seleccionados.')}</section>}
+    </div>
+    {detail&&<div className="overlay" onClick={()=>setDetail(null)}><section className="modal" onClick={e=>e.stopPropagation()}><div className="tableHead"><h2>{detail.title}</h2><button onClick={()=>setDetail(null)}>Cerrar ×</button></div><div className="tableWrap"><table><thead><tr>{detail.columns.map(([l])=><th key={l}>{l}</th>)}</tr></thead><tbody>{detail.rows.map((r,i)=><tr key={i}>{detail.columns.map(([l,k])=><td key={k}>{String(r[k]??'—')}</td>)}</tr>)}{!detail.rows.length&&<tr><td colSpan={Math.max(1,detail.columns.length)} className="empty">No hay detalle disponible.</td></tr>}</tbody></table></div></section></div>}
     <style jsx>{`
-      .q-dashboard{min-height:100vh;display:flex;background:#eef4f2;color:#102b25;font-family:Arial,Helvetica,sans-serif}.q-sidebar{width:218px;flex:0 0 218px;background:linear-gradient(180deg,#003e30,#002c23);color:#fff;display:flex;flex-direction:column;padding:24px 12px;min-height:100vh}.q-brand{display:flex;align-items:center;gap:10px;padding:0 8px 34px}.q-mark{width:42px;height:42px;border-radius:12px;background:#08a66e;display:grid;place-items:center;font-size:27px;font-weight:900}.q-brand b{display:block;font-size:22px;letter-spacing:1px}.q-brand small{display:block;color:#a9d5c7;font-size:9px;margin-top:3px}.q-side-label{font-size:10px;letter-spacing:1.5px;color:#80b8a6;padding:0 12px 12px}.q-side-link{border:0;background:transparent;color:#dcebe6;padding:13px 12px;border-radius:10px;text-align:left;font-weight:700;margin:2px 0;display:flex;align-items:center;gap:12px;cursor:pointer}.q-side-link span{width:20px;font-size:20px;text-align:center}.q-side-link.selected,.q-side-link:hover{background:#087c59;color:white}.q-side-bottom{margin-top:auto;padding:18px 10px 4px;border-top:1px solid #286451;display:grid;gap:5px;color:#9cc7b8;font-size:11px}.q-main{min-width:0;flex:1;padding:0 24px 28px}.q-header{margin:0 -24px 18px;padding:20px 30px;background:linear-gradient(110deg,#004936,#087a54 65%,#00503b);color:#fff;display:flex;justify-content:space-between;align-items:center;gap:20px;box-shadow:0 5px 18px #003c2b25}.q-overline{font-size:10px;letter-spacing:2px;color:#a8e2c8;font-weight:800}.q-header h1{font-size:29px;margin:5px 0}.q-header p{margin:0;color:#c6e7d9;font-size:13px}.q-user{display:flex;align-items:center;gap:10px}.q-avatar{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:#13a879;font-weight:900}.q-user b,.q-user small{display:block}.q-user small{font-size:11px;color:#c6e7d9;margin-top:3px}.q-user button{border:1px solid #7ec9a9;background:transparent;color:white;border-radius:8px;padding:9px 13px;margin-left:8px}.q-filterbar{display:grid;grid-template-columns:1.2fr 1fr 1fr auto;gap:13px;align-items:end;padding:14px 16px;background:white;border:1px solid #d3e2dc;border-radius:13px;box-shadow:0 3px 12px #103c2b0d}.q-filterbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:#34564b}.q-filterbar input,.q-filterbar select{height:40px;border:1px solid #cbdcd5;border-radius:8px;padding:0 11px;background:#f9fcfa;color:#16382e;min-width:0}.q-search,.q-panel-heading button,.q-report-card button{height:40px;border:0;border-radius:8px;background:#008b5d;color:white;font-weight:800;padding:0 20px;cursor:pointer}.q-search:disabled{opacity:.6}.q-tabs{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;margin:15px 0}.q-tabs button{border:1px solid #d5e1dd;background:#e2e9ed;color:#193c32;border-radius:9px;padding:14px 6px;font-weight:800;cursor:pointer}.q-tabs button.active{background:linear-gradient(120deg,#007a4f,#079b66);border-color:#07865a;color:white;box-shadow:0 4px 12px #006b462b}.q-title-row{display:flex;justify-content:space-between;align-items:center;margin:18px 2px 13px;gap:14px}.q-title-row h2{font-size:23px;margin:0 0 4px;color:#102d24}.q-title-row p{font-size:12px;color:#60796f;margin:0}.q-live{font-size:11px;color:#008554;font-weight:800}.q-kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:12px 0 16px}.q-kpi{min-width:0;min-height:112px;padding:16px;background:white;border:1px solid #d2e1da;border-radius:13px;display:flex;align-items:center;gap:13px;box-shadow:0 4px 12px #153d2b0b}.q-kpi-icon{flex:0 0 48px;height:48px;border-radius:12px;background:#e2f5eb;color:#007c50;display:grid;place-items:center;font-size:25px;font-weight:900}.q-kpi-copy{min-width:0}.q-kpi span{display:block;color:#49645a;font-size:12px;font-weight:800}.q-kpi strong{display:block;color:#073d2c;font-size:23px;margin:5px 0;overflow-wrap:anywhere}.q-kpi small{display:block;color:#71867e;font-size:10px;line-height:1.3}.q-kpi.critical{border-color:#f0b6b6}.q-kpi.critical .q-kpi-icon{background:#ffe5e5;color:#c62828}.q-kpi.critical strong{color:#bd2727}.q-kpi.amber .q-kpi-icon{background:#fff2d5;color:#a96b00}.q-summary-grid{display:grid;grid-template-columns:1fr 1.35fr;gap:14px;margin:14px 0}.q-panel{min-width:0;background:#fff;border:1px solid #d5e2dd;border-radius:14px;padding:16px;box-shadow:0 4px 13px #123a2b0a}.q-panel-heading{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:13px}.q-panel-heading h3{margin:0;color:#173d31;font-size:16px}.q-panel-heading small{font-size:11px;color:#71877e}.q-panel-heading button{height:32px;padding:0 13px}.q-state-content{display:flex;align-items:center;justify-content:center;gap:28px;min-height:180px}.q-donut{width:145px;height:145px;border-radius:50%;background:conic-gradient(#08a65f 0 78%,#f2b51b 78% 94%,#dc3939 94% 100%);display:grid;place-items:center;flex:0 0 auto}.q-donut>div{width:88px;height:88px;border-radius:50%;background:white;display:grid;place-content:center;text-align:center}.q-donut b{font-size:23px;color:#153c2f}.q-donut small{font-size:10px;color:#60756c}.q-legend{min-width:0;flex:1}.q-legend p{display:flex;align-items:center;gap:8px;font-size:12px;color:#334f44}.q-legend p b{margin-left:auto}.q-legend i{width:10px;height:10px;border-radius:50%}.q-legend .green{background:#08a65f}.q-legend .yellow{background:#f2b51b}.q-legend .red{background:#dc3939}.q-legend>small{font-size:10px;color:#84958e;line-height:1.4}.q-table-scroll{width:100%;overflow:auto;border-radius:9px;border:1px solid #d9e5df}.q-table{width:100%;border-collapse:separate;border-spacing:0;min-width:560px;font-size:12px;color:#193b30}.q-table th{background:#006a49;color:white;text-align:center;padding:12px 10px;font-size:11px;white-space:nowrap}.q-table td{padding:11px 10px;text-align:center;border-bottom:1px solid #e0eae5;white-space:nowrap;background:#fff}.q-table tbody tr:nth-child(even) td{background:#edf7f1}.q-table tbody tr:hover td{background:#dcf1e5}.q-table tbody tr:last-child td{border-bottom:0}.q-empty{padding:25px!important;color:#74877f!important;text-align:center!important}.q-detail-panel{margin-top:14px}.q-three-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:14px 0}.q-reco-kpi{display:flex;flex-direction:column;align-items:flex-start;gap:6px;border-top:4px solid #079d67}.q-reco-kpi span{font-size:13px;font-weight:800;color:#395b4e}.q-reco-kpi strong{font-size:31px;color:#006b48}.q-reco-kpi small{font-size:11px;color:#74877f}.q-reco-kpi b{font-size:19px;color:#173c30;margin-top:6px}.q-placeholder{padding:32px;margin-top:20px;min-height:230px}.q-placeholder h2{margin:0 0 10px;color:#0b523a}.q-placeholder p,.q-note{max-width:850px;color:#637a70;line-height:1.7;font-size:13px}.q-report-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}.q-report-card{background:white;border:1px solid #d4e2dc;border-radius:13px;padding:19px;box-shadow:0 4px 12px #103c2b0b}.q-report-card h3{margin:0 0 8px;font-size:15px;color:#164533}.q-report-card p{font-size:12px;color:#6a8177}.q-report-card button{margin-top:8px}.q-footer{text-align:center;color:#81958c;font-size:10px;padding:25px 0 4px}.q-error{background:#ffe7e7;color:#a52323;padding:12px 15px;border-radius:9px;margin:12px 0;border:1px solid #efbaba}.q-warnings{background:#fff4d8;border:1px solid #e7c66c;color:#79520b;border-radius:9px;padding:11px 14px;margin:12px 0;font-size:12px}.q-loading{padding:50px;text-align:center;color:#1b4939}
-      @media(max-width:1100px){.q-sidebar{width:190px;flex-basis:190px}.q-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.q-summary-grid{grid-template-columns:1fr}.q-filterbar{grid-template-columns:repeat(2,minmax(0,1fr))}.q-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}}
-      @media(max-width:700px){.q-dashboard{display:block}.q-sidebar{width:auto;min-height:auto;padding:12px;display:block}.q-brand{padding:0 5px 12px}.q-side-label,.q-side-link,.q-side-bottom{display:none}.q-main{padding:0 12px 20px}.q-header{margin:0 -12px 12px;padding:15px;align-items:flex-start;flex-direction:column}.q-header h1{font-size:23px}.q-user{width:100%}.q-filterbar{grid-template-columns:1fr 1fr;padding:10px}.q-search{grid-column:1/-1}.q-tabs{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.q-tabs button{padding:11px 5px}.q-kpi-grid{grid-template-columns:1fr 1fr;gap:8px}.q-kpi{padding:11px;min-height:105px;gap:8px}.q-kpi-icon{width:35px;height:35px;flex-basis:35px;font-size:18px}.q-kpi strong{font-size:17px}.q-kpi span{font-size:10px}.q-three-kpis{grid-template-columns:1fr}.q-state-content{gap:14px}.q-donut{width:112px;height:112px}.q-donut>div{width:70px;height:70px}.q-report-grid{grid-template-columns:1fr}.q-title-row h2{font-size:19px}}
+      .dash{min-height:100vh;padding:18px;background:radial-gradient(ellipse at top left,#087653 0%,#034b38 38%,#012b21 100%) !important;color:#f5fffb;font-family:Arial,sans-serif}.shell{max-width:1500px;margin:auto}.dash :global(body){background:#034532}.top{display:flex;gap:18px;align-items:center;margin-bottom:16px}.top h1{margin:0;font-size:28px}.top p{margin:5px 0 0;color:#9ce8c9;font-size:12px}.back,.filters button,.tools button,.tableHead button{border:0;border-radius:9px;padding:10px 14px;background:#07955f;color:white;font-weight:800;cursor:pointer}.filters{display:flex;gap:10px;align-items:end;flex-wrap:wrap;padding:12px;background:#062e24;border:1px solid #176b53;border-radius:13px;margin-bottom:12px}.filters label{display:grid;gap:5px;font-size:12px;font-weight:700}.filters input,.tools input,.tableHead select{height:39px;border:1px solid #168263;border-radius:8px;background:#f7fffb;color:#142c24;padding:0 10px}.filters .secondary{background:#087be6}.tabs{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:7px;margin:12px 0;padding:7px;background:#06271f;border:1px solid #176b53;border-radius:13px}.tabs button{border:1px solid #26765f;border-radius:9px;padding:13px 8px;background:#104536;color:#d9f6e9;font-weight:800;cursor:pointer}.tabs button.active{background:linear-gradient(120deg,#087b5b,#16a77e);color:#fff;box-shadow:0 3px 12px #0005}.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.kpis.three{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:14px}.kpi{min-height:104px;border:1px solid #299778;border-radius:12px;padding:14px;background:linear-gradient(145deg,#087655,#16a77e);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center}.kpi span{font-size:12px;font-weight:900}.kpi b{font-size:25px}.kpi small{font-size:11px;color:#d8fff0}.kpi.red{background:linear-gradient(145deg,#bd2727,#ef4444);border-color:#fb7777}.kpi.lime{background:linear-gradient(145deg,#0c9c59,#20c66a)}.kpi.amber{background:linear-gradient(145deg,#a96a08,#e7a51e);border-color:#ffd16a}.tableCard{margin-top:14px;background:linear-gradient(145deg,#07543f,#043629);border:1px solid #176b53;border-radius:14px;padding:14px}.tableHead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.tableHead h2{margin:0;font-size:18px}.tableHead h3{margin:0}.tableHead small,.sectionTitle p{color:#a8d9c7}.sectionTitle{padding:12px 3px}.sectionTitle h2{font-size:24px;margin:0 0 5px}.sectionTitle p{margin:0;font-size:13px}.tableWrap{overflow:auto;max-height:65vh;background:#064432;border:1px solid #168765;border-radius:10px}.tableWrap table{border-collapse:collapse;width:100%;min-width:750px;color:#eafff6;font-size:12px}.tableWrap th{position:sticky;top:0;background:#087b59;color:#fff;padding:11px 12px;text-align:center;white-space:nowrap;border:1px solid #239b75}.tableWrap td{padding:11px 12px;border:1px solid #176b53;text-align:center;background:#0b4a38;color:#effff8;white-space:nowrap}.tableWrap tr:nth-child(even) td{background:#0e5a43}.tableWrap tbody tr:hover td{background:#147455}.empty{text-align:center;padding:24px!important;color:#b9e8d7}.recoGrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.recoPanel{min-width:0}.recoPanel p{font-size:12px;color:#c8eadc}.recoPanel .tableWrap{max-height:340px}.reportGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.reportTile{display:flex;flex-direction:column;gap:8px;text-align:left;padding:22px;border-radius:12px;border:1px solid #299778;background:linear-gradient(145deg,#0b6049,#0d8b67);color:white;cursor:pointer}.reportTile strong{font-size:16px}.reportTile small{color:#c8eadc}.emptyPanel{padding:35px}.emptyPanel p,.note{color:#c3e4d7;line-height:1.6}.error{padding:11px;background:#7f252b;border:1px solid #c6535b;border-radius:9px;color:white;margin:12px 0}.warnings{padding:10px 13px;margin:10px 0;background:#4a3511;border:1px solid #a87924;border-radius:9px;color:#ffe6a8;font-size:12px}.overlay{position:fixed;inset:0;z-index:1000;background:#000b;display:flex;align-items:center;justify-content:center;padding:18px}.modal{width:min(1100px,100%);max-height:85vh;overflow:auto;background:#073629;border:1px solid #238365;border-radius:14px;padding:15px}.modal .tableHead button{background:#a52b32}@media(max-width:900px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpis.three{grid-template-columns:repeat(3,minmax(0,1fr))}.recoGrid{grid-template-columns:1fr}.reportGrid{grid-template-columns:repeat(2,1fr)}.tabs{grid-template-columns:repeat(4,minmax(0,1fr))}}@media(max-width:560px){.dash{padding:8px}.top{align-items:flex-start;flex-direction:column}.top h1{font-size:21px}.kpis,.kpis.three{grid-template-columns:1fr 1fr}.tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.filters label,.filters input,.filters button{width:100%}.reportGrid{grid-template-columns:1fr}}
     `}</style>
-  </main>
+  </div></main>
 }
