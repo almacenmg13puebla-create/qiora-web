@@ -100,9 +100,11 @@ export async function GET(request) {
   if (padre) {
     const { data: users, error: usersError } = await db.from('almacen_usuarios').select('distrito').eq('activo', true).not('distrito', 'is', null).limit(10000)
     if (usersError) return response({ ok: false, error: `No se pudieron identificar los distritos: ${usersError.message}` }, 500)
-    distritos = [...new Set((users || []).map(x => norm(x.distrito)).filter(Boolean))].sort()
+    const autorizados = [...new Set((users || []).map(x => norm(x.distrito)).filter(Boolean))].sort()
+    const solicitado = norm(params.get('distrito') || '')
+    distritos = solicitado && autorizados.includes(solicitado) ? [solicitado] : (autorizados.length ? [autorizados[0]] : [])
   }
-  if (!distritos.length) return response({ ok: true, distrito: padre ? 'TODOS' : norm(actor.distrito), kpis: {}, tablas: {}, detalles: {}, advertencias: ['No hay distritos activos asociados a usuarios.'] })
+  if (!distritos.length) return response({ ok: true, distrito: padre ? '' : norm(actor.distrito), kpis: {}, tablas: {}, detalles: {}, advertencias: ['No hay distritos activos asociados a usuarios.'] })
 
   const advertencias = []
   const all = { solicitudes: [], traspasos: [], recolecciones: [], recoTP: [], auditorias: [], stock: [], iq09: [], costos: [], stockCentro: [], usuarios: [] }
@@ -241,6 +243,7 @@ export async function GET(request) {
   const critGroups = new Map(), pendingGroups = new Map()
   const today = new Date(); today.setHours(0,0,0,0)
   let maxCritDays = 0, maxPendingDays = 0
+  const semaforoEquipos = { enTiempo: 0, fueraTiempo: 0, criticos: 0, total: 0 }
   all.iq09.forEach(r => {
     const warehouse = alm(r.almacen), district = norm(r.distrito)
     if (!warehouse || !distritos.includes(district)) return
@@ -249,6 +252,13 @@ export async function GET(request) {
     const days = d ? Math.max(0, Math.floor((today - new Date(d.getFullYear(),d.getMonth(),d.getDate())) / 86400000)) : null
     const tech = userByKey.get(`${district}|${warehouse}`) || warehouse
     const key = `${district}|${warehouse}|${tech}`
+    // El semáforo solo considera equipos distintos de TPE USADO.
+    if (lot !== 'TPE USADO' && !lot.includes('TPI USADO') && !lot.includes('TPI HERRAM') && !lot.includes('TPI GARANT')) {
+      semaforoEquipos.total++
+      if (days !== null && days > 30) semaforoEquipos.criticos++
+      else if (days !== null && days >= 15) semaforoEquipos.fueraTiempo++
+      else semaforoEquipos.enTiempo++
+    }
     if (lot === 'TPE USADO' && !deliveredSeries.has(serial)) {
       const g = pendingGroups.get(key) || {key,distrito:district,almacen:warehouse,tecnico:tech,total:0,maxDias:0}
       g.total++; if(days !== null){g.maxDias=Math.max(g.maxDias,days); maxPendingDays=Math.max(maxPendingDays,days);} pendingGroups.set(key,g)
@@ -441,7 +451,7 @@ export async function GET(request) {
     recoleccionesEntregadasTP: sum('recoleccionesEntregadasTP'),
     auditoriasRealizadas: rows.auditorias.length,
     valorCajuela, valorCentro, valorTotal:money(valorCajuela+valorCentro),
-    criticos:sum('criticos'), materialMasTraspasado:rows.materialesTraspasados.reduce((a,b)=>a+num(b.cantidad),0),
+    criticos:sum('criticos'), semaforoEquipos, materialMasTraspasado:rows.materialesTraspasados.reduce((a,b)=>a+num(b.cantidad),0),
     materialMasSolicitado:rows.materialesSolicitados.reduce((a,b)=>a+num(b.cantidad),0),
     recoleccionesPendientes:sum('recoleccionesPendientes'),maxDiasRecoleccionesPendientes:maxPendingDays,maxDiasCriticos:maxCritDays,
     auditoriasFaltantes:null,
@@ -454,5 +464,5 @@ export async function GET(request) {
     faltantesPiezas:porDistrito.reduce((a,g)=>a+g.faltantesPiezas,0),
     faltantesCosto:null,
   }
-  return response({ok:true,distrito:padre?'TODOS':norm(actor.distrito),desde:from,hasta:to,generado:new Date().toISOString(),kpis,tablas:rows,detalles:details,reporteRecolecciones,porDistrito,advertencias})
+  return response({ok:true,distrito:distritos[0],distritosAutorizados:padre ? autorizados : distritos,desde:from,hasta:to,generado:new Date().toISOString(),kpis,tablas:rows,detalles:details,reporteRecolecciones,porDistrito,advertencias})
 }
