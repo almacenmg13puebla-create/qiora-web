@@ -105,7 +105,7 @@ export async function GET(request) {
   if (!distritos.length) return response({ ok: true, distrito: padre ? 'TODOS' : norm(actor.distrito), kpis: {}, tablas: {}, detalles: {}, advertencias: ['No hay distritos activos asociados a usuarios.'] })
 
   const advertencias = []
-  const all = { solicitudes: [], traspasos: [], recolecciones: [], recoTP: [], recoTPSeries: [], auditorias: [], stock: [], iq09: [], costos: [], stockCentro: [], usuarios: [] }
+  const all = { solicitudes: [], traspasos: [], recolecciones: [], recoTP: [], auditorias: [], stock: [], iq09: [], costos: [], stockCentro: [], usuarios: [] }
   const optionalRows = async (name, factory) => {
     try { return await pages(factory) }
     catch (e) { advertencias.push(`${name}: ${e.message || 'No disponible'}`); return [] }
@@ -124,12 +124,6 @@ export async function GET(request) {
     all.stockCentro.push(...stockCentro)
     const tp = await optionalRows(`RECUS TP ${distrito}`, (a,b) => db.from('recus_tp').select('*').eq('distrito', distrito).range(a,b))
     all.recoTP.push(...tp)
-    const tpIds = tp.map(r => r.id).filter(v => v !== null && v !== undefined)
-    for (let i = 0; i < tpIds.length; i += 100) {
-      const ids = tpIds.slice(i, i + 100)
-      const series = await optionalRows(`Series RECUS TP ${distrito}`, (a,b) => db.from('recus_tp_series').select('*').in('recu_tp_id', ids).range(a,b))
-      all.recoTPSeries.push(...series)
-    }
   }
 
   for (const table of ['auditorias_materiales','auditorias_herramientas','auditorias_equipos']) {
@@ -171,7 +165,7 @@ export async function GET(request) {
     districtByWarehouse.get(warehouse).add(district)
   })
   const costBySku = new Map()
-  all.costos.forEach(c => { const sku = norm(c.sku || c.material); if(c.activo !== false && sku) costBySku.set(sku, num(c.costo_unitario ?? c.costo_por_pieza ?? c.costo ?? c.precio)) })
+  all.costos.forEach(c => { if(c.activo !== false) costBySku.set(txt(c.sku || c.material), num(c.costo_unitario ?? c.costo_por_pieza ?? c.costo ?? c.precio)) })
   const group = (rows, keyFn, create, add) => {
     const map = new Map()
     for (const row of rows) {
@@ -240,51 +234,22 @@ export async function GET(request) {
     if (!details.recolecciones[g.key]) details.recolecciones[g.key] = []
     details.recolecciones[g.key].push({ fecha:r.fecha || r.fecha_recepcion, serie:r.serie, sku:r.material, material:r.descripcion, estado:r.estado })
   })
-  // Una serie queda entregada a TP cuando aparece en RECUS TP, sin importar
-  // que el folio de entrada siga PENDIENTE: ese folio es una conciliación posterior.
-  const deliveredSeries = new Set(all.recoTPSeries.map(sr => {
-    const h = all.recoTP.find(x => String(x.id) === String(sr.recu_tp_id))
-    return h && norm(sr.serie) ? `${norm(h.distrito)}|${norm(sr.serie)}` : ''
-  }).filter(Boolean))
-  const tpHeaderById = new Map(all.recoTP.map(r => [String(r.id), r]))
-  const tpSeriesSeen = new Set()
-  const tpSeriesEvents = all.recoTPSeries.map(sr => {
-    const h = tpHeaderById.get(String(sr.recu_tp_id)) || {}
-    return { ...sr, distrito: h.distrito, pedido: h.pedido, salida: h.salida,
-      fecha: h.fecha, folio_entrada: h.folio_entrada, estatus: h.estatus,
-      cantidad: 1, almacen: h.almacen || '', tecnico: h.tecnico || '' }
-  }).filter(r => distritos.includes(norm(r.distrito))).filter(r => {
-    const key = `${norm(r.distrito)}|${norm(r.serie)}`
-    if (!norm(r.serie) || tpSeriesSeen.has(key)) return false
-    tpSeriesSeen.add(key)
-    return true
-  })
-  const recoTPGroups = group(tpSeriesEvents.filter(r => inRange(r.fecha, from, to)), r => `${norm(r.distrito)}|${txt(r.pedido)}|${txt(r.salida)}`, r => ({key:`${norm(r.distrito)}|${txt(r.pedido)}|${txt(r.salida)}`,distrito:norm(r.distrito),almacen:txt(r.pedido),tecnico:txt(r.salida) || 'Totalplay',total:0,costo:0,costoSinIdentificar:0,folios:1}), (g,r) => {
-    g.total++
-    const sku = txt(r.sku)
-    if (costBySku.has(norm(sku))) g.costo += costBySku.get(norm(sku))
-    else g.costoSinIdentificar++
-    if(!details.recoleccionesEntregadasTP[g.key])details.recoleccionesEntregadasTP[g.key]=[]
-    details.recoleccionesEntregadasTP[g.key].push({fecha:r.fecha,serie:r.serie,sku:r.sku,material:r.material,lote:r.lote,pedido:r.pedido,salida:r.salida,folioEntrada:r.folio_entrada,estado:r.estatus,costo:costBySku.get(norm(sku)) ?? null})
-  })
-  recoTPGroups.forEach(g => { g.costo = money(g.costo) })
+  const deliveredSeries = new Set(all.recolecciones.filter(r => ['ENTREGADO','RECIBIDO','FINALIZADO','CERRADO','COMPLETADO'].some(s => norm(r.estado || r.estatus).includes(s))).map(r => norm(r.serie)).filter(Boolean))
+  const recoTPSource = all.recoTP.length ? all.recoTP : reco.filter(r => ['ENTREGADO','RECIBIDO','FINALIZADO','CERRADO','COMPLETADO'].some(s => norm(r.estado || r.estatus).includes(s)))
+  const recoTPGroups = group(recoTPSource.filter(r => inRange(r.fecha || r.fecha_salida || r.creado_en || r.fecha_recepcion, from, to)), r => `${norm(r.distrito)}|${alm(r.almacen || r.pedido)}|${txt(r.tecnico || r.salida || r.usuario)}`, r => ({key:`${norm(r.distrito)}|${alm(r.almacen || r.pedido)}|${txt(r.tecnico || r.salida || r.usuario)}`,distrito:norm(r.distrito),almacen:alm(r.almacen || r.pedido),tecnico:txt(r.tecnico || r.salida || r.usuario) || 'Totalplay',total:0}), (g,r) => { g.total += num(r.total || r.cantidad) || 1; if(!details.recoleccionesEntregadasTP[g.key])details.recoleccionesEntregadasTP[g.key]=[]; details.recoleccionesEntregadasTP[g.key].push({fecha:r.fecha || r.fecha_salida || r.creado_en,serie:r.serie,lote:r.lote,folioEntrada:r.folio_entrada || r.folio || r.documento_sap,estado:r.estado || r.estatus}) })
 
   const critGroups = new Map(), pendingGroups = new Map()
   const today = new Date(); today.setHours(0,0,0,0)
   let maxCritDays = 0, maxPendingDays = 0
-  const seenPendingSeries = new Set()
   all.iq09.forEach(r => {
     const warehouse = alm(r.almacen), district = norm(r.distrito)
     if (!warehouse || !distritos.includes(district)) return
-    // Pendientes por recibir: solo lote TPE USADO de técnicos activos.
-    if (norm(r.lote) === 'TPE USADO' && !warehouses.has(`${district}|${warehouse}`)) return
     const serial = norm(r.serie), lot = norm(r.lote)
     const d = dateValue(r.fecha_modificacion || r.fecha_ingreso || r.fecha)
     const days = d ? Math.max(0, Math.floor((today - new Date(d.getFullYear(),d.getMonth(),d.getDate())) / 86400000)) : null
     const tech = userByKey.get(`${district}|${warehouse}`) || warehouse
     const key = `${district}|${warehouse}|${tech}`
-    if (lot === 'TPE USADO' && serial && !deliveredSeries.has(`${district}|${serial}`) && !seenPendingSeries.has(`${district}|${serial}`)) {
-      seenPendingSeries.add(`${district}|${serial}`)
+    if (lot === 'TPE USADO' && !deliveredSeries.has(serial)) {
       const g = pendingGroups.get(key) || {key,distrito:district,almacen:warehouse,tecnico:tech,total:0,maxDias:0}
       g.total++; if(days !== null){g.maxDias=Math.max(g.maxDias,days); maxPendingDays=Math.max(maxPendingDays,days);} pendingGroups.set(key,g)
       if (!details.recoleccionesPendientes[key]) details.recoleccionesPendientes[key]=[]
@@ -355,7 +320,7 @@ export async function GET(request) {
     const unit = r.costo_unitario ?? r.costo_por_pieza ?? r.precio_unitario
     if (unit !== undefined && unit !== null && txt(unit) !== '') return { costo: money(num(unit) * cantidad), conocido: true }
     const sku = txt(r.sku || r.material || r.codigo_material)
-    if (sku && costBySku.has(norm(sku))) return { costo: money(costBySku.get(norm(sku)) * cantidad), conocido: true }
+    if (sku && costBySku.has(sku)) return { costo: money(costBySku.get(sku) * cantidad), conocido: true }
     return { costo: null, conocido: false }
   }
   const fechaReporte = r => {
@@ -379,15 +344,9 @@ export async function GET(request) {
   const eventosRecibidas = all.recolecciones
     .map(r => { const d = recoDistritoSeguro(r); return d ? eventoReco(r, d) : null })
     .filter(Boolean).filter(r => inRange(r.fecha, from, to))
-  const eventosEnviadas = tpSeriesEvents
-    .map(r => {
-      const fecha = fechaReporte(r.fecha)
-      if (!fecha) return null
-      const sku = txt(r.sku)
-      const conocido = costBySku.has(norm(sku))
-      return { fecha, distrito: norm(r.distrito), almacen: alm(r.pedido), serie: txt(r.serie),
-        cantidad: 1, costo: conocido ? money(costBySku.get(norm(sku))) : null, costoConocido: conocido }
-    })
+  const eventosEnviadas = all.recoTP
+    .filter(r => distritos.includes(norm(r.distrito)))
+    .map(r => eventoReco(r, norm(r.distrito)))
     .filter(Boolean).filter(r => inRange(r.fecha, from, to))
   if (!all.recoTP.length) advertencias.push('Recolecciones enviadas a TP: no hay filas disponibles en recus_tp; no se sustituyen por las recibidas.')
   const resumenEventos = eventos => ({
@@ -430,7 +389,7 @@ export async function GET(request) {
     for (const r of items) {
       g.pendientesPiezas++
       const sku=txt(r.sku)
-      if(costBySku.has(norm(sku)))g.pendientesCosto+=costBySku.get(norm(sku))
+      if(costBySku.has(sku))g.pendientesCosto+=costBySku.get(sku)
       else g.pendientesSinCosto++
     }
   }
