@@ -123,7 +123,6 @@ export default function RecoleccionesPage() {
 
   const inputSerie = useRef(null)
   const inputAlmacen = useRef(null)
-  const validandoSerie = useRef(false)
 
   const catalogo = useMemo(
     () => datos?.equipos || [],
@@ -309,61 +308,67 @@ export default function RecoleccionesPage() {
       }, 100)
     })
 
-  const agregar = async () => {
-    if (validandoSerie.current) return
-    validandoSerie.current = true
-
+  const agregar = () => {
     setError('')
     setMensaje('')
 
-    try {
-      const serie = upper(captura)
+    const serie = upper(captura)
 
-      if (!datos) throw new Error('Primero carga el almacén del técnico.')
-      if (guardado) throw new Error('Esta recolección ya fue guardada.')
-      if (!serie) return
-
-      const duplicada = entregadas.some(e => upper(e.serie) === serie)
-      if (duplicada) throw new Error(`La serie ${serie} ya fue escaneada.`)
-
-      // La lista "Series en SAP" sigue limitada a TPE USADO (catalogo).
-      // Para la captura se acepta cualquier lote existente en IQ09 del mismo
-      // distrito y almacén del técnico.
-      let equipo = catalogo.find(e => upper(e.serie) === serie)
-
-      if (!equipo) {
-        const { data: encontrado, error: consultaError } = await supabase
-          .from('iq09_equipos')
-          .select('serie, material, descripcion, lote, almacen, distrito, fecha_modificacion')
-          .eq('distrito', upper(datos.distrito || datos.centro || centroActivo))
-          .eq('almacen', normalizarAlmacen(datos.almacen))
-          .eq('serie', serie)
-          .limit(1)
-          .maybeSingle()
-
-        if (consultaError) throw consultaError
-        if (!encontrado) {
-          throw new Error(`La serie ${serie} no existe en IQ09 para el almacén ${datos.almacen}.`)
-        }
-
-        equipo = {
-          ...encontrado,
-          dias: null
-        }
-      }
-
-      setEntregadas(prev => {
-        if (prev.some(e => upper(e.serie) === serie)) return prev
-        return [...prev, equipo]
-      })
-      setCaptura('')
-      setMensaje(`Serie ${serie} agregada. Lote: ${equipo.lote || 'Sin lote'}.`)
-    } catch (e) {
-      setError(e?.message || 'No fue posible validar la serie en IQ09.')
-    } finally {
-      validandoSerie.current = false
-      setTimeout(() => inputSerie.current?.focus(), 100)
+    if (!datos) {
+      setError(
+        'Primero carga el almacén del técnico.'
+      )
+      return
     }
+
+    if (guardado) {
+      setError(
+        'Esta recolección ya fue guardada.'
+      )
+      return
+    }
+
+    if (!serie) return
+
+    // Evitar duplicados dentro de la captura actual.
+    const duplicada = entregadas.some(
+      e => upper(e.serie) === serie
+    )
+
+    if (duplicada) {
+      setError(`La serie ${serie} ya fue escaneada.`)
+      setCaptura('')
+      setTimeout(() => inputSerie.current?.focus(), 100)
+      return
+    }
+
+    // IQ09 solo aporta los datos complementarios cuando encuentra la serie.
+    // La serie se puede recibir aunque no exista en IQ09 ni sea TPE USADO.
+    const equipoSAP = catalogo.find(
+      e => upper(e.serie) === serie
+    )
+
+    const equipo = equipoSAP || {
+      serie,
+      material: '',
+      descripcion: 'NO EXISTE EN SAP',
+      lote: '',
+      dias: null,
+      tp_stocks: null,
+      existe_iq09: false
+    }
+
+    setEntregadas(prev => [...prev, equipo])
+    setCaptura('')
+    setMensaje(
+      equipoSAP
+        ? `Serie ${serie} agregada correctamente.`
+        : `Serie ${serie} agregada. No existe en IQ09.`
+    )
+
+    setTimeout(() => {
+      inputSerie.current?.focus()
+    }, 100)
   }
 
   const eliminarSerie = serie => {
@@ -461,11 +466,9 @@ export default function RecoleccionesPage() {
         throw new Error(`La recolección pertenece a ${distritoValidado}; tu distrito activo es ${centroActivo}.`)
       }
 
-      const pendientesAntesDeGuardar =
-        Math.max(
-          0,
-          catalogo.length - entregadas.length
-        )
+      // Solo descuentan del inventario TPE USADO las series que
+      // pertenecían al catálogo SAP; las series libres no alteran ese total.
+      const pendientesAntesDeGuardar = pendientes.length
 
       const seriesAntesDeGuardar = [...entregadas]
 
@@ -635,7 +638,7 @@ export default function RecoleccionesPage() {
           <h1>Recepción de Recolecciones</h1>
 
           <p>
-            La lista SAP muestra TPE USADO; puedes registrar cualquier serie existente en IQ09 del almacén.
+            Solo equipos de iq09_equipos con lote TPE USADO.
           </p>
         </header>
 
