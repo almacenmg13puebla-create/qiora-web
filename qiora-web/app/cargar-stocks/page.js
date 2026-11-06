@@ -10,8 +10,8 @@ const TIPOS = [
     descripcion: 'Material, Descripción del material, Centro, Almacén, Libre utilización, Lote, Trans./Trasl., Denominación almacén.' },
   { id: 'STOCK_TECNICOS', titulo: 'STOCK_TECNICOS', columnas: 9, accept: '.csv,.xlsx,.xls',
     descripcion: 'Los ocho campos de almacén más Solicita. Disponible se calcula automáticamente.' },
-  { id: 'HERRAMIENTA', titulo: 'Cargar herramienta', columnas: 3, accept: '.csv,.xlsx,.xls',
-    descripcion: 'Producto, Ubicación y Cantidad.' },
+  { id: 'HERRAMIENTA', titulo: 'Cargar herramienta', columnas: 13, accept: '.csv,.xlsx,.xls',
+    descripcion: 'Inventario por colaborador: 13 columnas (colaborador, empleado, sucursal, referencia, producto, lotes, serie, placa, cantidad, valores y estado).' },
   { id: 'IQ09', titulo: 'iq09_equipos', columnas: 10, accept: '.csv,.xlsx,.xls',
     descripcion: 'Material, Descripción material, Número de serie, Centro, Almacén, Fecha modificación, Lote, Lote de stock, Denom. status y Tp.stocks (contab.refer.).' },
 ]
@@ -72,7 +72,24 @@ function filasAObjetos(tipo, filas, distrito) {
     const disponible = libre + solicita
     return { material: clean(r[0]), descripcion: clean(r[1]), centro: distrito, almacen: almacen4(r[3]), libre_utilizacion: libre, lote: clean(r[5]), trans_trasl: numero(r[6]), denominacion_almacen: clean(r[7]), solicita, disponible }
   })
-  if (tipo === 'HERRAMIENTA') return datos.map(r => ({ producto: clean(r[0]), ubicacion: clean(r[1]), cantidad: numero(r[2]), distrito }))
+  if (tipo === 'HERRAMIENTA') return datos.map((r, i) => {
+    const cantidad = numero(r[9])
+    const valorCompra = numero(r[10])
+    const valorActual = numero(r[11])
+    if (cantidad < 0 || valorCompra < 0 || valorActual < 0) throw new Error(`La fila ${i + 2} contiene cantidades o valores negativos.`)
+    const colaborador = clean(r[0])
+    const noEmpleado = clean(r[1])
+    const sucursal = clean(r[2])
+    const referencia = clean(r[3])
+    const producto = clean(r[4])
+    if (!colaborador || !referencia || !producto) throw new Error(`La fila ${i + 2} requiere COLABORADOR, REFERENCIA y PRODUCTO.`)
+    return {
+      colaborador, no_empleado: noEmpleado, sucursal, referencia, producto,
+      lote_proveedor: clean(r[5]), lote_qiora: clean(r[6]), serie: upper(r[7]),
+      placa_qiora: upper(r[8]), cantidad, valor_compra: valorCompra,
+      valor_actual: valorActual, estado: clean(r[12]), distrito
+    }
+  })
   if (tipo === 'IQ09') return datos.map((r, i) => {
     const centro = upper(r[3])
     if (centro && centro !== distrito) throw new Error(`La fila ${i + 2} pertenece a ${centro}, no a ${distrito}. No se cargó el archivo.`)
