@@ -104,6 +104,15 @@ export async function GET(request) {
   }
   if (!distritos.length) return response({ ok: true, distrito: padre ? 'TODOS' : norm(actor.distrito), kpis: {}, tablas: {}, detalles: {}, advertencias: ['No hay distritos activos asociados a usuarios.'] })
 
+  // El Dashboard opera sobre un solo distrito activo. ADMIN_PADRE solo puede
+  // seleccionar distritos asociados a usuarios activos; los demás quedan fijados a su distrito.
+  const distritosAutorizados = [...distritos]
+  const distritoSolicitado = norm(params.get('distrito') || (padre ? distritos[0] : actor.distrito))
+  if (!distritosAutorizados.includes(distritoSolicitado)) {
+    return response({ ok: false, error: 'El distrito seleccionado no está autorizado.' }, 403)
+  }
+  distritos = [distritoSolicitado]
+
   const advertencias = []
   const all = { solicitudes: [], traspasos: [], recolecciones: [], recoTP: [], auditorias: [], stock: [], iq09: [], costos: [], stockCentro: [], usuarios: [] }
   const optionalRows = async (name, factory) => {
@@ -454,5 +463,5 @@ export async function GET(request) {
     faltantesPiezas:porDistrito.reduce((a,g)=>a+g.faltantesPiezas,0),
     faltantesCosto:null,
   }
-  return response({ok:true,distrito:padre?'TODOS':norm(actor.distrito),desde:from,hasta:to,generado:new Date().toISOString(),kpis,tablas:rows,detalles:details,reporteRecolecciones,porDistrito,advertencias})
+  return response({ok:true,distrito:distritoSolicitado,distritosDisponibles:padre ? distritosAutorizados : [norm(actor.distrito)],desde:from,hasta:to,generado:new Date().toISOString(),kpis,tablas:rows,detalles:details,reporteRecolecciones,porDistrito,advertencias})
 }
