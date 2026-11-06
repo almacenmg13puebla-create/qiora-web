@@ -29,35 +29,47 @@ function htmlComprobanteEntrega({ data, materiales, almacen, tecnico, folio, dis
     timeZone: 'America/Mexico_City', dateStyle: 'long', timeStyle: 'short'
   })
   const totalPiezas = materiales.reduce((n, m) => n + cantidad(m), 0)
-  const filas = materiales.map((m, i) => `
+  const serializados = materiales.filter(m => esTPE(m.lote) && m.series?.length)
+  const maxSeries = Math.max(0, ...serializados.map(m => m.series.length))
+  const filas = materiales.map(m => `
     <tr>
-      <td>${i + 1}</td><td>${escaparHtml(m.sku)}</td>
-      <td>${escaparHtml(m.descripcion || m.material)}</td>
-      <td class="num">${escaparHtml(m.cantidad)}</td>
-      <td>${escaparHtml(m.lote || 'SIN LOTE')}</td>
-    </tr>
-    ${m.series?.length ? `<tr class="series"><td></td><td colspan="4"><strong>Series:</strong><br>${m.series.map(escaparHtml).join('<br>')}</td></tr>` : ''}
-  `).join('')
+      <td class="sku">${escaparHtml(m.sku)}</td>
+      <td class="material">${escaparHtml(m.descripcion || m.material)}</td>
+      <td class="center">${escaparHtml(m.cantidad)}</td>
+      <td class="center">${escaparHtml(m.lote || 'SIN LOTE')}</td>
+    </tr>`).join('')
+  const columnasSeries = serializados.map(m => `
+    <th>${escaparHtml(m.sku)} <small>(${m.series.length})</small></th>`).join('')
+  const filasSeries = Array.from({ length: maxSeries }, (_, i) => `
+    <tr>${serializados.map(m => `<td>${escaparHtml(m.series[i] || '')}</td>`).join('')}</tr>`).join('')
+  const bloqueSeries = serializados.length ? `
+    <section class="series-section">
+      <h2 class="series-title">SERIES</h2>
+      <table class="series-table"><thead><tr>${columnasSeries}</tr></thead><tbody>${filasSeries}</tbody></table>
+    </section>` : ''
 
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Comprobante ${escaparHtml(data?.folio_control || '')}</title>
   <style>
-    *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#17231f;margin:0;background:#eef2ef}
-    .sheet{width:210mm;min-height:297mm;margin:18px auto;padding:15mm;background:#fff;box-shadow:0 2px 16px #0002}
-    .top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #087653;padding-bottom:14px}
-    .brand{font-size:24px;font-weight:800;color:#087653;letter-spacing:1px}.subtitle{font-size:12px;color:#50635b;margin-top:5px}
-    h1{font-size:20px;margin:0;text-align:right;color:#123d30}.folio{text-align:right;font-size:13px;margin-top:9px;font-weight:bold}
-    h2{font-size:13px;color:#087653;border-bottom:1px solid #cbd8d1;padding-bottom:6px;margin:22px 0 10px}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 22px;font-size:12px}.field{padding:5px 0;border-bottom:1px solid #e3e9e5}.label{font-size:10px;color:#60736a;text-transform:uppercase;display:block;margin-bottom:3px}
-    table{width:100%;border-collapse:collapse;font-size:11px}th{background:#087653;color:#fff;text-align:left;padding:9px 7px}td{border:1px solid #d5dfd9;padding:8px 7px;vertical-align:top}.num{text-align:center}.series td{background:#f5faf7;line-height:1.55}
-    .totals{display:flex;justify-content:flex-end;gap:28px;margin:16px 0;font-size:12px;font-weight:bold}.signatures{display:grid;grid-template-columns:1fr 1fr;gap:45px;margin-top:65px;text-align:center;font-size:11px}.sign{border-top:1px solid #253a31;padding-top:8px}.foot{border-top:1px solid #d5dfd9;margin-top:55px;padding-top:10px;text-align:center;color:#718078;font-size:9px}
-    .actions{width:210mm;margin:12px auto;text-align:right}.actions button{background:#087653;color:white;border:0;border-radius:5px;padding:10px 18px;font-weight:bold;cursor:pointer}
-    @page{size:A4 portrait;margin:0} @media print{body{background:#fff}.sheet{margin:0;width:210mm;min-height:297mm;box-shadow:none;padding:15mm}.actions{display:none}}
-    @media screen and (max-width:800px){.sheet,.actions{width:100%;margin:0}.sheet{padding:18px;min-height:100vh}.top{gap:15px}h1{font-size:16px}}
+    *{box-sizing:border-box}html,body{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;color:#14231e;background:#edf1ee}
+    .actions{width:210mm;margin:10px auto;text-align:right}.actions button{background:#087b55;color:#fff;border:0;border-radius:5px;padding:10px 22px;font-weight:700;cursor:pointer;font-size:13px}
+    .sheet{width:210mm;min-height:297mm;margin:12px auto;padding:7mm 8mm;background:#fff;box-shadow:0 2px 14px #0002;overflow:hidden}
+    .top{display:grid;grid-template-columns:1fr 1fr;align-items:center;gap:8mm;border-bottom:2.5px solid #07804f;padding:0 0 4mm;margin-bottom:3mm}
+    .brand{display:flex;align-items:center;gap:7px;color:#075c43}.sat-mark{width:18mm;height:15mm;border-radius:4mm;background:#079b68;color:#fff;display:flex;align-items:center;justify-content:center;font-size:17pt;font-weight:900;letter-spacing:-1px}.sat-name{font-size:16pt;font-weight:900;line-height:1.05}.sat-sub{font-size:7pt;font-weight:700;line-height:1.15;margin-top:2px;max-width:42mm}
+    h1{font-size:17pt;line-height:1.05;margin:0;text-align:right;color:#103e30}.folio{text-align:right;font-size:9pt;margin-top:3mm;font-weight:800}
+    h2{font-size:9pt;color:#087653;margin:0 0 2mm;padding-bottom:1.2mm;border-bottom:1px solid #d5dfd9}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5mm 7mm;font-size:8pt}.field{padding:1.3mm 0;border-bottom:1px solid #e1e7e3;min-height:10mm}.label{font-size:6.5pt;color:#62736b;text-transform:uppercase;display:block;margin-bottom:1mm}
+    .materials{margin-top:4mm}.materials table,.series-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:7.3pt}.materials th,.series-table th{background:#006b4b;color:#fff;font-size:7pt;font-weight:800;padding:1.6mm 1.2mm;border:1px solid #b8c9c0;text-align:center}.materials td,.series-table td{border:1px solid #c7d1cc;padding:1.25mm 1.3mm;vertical-align:middle;overflow-wrap:anywhere}.materials .sku{width:13%;text-align:center;font-weight:700}.materials .material{width:49%}.materials .center{text-align:center;width:13%}.materials td:last-child{width:25%;text-align:center}
+    .series-section{margin-top:3mm}.series-title{text-align:center;background:#e9f3eb;border:0;padding:1.5mm;margin:0 0 1.5mm;font-size:9pt}.series-table th{font-size:7pt;padding:1.5mm .8mm}.series-table th small{font-size:6pt}.series-table td{text-align:center;font-size:6.4pt;padding:1.1mm .5mm;line-height:1.15;white-space:nowrap}
+    .totals{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:3mm;background:#eaf4e9;color:#07583f;font-size:9pt;font-weight:900;text-align:center;padding:2.5mm}.totals span+span{border-left:1px solid #087653}
+    .signatures{display:grid;grid-template-columns:1fr 1fr;gap:20mm;margin:7mm 4mm 0;text-align:center;font-size:8pt}.sign{padding-top:8mm;position:relative}.sign:before{content:"";position:absolute;left:5%;right:5%;top:7mm;border-top:1px solid #263b32}.foot{border-top:2px solid #07804f;margin-top:7mm;padding-top:2mm;text-align:center;color:#53645c;font-size:6.5pt}
+    @page{size:A4 portrait;margin:0}
+    @media print{html,body{width:210mm;height:297mm;background:#fff}.actions{display:none}.sheet{margin:0;width:210mm;height:297mm;min-height:297mm;padding:7mm 8mm;box-shadow:none;overflow:hidden;page-break-after:avoid;break-after:avoid}.materials tr,.series-table tr{break-inside:avoid;page-break-inside:avoid}}
+    @media screen and (max-width:800px){.sheet,.actions{width:100%;margin:0}.sheet{min-height:100vh;padding:18px}.top{gap:12px}.sat-mark{width:58px;height:48px}.sat-name{font-size:16px}h1{font-size:16px}}
   </style></head><body>
-  <div class="actions"><button onclick="window.print()">Imprimir</button></div>
-  <article class="sheet">
-    <div class="top"><div><div class="brand">QIORA</div><div class="subtitle">CONTROL DE ALMACÉN · COMPROBANTE DE ENTREGA</div></div>
+  <div class="actions"><button onclick="window.print()">IMPRIMIR</button></div>
+  <article class="sheet" id="sheet">
+    <div class="top"><div class="brand"><div class="sat-mark">SAT</div><div><div class="sat-name">SAT</div><div class="sat-sub">Sistema de Automatización de Traspasos</div></div></div>
       <div><h1>ENTREGA DE MATERIAL</h1><div class="folio">FOLIO CONTROL: ${escaparHtml(data?.folio_control || 'NO GENERADO')}</div></div></div>
     <h2>DATOS DE LA ENTREGA</h2><div class="grid">
       <div class="field"><span class="label">Folio de solicitud</span>${escaparHtml(data?.folio || folio || (manual ? 'SIN SOLICITUD' : 'NO REGISTRADO'))}</div>
@@ -67,10 +79,11 @@ function htmlComprobanteEntrega({ data, materiales, almacen, tecnico, folio, dis
       <div class="field"><span class="label">Almacén destino</span>${escaparHtml(almacen)}</div>
       <div class="field"><span class="label">Técnico que recibe</span>${escaparHtml(tecnico)}</div>
     </div>
-    <h2>DETALLE DE MATERIALES</h2><table><thead><tr><th>#</th><th>SKU</th><th>DESCRIPCIÓN</th><th>CANT.</th><th>LOTE</th></tr></thead><tbody>${filas}</tbody></table>
-    <div class="totals"><span>PARTIDAS: ${materiales.length}</span><span>TOTAL DE PIEZAS: ${totalPiezas}</span></div>
-    <div class="signatures"><div class="sign">ENTREGA<br>Nombre y firma</div><div class="sign">RECIBE<br>Nombre y firma</div></div>
-    <div class="foot">QIORA · Comprobante generado desde el registro confirmado en Supabase. Conserve este documento como respaldo.</div>
+    <section class="materials"><h2>MATERIALES ENTREGADOS</h2><table><thead><tr><th class="sku">SKU</th><th class="material">MATERIAL</th><th class="center">CANTIDAD</th><th class="center">LOTE</th></tr></thead><tbody>${filas}</tbody></table></section>
+    ${bloqueSeries}
+    <div class="totals"><span>TOTAL DE MATERIALES: ${materiales.length}</span><span>TOTAL DE PIEZAS: ${totalPiezas}</span></div>
+    <div class="signatures"><div class="sign"><strong>ENTREGA</strong><br>Nombre y firma</div><div class="sign"><strong>RECIBE</strong><br>Nombre y firma</div></div>
+    <div class="foot">CONTROL DE ALMACÉN · COMPROBANTE DE ENTREGA</div>
   </article>
   </body></html>`
 }
