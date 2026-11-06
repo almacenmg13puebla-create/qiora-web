@@ -17,7 +17,6 @@ const sections = [
   ['recolecciones','Recolecciones recibidas'],
   ['recoleccionesEntregadasTP','Recolecciones entregadas a Totalplay'],
   ['recoleccionesPendientes','Recolecciones pendientes'],
-  ['faltantes','Piezas faltantes por entregar'],
   ['auditorias','Auditorías realizadas'],
   ['valor','Valor en cajuela (solo técnicos activos)'],
   ['valorCentro','Valor por centro'],
@@ -154,7 +153,6 @@ export default function DashboardPage() {
     ['recolecciones','RECOLECCIONES RECIBIDAS',fmt(k.recibidasPiezas),`Piezas · Costo identificado: ${mxn(k.recibidasCosto)}`],
     ['recoleccionesEntregadasTP','ENTREGADAS A TOTALPLAY',fmt(k.entregadasPiezas),`Piezas · Costo identificado: ${mxn(k.entregadasCosto)}`],
     ['recoleccionesPendientes','RECOLECCIONES PENDIENTES',fmt(k.pendientesPiezas),`Piezas · Costo identificado: ${mxn(k.pendientesCosto)}`],
-    ['faltantes','PIEZAS FALTANTES POR ENTREGAR',fmt(k.faltantesPiezas),'Diferencia recibidas − enviadas; costo sin conciliar'],
     ['auditorias','AUDITORÍAS REALIZADAS',fmt(k.auditoriasRealizadas),'Faltantes: sin meta definida'],
     ['valor','VALOR EN CAJUELA',mxn(k.valorCajuela),'Solo stock_tecnicos de técnicos activos'],
     ['valorCentro','VALOR POR CENTRO',mxn(k.valorCentro),'Solo stock_almacen'],
@@ -199,7 +197,7 @@ export default function DashboardPage() {
     <div id="tabContent">
       {activeTab==='resumen'&&<>
         <div className="kpis">{cards.map(([id,title,value,sub])=><button key={id} className={`kpi ${id==='criticos'?'red':id==='recoleccionesPendientes'?'lime':''}`} onClick={()=>{setSection(id);setActiveTab(id==='auditorias'?'auditorias':id==='criticos'?'equipos':'recolecciones');setSearch('');setDetail(null)}}><span>{title}</span><b>{value}</b><small>{sub}</small></button>)}</div>
-        <section className="tableCard"><div className="tableHead"><h2>Resumen por distrito</h2><small>Movimientos según fechas seleccionadas; inventario actual.</small></div>{renderTable(data?.porDistrito||[],[['Distrito','distrito'],['Recibidas','recibidasPiezas'],['Costo recibidas','recibidasCosto'],['Enviadas TP','entregadasPiezas'],['Costo enviadas','entregadasCosto'],['Pendientes','pendientesPiezas'],['Costo pendientes','pendientesCosto'],['Faltantes','faltantesPiezas'],['Auditorías','auditoriasRealizadas'],['Valor cajuela','valorCajuela'],['Valor centro','valorCentro']],'Sin información por distrito.')}</section>
+        <section className="tableCard"><div className="tableHead"><h2>Resumen por distrito</h2><small>Movimientos según fechas seleccionadas; inventario actual.</small></div>{renderTable(data?.porDistrito||[],[['Distrito','distrito'],['Recibidas','recibidasPiezas'],['Costo recibidas','recibidasCosto'],['Enviadas TP','entregadasPiezas'],['Costo enviadas','entregadasCosto'],['Pendientes','pendientesPiezas'],['Costo pendientes','pendientesCosto'],['Auditorías','auditoriasRealizadas'],['Valor cajuela','valorCajuela'],['Valor centro','valorCentro']],'Sin información por distrito.')}</section>
         <section className="tableCard"><div className="tableHead"><div><h2>Recolecciones por periodo</h2><small>Desglose diario, mensual o anual.</small></div><select value={periodoReco} onChange={e=>setPeriodoReco(e.target.value)}><option value="dia">Por día</option><option value="mes">Por mes</option><option value="anio">Por año</option></select></div><div className="recoGrid">{[['recibidas','RECOLECCIONES RECIBIDAS'],['enviadasTP','RECOLECCIONES ENVIADAS A TOTALPLAY']].map(([tipo,titulo])=>{const rep=data?.reporteRecolecciones?.[tipo]||{registros:[],cantidad:0,costoConocido:0,sinCosto:0};const grupos=agruparRecolecciones(rep.registros);return <div className="recoPanel" key={tipo}><div className="tableHead"><div><h3>{titulo}</h3><small>{fmt(rep.cantidad)} piezas · {mxn(rep.costoConocido)} identificado</small></div><button onClick={()=>exportarRecolecciones(tipo)}>Excel</button></div>{renderTable(grupos,[['Periodo','periodo'],['Distrito','distrito'],['Piezas','cantidad'],['Costo','costo'],['Sin costo','sinCosto']],'Sin registros en el periodo.')}</div>})}</div></section>
       </>}
       {activeTab==='recolecciones'&&<>
