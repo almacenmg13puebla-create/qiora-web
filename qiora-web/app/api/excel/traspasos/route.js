@@ -62,8 +62,8 @@ async function notificarConfirmacion(db,folio,centro){
  const {data:cfg,error:ce}=await db.from('qiora_distritos_telegram').select('token_cifrado,chat_traspasos').eq('centro',centro).single()
  if(ce||!cfg?.chat_traspasos||!cfg?.token_cifrado)throw Error('Configura el grupo Telegram de '+centro)
  const destinatarios=[{nombre:'GRUPO',chat:S(cfg.chat_traspasos),token:descifrarToken(cfg.token_cifrado)}]
- const privateToken=S(process.env.QIORA_BOT_TOKEN)
- const {data:usuarios,error:ue}=await db.from('almacen_usuarios').select('usuario_almacen,telegram_chat_id').eq('distrito',centro).eq('activo',true).in('usuario_almacen',[t.origen,t.destino])
+ const privateToken=S(process.env.QIORA_BOT_TOKEN||process.env.BOT_TOKEN)
+ const {data:usuarios,error:ue}=await db.from('almacen_usuarios').select('usuario_almacen,telegram_chat_id').eq('distrito',centro).eq('activo',true).in('usuario_almacen',[t.origen,t.destino]).not('telegram_chat_id','is',null)
  if(ue)throw ue
  if(privateToken){
   for(const u of usuarios||[]){
@@ -89,7 +89,8 @@ async function notificarConfirmacion(db,folio,centro){
    await db.from('qiora_traspasos_avisos').update({estado:'ERROR',error:S(e.message).slice(0,400),actualizado_en:new Date().toISOString()}).eq('folio_control',folio).eq('destino',key)
   }
  }
- if(!privateToken)errores.push('Falta QIORA_BOT_TOKEN para mensajes privados')
+ if(!privateToken&&(usuarios||[]).some(u=>S(u.telegram_chat_id)))errores.push('Falta QIORA_BOT_TOKEN o BOT_TOKEN para enviar mensajes privados a usuarios con Telegram')
+ if(privateToken&&!(usuarios||[]).some(u=>S(u.telegram_chat_id)))errores.push('No se encontraron usuarios activos de origen/destino con telegram_chat_id en el distrito '+centro)
  return {enviados:mensajes,errores}
 }
 async function sincronizarEntregaAbas(db,folio,centro){
