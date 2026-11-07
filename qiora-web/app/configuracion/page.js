@@ -158,6 +158,49 @@ const horarioActivo = valor =>
     .trim()
     .toUpperCase() === 'SI'
 
+
+function categoriaPermiso(p) {
+  const llave = `${p?.campo || ''} ${p?.nombre || ''}`.toLowerCase()
+  if (/dashboard|resumen|reporte|export/.test(llave)) return 'Dashboard y reportes'
+  if (/equipo|stock|inventario|iq09|mb52|material/.test(llave)) return 'Inventario y equipos'
+  if (/recole|traspas|entrada|salida|baja|cobro|auditor|recep/.test(llave)) return 'Operaciones'
+  if (/usuario|permiso|config|distrito|admin|horario|costo|odo|grupo/.test(llave)) return 'Administración'
+  return 'Otros accesos'
+}
+
+function PermisosArbol({ permisos = [], valores = {}, onChange, disabled = false }) {
+  const grupos = permisos.reduce((acc, permiso) => {
+    const categoria = categoriaPermiso(permiso)
+    if (!acc[categoria]) acc[categoria] = []
+    acc[categoria].push(permiso)
+    return acc
+  }, {})
+
+  return (
+    <div style={{ display: 'grid', gap: 9 }}>
+      {Object.entries(grupos).map(([categoria, items]) => {
+        const activos = items.filter(p => valores?.[p.campo] === true).length
+        return (
+          <details key={categoria} style={{ border: '1px solid #397564', borderRadius: 12, background: '#0a3027', padding: '10px 13px' }}>
+            <summary style={{ cursor: 'pointer', color: '#e8f5ef', fontWeight: 700, display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <span>{categoria}</span>
+              <span style={{ color: '#9ed9bd', fontSize: 12 }}>{activos}/{items.length} activos</span>
+            </summary>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 10, padding: '13px 2px 3px' }}>
+              {items.map(p => (
+                <label key={p.campo} style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#e3f0e9', fontSize: 13, minWidth: 0 }}>
+                  <input type="checkbox" checked={valores?.[p.campo] === true} disabled={disabled} onChange={e => onChange(p.campo, e.target.checked)} />
+                  <span>{p.nombre}</span>
+                </label>
+              ))}
+            </div>
+          </details>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function ConfiguracionPage() {
   const router = useRouter()
 
@@ -2518,24 +2561,17 @@ export default function ConfiguracionPage() {
                     <div style={css.error}>No se encontró el administrador de este distrito. Créalo primero desde la tabla de distritos.</div>
                   )}
 
-                  <h3>Módulos y permisos</h3>
-                  <div style={css.permisos}>
-                    {permisosDisponibles.filter(p => !['administrar_distritos'].includes(p.campo)).map(p => (
-                      <label key={p.campo} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                        <input
-                          type="checkbox"
-                          checked={permisosAdminDistrito?.[p.campo] === true}
-                          disabled={!centroPermisosSeleccionado || !usuarios.some(u =>
-                            String(u.distrito || '').trim().toUpperCase() === centroPermisosSeleccionado &&
-                            (String(u.puesto || '').trim().toUpperCase() === `ADMIN_${centroPermisosSeleccionado}` ||
-                             String(u.usuario_almacen || '').trim().toUpperCase() === `ADMIN_${centroPermisosSeleccionado}`)
-                          )}
-                          onChange={e => setPermisosAdminDistrito(prev => ({ ...prev, [p.campo]: e.target.checked }))}
-                        />
-                        {p.nombre}
-                      </label>
-                    ))}
-                  </div>
+                  <h3>Módulos y permisos por rama</h3>
+                  <PermisosArbol
+                    permisos={permisosDisponibles.filter(p => !['administrar_distritos'].includes(p.campo))}
+                    valores={permisosAdminDistrito}
+                    disabled={!centroPermisosSeleccionado || !usuarios.some(u =>
+                      String(u.distrito || '').trim().toUpperCase() === centroPermisosSeleccionado &&
+                      (String(u.puesto || '').trim().toUpperCase() === `ADMIN_${centroPermisosSeleccionado}` ||
+                       String(u.usuario_almacen || '').trim().toUpperCase() === `ADMIN_${centroPermisosSeleccionado}`)
+                    )}
+                    onChange={(campo, valor) => setPermisosAdminDistrito(prev => ({ ...prev, [campo]: valor }))}
+                  />
                   <div style={css.botones}>
                     <button
                       type="button"
@@ -2681,25 +2717,12 @@ export default function ConfiguracionPage() {
 
                 </div>
 
-                <h3>Permisos de módulos</h3>
-                <div style={css.permisos}>
-                  {permisosDisponibles.map(p => (
-                    <label key={p.campo}>
-                      <input
-                        type="checkbox"
-                        checked={nuevoUsuario.permisos?.[p.campo] === true}
-                        onChange={e => setNuevoUsuario(u => ({
-                          ...u,
-                          permisos: {
-                            ...(u.permisos || {}),
-                            [p.campo]: e.target.checked,
-                          },
-                        }))}
-                      />
-                      {' '}{p.nombre}
-                    </label>
-                  ))}
-                </div>
+                <h3>Permisos de módulos por rama</h3>
+                <PermisosArbol
+                  permisos={permisosDisponibles}
+                  valores={nuevoUsuario.permisos}
+                  onChange={(campo, valor) => setNuevoUsuario(u => ({ ...u, permisos: { ...(u.permisos || {}), [campo]: valor } }))}
+                />
 
                 <button
                   style={css.boton}
@@ -2772,52 +2795,11 @@ export default function ConfiguracionPage() {
                   Permisos
                 </h3>
 
-                <div style={css.permisos}>
-
-                  {permisosDisponibles.map(
-                    p => (
-
-                      <label
-                        key={
-                          p.campo
-                        }
-                      >
-                        <input
-                          type="checkbox"
-
-                          checked={
-                            usuarioEditando
-                              .permisos?.[
-                                p.campo
-                              ] ===
-                            true
-                          }
-
-                          onChange={
-                            e =>
-                              setUsuarioEditando(
-                                u => ({
-                                  ...u,
-
-                                  permisos: {
-                                    ...u.permisos,
-
-                                    [p.campo]:
-                                      e.target
-                                        .checked
-                                  }
-                                })
-                              )
-                          }
-                        />
-
-                        {p.nombre}
-                      </label>
-
-                    )
-                  )}
-
-                </div>
+                <PermisosArbol
+                  permisos={permisosDisponibles}
+                  valores={usuarioEditando.permisos}
+                  onChange={(campo, valor) => setUsuarioEditando(u => ({ ...u, permisos: { ...(u.permisos || {}), [campo]: valor } }))}
+                />
 
                 <button
                   style={css.boton}
