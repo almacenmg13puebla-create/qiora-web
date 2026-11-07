@@ -99,6 +99,25 @@ const normal = x =>
 const textoNumero = x =>
   String(x ?? '').trim()
 
+// Lee respuestas de API sin provocar "Unexpected end of JSON input".
+async function leerRespuestaJson(response) {
+  const texto = await response.text()
+
+  if (!texto.trim()) {
+    throw new Error(
+      `La API respondió vacía (HTTP ${response.status}). Verifica la ruta del servidor.`
+    )
+  }
+
+  try {
+    return JSON.parse(texto)
+  } catch {
+    throw new Error(
+      `La API devolvió una respuesta que no es JSON válido (HTTP ${response.status}).`
+    )
+  }
+}
+
 const nuevo = () => ({
   sku: '',
   material: '',
@@ -1008,7 +1027,7 @@ export default function ConfiguracionPage() {
 
       const r =
         await fetch(
-          '/api/distritos/telegram',
+          '/api/configuracion/distritos-telegram',
           {
             headers: {
               Authorization:
@@ -1022,9 +1041,9 @@ export default function ConfiguracionPage() {
         )
 
       const j =
-        await r.json()
+        await leerRespuestaJson(r)
 
-      if (!r.ok) {
+      if (!r.ok || j.ok !== true) {
         throw new Error(
           j.error ||
           'No se pudo consultar Telegram'
@@ -1032,8 +1051,9 @@ export default function ConfiguracionPage() {
       }
 
       setConfigTelegram(
-        j.distritos ||
-        {}
+        j.distritos && typeof j.distritos === 'object'
+          ? j.distritos
+          : {}
       )
 
     } catch (e) {
@@ -1076,7 +1096,7 @@ export default function ConfiguracionPage() {
 
     const r =
       await fetch(
-        '/api/distritos/telegram',
+        '/api/configuracion/distritos-telegram',
         {
           method:
             'POST',
@@ -1106,9 +1126,9 @@ export default function ConfiguracionPage() {
       )
 
     const j =
-      await r.json()
+      await leerRespuestaJson(r)
 
-    if (!r.ok) {
+    if (!r.ok || j.ok !== true) {
       throw new Error(
         j.error ||
         'No se pudo guardar Telegram'
