@@ -1,0 +1,53 @@
+
+name: Generar APK QIORA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar QIORA
+        uses: actions/checkout@v4
+
+      - name: Configurar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Configurar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar Capacitor
+        working-directory: qiora-web
+        run: |
+          npm install
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+          mkdir -p www
+          echo '<html><body>QIORA</body></html>' > www/index.html
+
+      - name: Preparar Android
+        working-directory: qiora-web
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Compilar APK
+        working-directory: qiora-web/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Descargar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: QIORA-APK
+          path: qiora-web/android/app/build/outputs/apk/debug/app-debug.apk
