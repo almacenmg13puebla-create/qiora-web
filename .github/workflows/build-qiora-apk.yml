@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Descargar QIORA
+      - name: Descargar repositorio
         uses: actions/checkout@v4
 
       - name: Configurar Java
@@ -26,18 +26,54 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Instalar Capacitor
+      - name: Instalar dependencias
         working-directory: qiora-web
         run: |
           npm install
-          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npm install @capacitor/core @capacitor/android
+          npm install -D @capacitor/cli typescript
+
+      - name: Preparar aplicación QIORA
+        working-directory: qiora-web
+        run: |
           mkdir -p www
-          echo '<html><body>QIORA</body></html>' > www/index.html
+
+          cat > www/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>QIORA</title>
+          </head>
+          <body>
+            <p>Conectando con QIORA...</p>
+          </body>
+          </html>
+          EOF
+
+          cat > capacitor.config.ts <<'EOF'
+          import type { CapacitorConfig } from '@capacitor/cli';
+
+          const config: CapacitorConfig = {
+            appId: 'com.qiora.app',
+            appName: 'QIORA',
+            webDir: 'www',
+            server: {
+              url: 'https://sistematraspasos.com/',
+              cleartext: false
+            }
+          };
+
+          export default config;
+          EOF
 
       - name: Preparar Android
         working-directory: qiora-web
         run: |
-          npx cap add android
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
           npx cap sync android
 
       - name: Compilar APK
@@ -46,8 +82,9 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Descargar APK
+      - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
           name: QIORA-APK
           path: qiora-web/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
