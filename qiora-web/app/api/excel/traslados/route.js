@@ -16,7 +16,9 @@ const out = (v, status = 200) =>
 function dbAdmin() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY
+
   if (!url || !key) throw new Error('SUPABASE_NO_CONFIGURADO')
+
   return createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false }
   })
@@ -27,14 +29,19 @@ async function validarExcel(db, distrito, token) {
     p_distrito: distrito,
     p_token: token
   })
-  if (error || data !== true) throw new Error('TOKEN_INVALIDO')
+
+  if (error || data !== true) {
+    throw new Error('TOKEN_INVALIDO')
+  }
 }
 
 function normalizarFila(x, distrito) {
   const documento = S(x.documentoTraspaso || x.documento_traspaso)
+
   if (!/^\d{8,12}$/.test(documento)) {
     throw new Error('DOCUMENTO_SAP_INVALIDO: ' + documento)
   }
+
   return {
     distrito,
     centro: U(x.centro || distrito),
@@ -42,11 +49,21 @@ function normalizarFila(x, distrito) {
     documento_traspaso: documento,
     fecha: S(x.fecha),
     movimiento: S(x.movimiento),
-    centro_receptor: U(x.centroReceptor || x.centro_receptor || distrito),
-    almacen_receptor: S(x.almacenReceptor || x.almacen_receptor),
-    documento_receptor: S(x.documentoReceptor || x.documento_receptor) || null,
-    fecha_receptor: S(x.fechaReceptor || x.fecha_receptor) || null,
-    movimiento_receptor: S(x.movimientoReceptor || x.movimiento_receptor) || null,
+    centro_receptor: U(
+      x.centroReceptor || x.centro_receptor || distrito
+    ),
+    almacen_receptor: S(
+      x.almacenReceptor || x.almacen_receptor
+    ),
+    documento_receptor: S(
+      x.documentoReceptor || x.documento_receptor
+    ) || null,
+    fecha_receptor: S(
+      x.fechaReceptor || x.fecha_receptor
+    ) || null,
+    movimiento_receptor: S(
+      x.movimientoReceptor || x.movimiento_receptor
+    ) || null,
     status_sap: S(x.status || x.status_sap),
     dias: Number(String(x.dias || 0).replace(',', '.')) || 0,
     raw_sap: x,
@@ -57,12 +74,20 @@ function normalizarFila(x, distrito) {
 function pendientes(rows) {
   return rows.filter(x =>
     !x.documento_receptor &&
-    !['CERRADO', 'REALIZADO', 'RECIBIDO', 'ENTRADA', 'ENTRADA REALIZADA', 'FINALIZADO'].includes(U(x.status_sap))
+    ![
+      'CERRADO',
+      'REALIZADO',
+      'RECIBIDO',
+      'ENTRADA',
+      'ENTRADA REALIZADA',
+      'FINALIZADO'
+    ].includes(U(x.status_sap))
   )
 }
 
 function textoReporte(distrito, rows) {
   const ps = pendientes(rows)
+
   const lines = [
     '📥 TRASPASOS PENDIENTES POR ENTRADA',
     '',
@@ -82,67 +107,115 @@ function textoReporte(distrito, rows) {
       '🟡 PENDIENTE DE ENTRADA'
     ].join('\n'))
   ]
-  return { total: ps.length, mensaje: lines.join('\n\n'), pendientes: ps }
+
+  return {
+    total: ps.length,
+    mensaje: lines.join('\n\n'),
+    pendientes: ps
+  }
 }
 
 export async function POST(req) {
   try {
     const d = await req.json()
+
     const distrito = U(d.distrito || d.centro)
     const token = S(d.token)
 
     if (!/^[A-Z]{2,5}[0-9]{1,5}$/.test(distrito) || !token) {
-      return out({ ok: false, error: 'DISTRITO_O_TOKEN_INVALIDO' }, 400)
+      return out({
+        ok: false,
+        error: 'DISTRITO_O_TOKEN_INVALIDO'
+      }, 400)
     }
 
     const db = dbAdmin()
+
     await validarExcel(db, distrito, token)
 
     if (U(d.action) === 'SUBIR_TRASLADOS_SAP') {
-      if (!Array.isArray(d.filas) || d.filas.length > 10000) {
-        return out({ ok: false, error: 'FILAS_INVALIDAS' }, 400)
+
+      // VALIDAR EXCEL
+      if (
+        !Array.isArray(d.filas) ||
+        d.filas.length === 0 ||
+        d.filas.length > 10000
+      ) {
+        return out({
+          ok: false,
+          error: 'EXCEL_SIN_REGISTROS_O_FILAS_INVALIDAS',
+          mensaje: 'No se reemplazaron los traslados anteriores.'
+        }, 400)
       }
 
-      const rows = d.filas.map(x => normalizarFila(x, distrito))
-      if (rows.length) {
-        const { error } = await db.from('qiora_traslados_sap').upsert(rows, {
-          onConflict: 'distrito,documento_traspaso'
-        })
-        if (error) throw error
+      // NORMALIZAR REGISTROS
+      const rows = d.filas.map(x =>
+        normalizarFila(x, distrito)
+      )
+
+      // REEMPLAZAR TRASLADOS SOLAMENTE DEL DISTRITO ACTUAL
+      const { data: recibidos, error: replaceError } = await db.rpc(
+        'qiora_reemplazar_traslados_sap',
+        {
+          p_distrito: distrito,
+          p_filas: rows
+        }
+      )
+
+      if (replaceError) {
+        console.error('[REEMPLAZO TRASLADOS]', replaceError)
+        throw replaceError
       }
 
+      // CONSULTAR LOS TRASLADOS ACTUALIZADOS
       const { data: all, error: readError } = await db
         .from('qiora_traslados_sap')
         .select('*')
         .eq('distrito', distrito)
         .order('fecha', { ascending: true })
+
       if (readError) throw readError
 
+      // GENERAR REPORTE
       const reporte = textoReporte(distrito, all || [])
-      const { error: avisoError } = await db.from('qiora_avisos_traslados').insert({
-        distrito,
-        tipo: 'REPORTE_PENDIENTES',
-        total_pendientes: reporte.total,
-        mensaje: reporte.mensaje,
-        estado: 'PENDIENTE',
-        origen_comando: S(d.comandoId),
-        creado_en: new Date().toISOString()
-      })
+
+      // GUARDAR AVISO
+      const { error: avisoError } = await db
+        .from('qiora_avisos_traslados')
+        .insert({
+          distrito,
+          tipo: 'REPORTE_PENDIENTES',
+          total_pendientes: reporte.total,
+          mensaje: reporte.mensaje,
+          estado: 'PENDIENTE',
+          origen_comando: S(d.comandoId),
+          creado_en: new Date().toISOString()
+        })
+
       if (avisoError) throw avisoError
 
       return out({
         ok: true,
         distrito,
-        recibidos: rows.length,
+        recibidos: Number(recibidos) || 0,
         total_pendientes: reporte.total,
-        mensaje: 'Traslados SAP guardados en Supabase; reporte preparado.'
+        mensaje: 'Traslados SAP reemplazados correctamente para el distrito. Reporte preparado.'
       })
     }
 
-    return out({ ok: false, error: 'ACCION_INVALIDA' }, 400)
+    return out({
+      ok: false,
+      error: 'ACCION_INVALIDA'
+    }, 400)
+
   } catch (e) {
     console.error('[EXCEL TRASLADOS]', e)
+
     const msg = S(e.message || e)
-    return out({ ok: false, error: msg }, msg === 'TOKEN_INVALIDO' ? 403 : 500)
+
+    return out({
+      ok: false,
+      error: msg
+    }, msg === 'TOKEN_INVALIDO' ? 403 : 500)
   }
 }
