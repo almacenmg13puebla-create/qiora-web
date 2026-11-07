@@ -282,7 +282,7 @@ export default function EntregaMaterial() {
       }
       setNuevoLotes(lotes)
       setNuevoLote(anterior => lotes.some(x => x.lote === anterior) ? anterior : lotes[0].lote)
-      setNuevoCantidad(c => Number(c) > 0 ? c : 1)
+      setNuevoCantidad(c => (!Number(c) || Number(c) === 1) ? Math.min(Math.max(1, Number(lotes[0].factor_empaque) || 1), Number(lotes[0].disponible)) : c)
     } catch(e) {
       if (id === ultimaBusquedaSku.current) {
         setNuevoLotes([]); setNuevoLote('')
@@ -511,18 +511,19 @@ export default function EntregaMaterial() {
       <button disabled={busy || !buscarControl} onClick={()=>cargarGuardada(buscarControl)}>Ver entrega y series</button></div>
       {guardada&&<p className="ok">Entrega registrada: {controlGuardado}. Las series permanecen guardadas después de actualizar la página. Esta entrega es de solo lectura.</p>}
     </section>
-    {!guardada&&<section><h3>Agregar material adicional</h3><p className="muted">Al escribir o escanear el SKU, presione Enter para pasar a Cantidad. Después de capturar la cantidad, presione Enter para agregar automáticamente el material. Se validan lote y existencias.</p>
+    {!guardada&&<section><h3>Agregar material adicional</h3><p className="muted">Al escribir o escanear el SKU, presione Enter para pasar a Cantidad. Capture la cantidad física exacta (piezas, metros o unidades); el factor de empaque solo es una referencia y no multiplica la cantidad. Puede registrar cajas incompletas, por ejemplo 285 o 223 metros.</p>
       <div className="grid">
         <label>SKU<input ref={skuInputRef} value={nuevoSku} placeholder="Escanee o escriba SKU" autoComplete="off"
           onChange={e=>setNuevoSku(e.target.value.replace(/[^0-9A-Za-z]/g,'').toUpperCase())}
           onBlur={()=>{if(nuevoSku && !nuevoLotes.length && !buscandoSku)consultarSku(nuevoSku)}}
           onKeyDown={enterSku}/></label>
         <label>Material<input value={nuevoLotes.find(x=>x.lote===nuevoLote)?.material||nuevoLotes[0]?.material||''} readOnly placeholder={buscandoSku?'Consultando...':'Se llena automático'}/></label>
-        <label>Cantidad<input ref={cantidadInputRef} type="number" min="1" max="10000" value={nuevoCantidad} onChange={e=>setNuevoCantidad(e.target.value)} onKeyDown={enterCantidad}/></label>
+        <label>Cantidad física (piezas, metros o unidades)<input ref={cantidadInputRef} type="number" min="1" max="10000" step="1" value={nuevoCantidad} onChange={e=>setNuevoCantidad(e.target.value)} onKeyDown={enterCantidad}/></label>
         <label>Lote<select value={nuevoLote} onChange={e=>setNuevoLote(e.target.value)} disabled={!nuevoLotes.length}>
           <option value="">Seleccione lote</option>
           {nuevoLotes.map((x,i)=><option key={`${x.lote}-${i}`} value={x.lote}>{x.lote||'SIN LOTE'} · disponible {x.disponible}</option>)}
         </select></label>
+        <label>Factor de empaque<input readOnly value={nuevoLotes.find(x=>x.lote===nuevoLote)?.factor_empaque || 1}/></label>
         <label>Requiere Series<input readOnly value={esTPE(nuevoLote)?'SI':'NO'}/></label>
         <button className="orange" disabled={busy||buscandoSku||(!manual&&!folio)||!nuevoLotes.length||!(Number(nuevoCantidad)>0)||Number(nuevoCantidad)>Number(nuevoLotes.find(x=>x.lote===nuevoLote)?.disponible||0)} onClick={()=>actualizarReserva('AGREGAR',null,nuevoCantidad)}>+ Agregar Material</button>
       </div>
