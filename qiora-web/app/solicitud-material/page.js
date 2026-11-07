@@ -753,22 +753,28 @@ export default function SolicitudMaterial() {
               )
         )
 
+  // Todos los valores del catálogo y de captura se manejan en unidades físicas.
+  // FACTOR_EMPAQUE es informativo; nunca multiplica la cantidad capturada.
   const maximo =
     esGrupo
       ? Math.max(
           0,
-          ...miembros
-            .map(
-              m =>
-                n(
-                  m.maximo
-                )
-            )
+          ...miembros.map(m => n(m.maximo))
         )
-      : n(
-          seleccion
-            ?.maximo
-        )
+      : n(seleccion?.maximo)
+
+  const factorEmpaque =
+    esGrupo ? 1 : Math.max(1, n(seleccion?.factor_empaque) || 1)
+
+  const minimoReposicion =
+    esGrupo
+      ? Math.max(0, ...miembros.map(m => n(m.minimo_reposicion)))
+      : n(seleccion?.minimo_reposicion)
+
+  const cantidadReposicion =
+    esGrupo
+      ? Math.max(1, ...miembros.map(m => n(m.cantidad_reposicion)))
+      : Math.max(1, n(seleccion?.cantidad_reposicion) || 1)
 
   const skus =
     esGrupo
@@ -865,12 +871,8 @@ export default function SolicitudMaterial() {
       )
 
   const origenCentral =
-    'ME' +
-    s(
-      ctx?.distrito
-    ).slice(
-      -2
-    )
+    s(ctx?.origen_central) ||
+    ('ME' + s(ctx?.distrito).slice(-2))
 
   const lotesCentral =
     (
@@ -1389,13 +1391,15 @@ export default function SolicitudMaterial() {
                 !horarioHabilitado
               }
 
-              onChange={
-                e =>
-                  R(
-                    e.target
-                      .value
-                  )
-              }
+              onChange={e => {
+                const valor = e.target.value
+                R(valor)
+                const material = catalogo.find(m => s(m.sku) === valor)
+                const sugerida = Math.max(1, n(material?.cantidad_reposicion) || 1)
+                const limiteTecnico = restoMaximo === null ? Infinity : restoMaximo
+                const limiteDisponible = Math.min(limiteTecnico, disponibleCentral)
+                Q(String(Math.max(1, Math.min(sugerida, limiteDisponible))))
+              }}
             >
               <option value="">
                 Seleccione material o grupo
@@ -1464,11 +1468,12 @@ export default function SolicitudMaterial() {
           </label>
 
           <label>
-            Cantidad
+            Cantidad física (piezas, metros o unidades)
 
             <input
               type="number"
               min="1"
+              max={restoMaximo === null ? disponibleCentral : Math.min(restoMaximo, disponibleCentral)}
               step="1"
 
               disabled={
@@ -1492,26 +1497,19 @@ export default function SolicitudMaterial() {
 
           <div className="chips">
 
-            <span>
-              Máximo permitido: {
-                maximo ||
-                '—'
-              }
-            </span>
-
-            <span>
-              Stock técnico: {
-                stockTec
-              }
-            </span>
-
-            <span>
-              Reservado: {
-                pendiente
-              }
-            </span>
+            <span>Máximo del técnico: {maximo > 0 ? maximo : 'Sin límite configurado'}</span>
+            <span>Stock técnico: {stockTec}</span>
+            <span>Reservado: {pendiente}</span>
+            <span>Disponible para solicitar: {restoMaximo === null ? disponibleCentral : Math.min(restoMaximo, disponibleCentral)}</span>
+            <span>Empaque: {factorEmpaque} unidades por empaque (referencia)</span>
+            <span>Reposición sugerida: {cantidadReposicion} unidades</span>
+            {minimoReposicion > 0 && <span>Umbral de reposición: {minimoReposicion} unidades</span>}
 
           </div>
+
+          <p className="muted">
+            La cantidad se captura directamente en unidades físicas. Puedes solicitar una caja completa o una cantidad menor (por ejemplo, 285 o 223 metros). El factor de empaque no multiplica esta cantidad.
+          </p>
 
           <button
             className="orange"
