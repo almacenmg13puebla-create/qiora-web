@@ -64,7 +64,46 @@ function htmlComprobanteEntrega({ data, materiales, almacen, tecnico, folio, dis
     .totals{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:3mm;background:#eaf4e9;color:#07583f;font-size:9pt;font-weight:900;text-align:center;padding:2.5mm}.totals span+span{border-left:1px solid #087653}
     .signatures{display:grid;grid-template-columns:1fr 1fr;gap:20mm;margin:7mm 4mm 0;text-align:center;font-size:8pt}.sign{padding-top:8mm;position:relative}.sign:before{content:"";position:absolute;left:5%;right:5%;top:7mm;border-top:1px solid #263b32}.foot{border-top:2px solid #07804f;margin-top:7mm;padding-top:2mm;text-align:center;color:#53645c;font-size:6.5pt}
     @page{size:A4 portrait;margin:0}
-    @media print{html,body{width:210mm;height:297mm;background:#fff}.actions{display:none}.sheet{margin:0;width:210mm;height:297mm;min-height:297mm;padding:7mm 8mm;box-shadow:none;overflow:hidden;page-break-after:avoid;break-after:avoid}.materials tr,.series-table tr{break-inside:avoid;page-break-inside:avoid}}
+    @media print{
+      /* Solicita al navegador conservar los fondos y colores del comprobante. */
+      *,*::before,*::after{
+        -webkit-print-color-adjust:exact !important;
+        print-color-adjust:exact !important;
+        color-adjust:exact !important;
+      }
+      html,body{
+        width:210mm;height:297mm;margin:0;padding:0;
+        background:#fff !important;color:#14231e !important;
+      }
+      .actions{display:none !important}
+      .sheet{
+        margin:0;width:210mm;height:297mm;min-height:297mm;
+        padding:7mm 8mm;background:#fff !important;color:#14231e !important;
+        box-shadow:none;overflow:hidden;page-break-after:avoid;break-after:avoid;
+      }
+      .top{border-bottom:2.5px solid #07804f !important}
+      .brand,.sat-name{color:#075c43 !important}
+      .sat-mark{background:#079b68 !important;color:#fff !important}
+      h1{color:#103e30 !important}
+      h2{color:#087653 !important}
+      .label{color:#53645c !important}
+      .materials th,.series-table th{
+        background:#006b4b !important;color:#fff !important;
+        border-color:#006b4b !important;
+      }
+      .materials td,.series-table td{
+        background:#fff !important;color:#14231e !important;
+      }
+      .series-title{
+        background:#e9f3eb !important;color:#087653 !important;
+      }
+      .totals{
+        background:#eaf4e9 !important;color:#07583f !important;
+      }
+      .totals span+span{border-left:1px solid #087653 !important}
+      .foot{border-top:2px solid #07804f !important;color:#53645c !important}
+      .materials tr,.series-table tr{break-inside:avoid;page-break-inside:avoid}
+    }
     @media screen and (max-width:800px){.sheet,.actions{width:100%;margin:0}.sheet{min-height:100vh;padding:18px}.top{gap:12px}.sat-mark{width:58px;height:48px}.sat-name{font-size:16px}h1{font-size:16px}}
   </style></head><body>
   <div class="actions"><button onclick="window.print()">IMPRIMIR</button></div>
