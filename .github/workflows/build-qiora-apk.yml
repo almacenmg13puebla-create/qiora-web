@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Descargar repositorio
+      - name: Descargar QIORA
         uses: actions/checkout@v4
 
       - name: Configurar Java
@@ -30,50 +30,36 @@ jobs:
         working-directory: qiora-web
         run: |
           npm install
-          npm install @capacitor/core @capacitor/android
-          npm install -D @capacitor/cli typescript
+          npm install @capacitor/core@7 @capacitor/android@7
+          npm install -D @capacitor/cli@7
 
-      - name: Preparar aplicación QIORA
+      - name: Preparar aplicación
         working-directory: qiora-web
         run: |
           mkdir -p www
 
-          cat > www/index.html <<'EOF'
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>QIORA</title>
-          </head>
-          <body>
-            <p>Conectando con QIORA...</p>
-          </body>
-          </html>
-          EOF
+          rm -f capacitor.config.ts
+          rm -f capacitor.config.js
+          rm -f capacitor.config.mjs
 
-          cat > capacitor.config.ts <<'EOF'
-          import type { CapacitorConfig } from '@capacitor/cli';
-
-          const config: CapacitorConfig = {
-            appId: 'com.qiora.app',
-            appName: 'QIORA',
-            webDir: 'www',
-            server: {
-              url: 'https://sistematraspasos.com/',
-              cleartext: false
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.qiora.app",
+            "appName": "QIORA",
+            "webDir": "www",
+            "server": {
+              "url": "https://sistematraspasos.com/",
+              "cleartext": false
             }
-          };
-
-          export default config;
+          }
           EOF
+
+          echo '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>Conectando con QIORA...</body></html>' > www/index.html
 
       - name: Preparar Android
         working-directory: qiora-web
         run: |
-          if [ ! -d android ]; then
-            npx cap add android
-          fi
+          npx cap add android
           npx cap sync android
 
       - name: Compilar APK
@@ -82,7 +68,7 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Guardar APK
+      - name: Descargar APK
         uses: actions/upload-artifact@v4
         with:
           name: QIORA-APK
