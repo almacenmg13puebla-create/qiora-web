@@ -159,40 +159,64 @@ const horarioActivo = valor =>
     .toUpperCase() === 'SI'
 
 
-function categoriaPermiso(p) {
-  const llave = `${p?.campo || ''} ${p?.nombre || ''}`.toLowerCase()
-  if (/dashboard|resumen|reporte|export/.test(llave)) return 'Dashboard y reportes'
-  if (/equipo|stock|inventario|iq09|mb52|material/.test(llave)) return 'Inventario y equipos'
-  if (/recole|traspas|entrada|salida|baja|cobro|auditor|recep/.test(llave)) return 'Operaciones'
-  if (/usuario|permiso|config|distrito|admin|horario|costo|odo|grupo/.test(llave)) return 'Administración'
-  return 'Otros accesos'
+const RAMAS_PERMISOS = [
+  { id: 'usuarios', titulo: '👥 Usuarios', claves: ['usuario', 'usuarios'] },
+  { id: 'distritos', titulo: '🏢 Distritos', claves: ['distrito', 'distritos', 'admin_padre'] },
+  { id: 'materiales', titulo: '📦 Materiales y máximos', claves: ['material', 'catalogo', 'maximo', 'grupo'] },
+  { id: 'horarios', titulo: '🕒 Horarios', claves: ['horario', 'configuracion'] },
+  { id: 'sap', titulo: '💰 Costos SAP', claves: ['sap', 'costo_sap'] },
+  { id: 'odoo', titulo: '🧰 ODOO', claves: ['odoo', 'herramienta'] },
+  { id: 'recus', titulo: '📥 RECUS TP', claves: ['recus', 'totalplay'] },
+  { id: 'macro', titulo: '📊 Macro Excel y exportaciones', claves: ['macro', 'exportar', 'fechas'] },
+  { id: 'otros', titulo: '⚙️ Otros permisos', claves: [] },
+]
+
+function ramaDePermiso(p) {
+  const texto = `${p?.campo || ''} ${p?.nombre || ''}`.toLowerCase()
+  return RAMAS_PERMISOS.find(r => r.claves.some(k => texto.includes(k)))?.id || 'otros'
 }
 
-function PermisosArbol({ permisos = [], valores = {}, onChange, disabled = false }) {
-  const grupos = permisos.reduce((acc, permiso) => {
-    const categoria = categoriaPermiso(permiso)
-    if (!acc[categoria]) acc[categoria] = []
-    acc[categoria].push(permiso)
-    return acc
-  }, {})
-
+function ArbolPermisos({ disponibles = [], valores = {}, onChange, disabled = false }) {
+  const grupos = RAMAS_PERMISOS.map(rama => ({
+    ...rama,
+    items: disponibles.filter(p => ramaDePermiso(p) === rama.id),
+  })).filter(r => r.items.length)
+  const total = disponibles.length
+  const activos = disponibles.filter(p => valores?.[p.campo] === true).length
+  const cambiarGrupo = (items, activo) => {
+    const cambios = Object.fromEntries(items.map(p => [p.campo, activo]))
+    onChange(prev => ({ ...prev, ...cambios }))
+  }
   return (
-    <div style={{ display: 'grid', gap: 9 }}>
-      {Object.entries(grupos).map(([categoria, items]) => {
-        const activos = items.filter(p => valores?.[p.campo] === true).length
+    <div style={{ display: 'grid', gap: 10, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <strong>Permisos por módulo: {activos}/{total} activos</strong>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" style={{ ...css.boton, padding: '7px 12px' }} disabled={disabled || !total} onClick={() => cambiarGrupo(disponibles, true)}>Seleccionar todos</button>
+          <button type="button" style={{ ...css.boton, padding: '7px 12px', background: '#315b50' }} disabled={disabled || !total} onClick={() => cambiarGrupo(disponibles, false)}>Quitar todos</button>
+        </div>
+      </div>
+      {grupos.map(rama => {
+        const cuenta = rama.items.filter(p => valores?.[p.campo] === true).length
+        const todos = cuenta === rama.items.length
         return (
-          <details key={categoria} style={{ border: '1px solid #397564', borderRadius: 12, background: '#0a3027', padding: '10px 13px' }}>
-            <summary style={{ cursor: 'pointer', color: '#e8f5ef', fontWeight: 700, display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-              <span>{categoria}</span>
-              <span style={{ color: '#9ed9bd', fontSize: 12 }}>{activos}/{items.length} activos</span>
+          <details key={rama.id} style={{ border: '1px solid #397564', borderRadius: 12, background: '#0a3027', overflow: 'hidden' }}>
+            <summary style={{ cursor: 'pointer', padding: '13px 15px', color: '#f1fff8', fontWeight: 800, background: '#10513f', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <span>{rama.titulo}</span><span>{cuenta}/{rama.items.length} activos</span>
             </summary>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 10, padding: '13px 2px 3px' }}>
-              {items.map(p => (
-                <label key={p.campo} style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#e3f0e9', fontSize: 13, minWidth: 0 }}>
-                  <input type="checkbox" checked={valores?.[p.campo] === true} disabled={disabled} onChange={e => onChange(p.campo, e.target.checked)} />
-                  <span>{p.nombre}</span>
-                </label>
-              ))}
+            <div style={{ padding: 13, display: 'grid', gap: 10 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#9ee6c8', fontWeight: 700 }}>
+                <input type="checkbox" checked={todos} disabled={disabled} onChange={e => cambiarGrupo(rama.items, e.target.checked)} />
+                Seleccionar toda esta rama
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 10 }}>
+                {rama.items.map(p => (
+                  <label key={p.campo} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 11px', border: '1px solid #315f53', borderRadius: 8, color: '#eaf7f1' }}>
+                    <input type="checkbox" checked={valores?.[p.campo] === true} disabled={disabled} onChange={e => onChange(prev => ({ ...prev, [p.campo]: e.target.checked }))} />
+                    {p.nombre}
+                  </label>
+                ))}
+              </div>
             </div>
           </details>
         )
@@ -2561,16 +2585,16 @@ export default function ConfiguracionPage() {
                     <div style={css.error}>No se encontró el administrador de este distrito. Créalo primero desde la tabla de distritos.</div>
                   )}
 
-                  <h3>Módulos y permisos por rama</h3>
-                  <PermisosArbol
-                    permisos={permisosDisponibles.filter(p => !['administrar_distritos'].includes(p.campo))}
+                  <h3>Módulos y permisos</h3>
+                  <ArbolPermisos
+                    disponibles={permisosDisponibles.filter(p => !['administrar_distritos'].includes(p.campo))}
                     valores={permisosAdminDistrito}
+                    onChange={setPermisosAdminDistrito}
                     disabled={!centroPermisosSeleccionado || !usuarios.some(u =>
                       String(u.distrito || '').trim().toUpperCase() === centroPermisosSeleccionado &&
                       (String(u.puesto || '').trim().toUpperCase() === `ADMIN_${centroPermisosSeleccionado}` ||
                        String(u.usuario_almacen || '').trim().toUpperCase() === `ADMIN_${centroPermisosSeleccionado}`)
                     )}
-                    onChange={(campo, valor) => setPermisosAdminDistrito(prev => ({ ...prev, [campo]: valor }))}
                   />
                   <div style={css.botones}>
                     <button
@@ -2717,11 +2741,11 @@ export default function ConfiguracionPage() {
 
                 </div>
 
-                <h3>Permisos de módulos por rama</h3>
-                <PermisosArbol
-                  permisos={permisosDisponibles}
-                  valores={nuevoUsuario.permisos}
-                  onChange={(campo, valor) => setNuevoUsuario(u => ({ ...u, permisos: { ...(u.permisos || {}), [campo]: valor } }))}
+                <h3>Permisos</h3>
+                <ArbolPermisos
+                  disponibles={permisosDisponibles}
+                  valores={nuevoUsuario.permisos || {}}
+                  onChange={fn => setNuevoUsuario(u => ({ ...u, permisos: fn(u.permisos || {}) }))}
                 />
 
                 <button
@@ -2791,14 +2815,11 @@ export default function ConfiguracionPage() {
 
                 </div>
 
-                <h3>
-                  Permisos
-                </h3>
-
-                <PermisosArbol
-                  permisos={permisosDisponibles}
-                  valores={usuarioEditando.permisos}
-                  onChange={(campo, valor) => setUsuarioEditando(u => ({ ...u, permisos: { ...(u.permisos || {}), [campo]: valor } }))}
+                <h3>Permisos</h3>
+                <ArbolPermisos
+                  disponibles={permisosDisponibles}
+                  valores={usuarioEditando.permisos || {}}
+                  onChange={fn => setUsuarioEditando(u => ({ ...u, permisos: fn(u.permisos || {}) }))}
                 />
 
                 <button
