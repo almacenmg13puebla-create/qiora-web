@@ -413,45 +413,8 @@ export default function RecoleccionesPage() {
     return !!ventana
   }
 
-  const enviarTelegramRecepcion = async resultado => {
-    try {
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
-      if (sessionError) throw sessionError
-      const accessToken = sessionData?.session?.access_token
-      if (!accessToken) throw new Error('No se encontró la sesión para notificar a Telegram.')
 
-      const response = await fetch('/api/recolecciones/telegram', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`
-        },
-        body: JSON.stringify({
-          folio: resultado.folio,
-          distrito: resultado.distrito || resultado.centro || centroActivo,
-          almacen: resultado.almacen || datos?.almacen || almacen,
-          tecnico: resultado.tecnico || datos?.tecnico || '',
-          recibe: resultado.recibe || recibe,
-          fecha: resultado.fecha || new Date().toISOString(),
-          series: resultado.series || []
-        })
-      })
-      const respuesta = await response.json().catch(() => ({}))
-      if (!response.ok || respuesta.ok !== true) {
-        throw new Error(respuesta.error || `No se pudo notificar a Telegram (HTTP ${response.status}).`)
-      }
-      if (respuesta.sin_telegram) return { ok: true, mensaje: 'No hay Telegram vinculado al técnico ni al receptor.' }
-      if (respuesta.destinatarios?.some(x => x.estado === 'ERROR')) {
-        return { ok: false, mensaje: 'La recepción se guardó, pero hubo errores al enviar uno o más mensajes de Telegram.' }
-      }
-      return { ok: true, mensaje: `Avisos privados de Telegram enviados: ${respuesta.enviados || 0}.` }
-    } catch (e) {
-      console.error('ERROR NOTIFICANDO RECEPCION EN TELEGRAM:', e)
-      return { ok: false, mensaje: `La recepción se guardó, pero Telegram no pudo confirmar el envío: ${e?.message || 'error'}` }
-    }
-  }
-
-  const limpiarDespuesDeGuardar = (folioGuardado, detalleTelegram = '') => {
+  const limpiarDespuesDeGuardar = folioGuardado => {
     setFolio('')
     setAlmacen('')
     setDatos(null)
@@ -464,7 +427,7 @@ export default function RecoleccionesPage() {
     setError('')
 
     setMensaje(
-      `Recolección ${folioGuardado} guardada correctamente. ${detalleTelegram} Pantalla lista para una nueva captura.`
+      `Recolección ${folioGuardado} guardada correctamente. La confirmación de Telegram se enviará cuando SAP confirme el documento.`
     )
 
     setTimeout(() => {
@@ -635,12 +598,7 @@ export default function RecoleccionesPage() {
 
       enviarWhatsapp(resultado)
 
-      const avisoTelegram = await enviarTelegramRecepcion(resultado)
-
-      limpiarDespuesDeGuardar(
-        folioGuardado,
-        avisoTelegram.mensaje
-      )
+      limpiarDespuesDeGuardar(folioGuardado)
     })
 
   const limpiar = () => {
