@@ -121,7 +121,7 @@ export async function POST(req) {
       .select('id,estado').eq('folio', folio).eq('documento_sap', 'PENDIENTE_GUARDADO')
       .eq('telegram_chat_id', S(tecnico.telegram_chat_id)).maybeSingle()
     if (checkError) throw new Error(checkError.message)
-    if (existente?.estado === 'ENVIADO') return json({ ok: true, enviado: false, duplicado: true })
+    if (existente?.estado === 'ENVIADO') return json({ ok: true, enviado: false, duplicado: true, mensaje })
 
     let controlId = existente?.id
     if (!controlId) {
@@ -144,7 +144,7 @@ export async function POST(req) {
       await admin.from('qiora_recolecciones_telegram_envios').update({ estado: 'ERROR', error: S(e.message).slice(0, 1000) }).eq('id', controlId)
       throw e
     }
-    return json({ ok: true, enviado: true, destinatario: tecnico.nombre, series_recibidas: seriesRecibidas.length, pendientes: pendientes.length })
+    return json({ ok: true, enviado: true, destinatario: tecnico.nombre, series_recibidas: seriesRecibidas.length, pendientes: pendientes.length, mensaje })
   } catch (e) {
     console.error('[QIORA RECEPCION TELEGRAM GUARDADA]', e?.message || e)
     return json({ ok: false, error: S(e?.message || e) }, 500)
