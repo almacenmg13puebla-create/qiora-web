@@ -22,19 +22,14 @@ function clients() {
   }
 }
 
-function fechaMexico() {
-  return new Date().toLocaleString('es-MX', {
-    timeZone: 'America/Mexico_City', day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
-  })
-}
-
 async function enviarTelegram(chatId, text) {
   const token = S(process.env.QIORA_BOT_TOKEN)
   if (!token) throw new Error('FALTA_QIORA_BOT_TOKEN_EN_VERCEL')
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text }), cache: 'no-store'
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text }),
+    cache: 'no-store'
   })
   const data = await response.json().catch(() => ({}))
   if (!response.ok || data.ok !== true) throw new Error(data.description || `TELEGRAM_HTTP_${response.status}`)
@@ -46,10 +41,12 @@ export async function POST(req) {
     if (!bearer) return json({ ok: false, error: 'SESION_REQUERIDA' }, 401)
     const body = await req.json().catch(() => null)
     if (!body) return json({ ok: false, error: 'JSON_INVALIDO' }, 400)
+
     const folio = S(body.folio)
     const distrito = U(body.distrito)
     const almacen = S(body.almacen)
     const seriesPendientesSolicitadas = Array.isArray(body.series_pendientes) ? body.series_pendientes : []
+    const mensajeSolicitado = S(body.mensaje)
     if (!folio || !/^[A-Z]{2,5}[0-9]{1,5}$/.test(distrito) || !almacen) {
       return json({ ok: false, error: 'DATOS_RECOLECCION_INCOMPLETOS' }, 400)
     }
@@ -78,17 +75,18 @@ export async function POST(req) {
     const tecnico = (usuarios || []).find(x => S(x.telegram_chat_id))
     if (!tecnico) return json({ ok: true, enviado: false, motivo: 'TECNICO_SIN_TELEGRAM_CHAT_ID' })
 
-    // Las series pendientes se validan contra IQ09 en el mismo distrito y almacen.
-    const candidatas = [...new Set(seriesPendientesSolicitadas.map(x => S(x.serie)).filter(Boolean))]
+    // Acepta series pendientes como texto (formato enviado por page.js) o como objeto.
+    const candidatas = [...new Set(seriesPendientesSolicitadas
+      .map(x => S(typeof x === 'string' ? x : x?.serie))
+      .filter(Boolean))]
     let pendientes = []
     if (candidatas.length) {
       const { data: iq09, error: iqError } = await admin.from('iq09_equipos')
         .select('serie,material,descripcion,almacen,distrito')
         .eq('distrito', distrito).eq('almacen', almacen).in('serie', candidatas)
       if (iqError) throw new Error('ERROR_VALIDANDO_SERIES_PENDIENTES: ' + iqError.message)
-      const entregadas = new Set((rows || []).map(x => U(x.serie)))
-      const entregadasAhora = new Set((rows || []).filter(x => U(x.estado) !== 'PENDIENTE').map(x => U(x.serie)))
-      pendientes = (iq09 || []).filter(x => !entregadas.has(U(x.serie)) && !entregadasAhora.has(U(x.serie)))
+      const seriesRecibidasSet = new Set((rows || []).map(x => U(x.serie)))
+      pendientes = (iq09 || []).filter(x => !seriesRecibidasSet.has(U(x.serie)))
     }
 
     const seriesRecibidas = rows.map(x => ({ serie: x.serie, material: x.material, descripcion: x.descripcion }))
@@ -101,7 +99,8 @@ export async function POST(req) {
       `🏬 Almacén: ${almacen}`,
       `👷 Técnico: ${rows[0].tecnico || tecnico.nombre || ''}`,
       `👤 Recibió: ${rows[0].recibe || ''}`,
-      `📅 Fecha y hora: ${fechaMexico()}`, '',
+      `📅 Fecha y hora: ${new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}`,
+      '',
       `📦 Equipos recibidos: ${seriesRecibidas.length}`
     ]
     for (const x of seriesRecibidas) lineas.push(`• Serie: ${x.serie || ''}`, `  Material: ${x.material || 'NO REGISTRADO'}`)
@@ -111,12 +110,13 @@ export async function POST(req) {
       for (const x of pendientes) lineas.push(S(x.serie))
       lineas.push('', '*FAVOR DE ENTREGAR A ALMACÉN*')
     } else {
-      lineas.push('✅ EQUIPOS PENDIENTES POR ENTREGAR: 0', '✅ TODAS LAS SERIES DEL INVENTARIO CONSULTADO FUERON RECIBIDAS.')
+      lineas.push('⚠️ EQUIPOS PENDIENTES POR ENTREGAR: 0', '✅ TODAS LAS SERIES DEL INVENTARIO CONSULTADO FUERON RECIBIDAS.')
     }
     lineas.push('', '📌 Estado: RECEPCIÓN GUARDADA', '', '🤖 QIORA BOT')
-    const mensaje = lineas.join('\n').slice(0, 3900)
 
-    // Un identificador fijo para el primer aviso evita duplicarlo si el navegador reintenta.
+    // Se prioriza el texto construido por page.js para que WhatsApp y Telegram sean idénticos.
+    const mensaje = (mensajeSolicitado || lineas.join('\n')).slice(0, 3900)
+
     const { data: existente, error: checkError } = await admin.from('qiora_recolecciones_telegram_envios')
       .select('id,estado').eq('folio', folio).eq('documento_sap', 'PENDIENTE_GUARDADO')
       .eq('telegram_chat_id', S(tecnico.telegram_chat_id)).maybeSingle()
