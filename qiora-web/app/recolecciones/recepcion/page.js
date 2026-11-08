@@ -424,7 +424,7 @@ export default function RecoleccionesPage() {
     }
   }
 
-  const enviarWhatsapp = resultado => {
+  const enviarWhatsapp = (resultado, mensajeUnificado) => {
     const telefono = formatPhone(
       resultado.telefono
     )
@@ -433,7 +433,8 @@ export default function RecoleccionesPage() {
       return false
     }
 
-    const texto = makeText(resultado)
+    // Reutilizar exactamente el mismo texto generado por la API y enviado a Telegram.
+    const texto = clean(mensajeUnificado) || makeText(resultado)
 
     const url =
       `https://wa.me/${telefono}?text=` +
@@ -641,7 +642,7 @@ export default function RecoleccionesPage() {
         pendientes
       )
 
-      enviarWhatsapp(resultado)
+      enviarWhatsapp(resultado, avisoTelegram.mensaje)
 
       limpiarDespuesDeGuardar(folioGuardado)
       if (avisoTelegram.ok && avisoTelegram.enviado) {
