@@ -1996,6 +1996,8 @@ async function buscarSerieIQ09Telegram(admin, perfil, payload) {
 
 
 // RECOLECCIONES PROCESADAS A RECU: cola privada por tecnico, nunca por grupo.
+// Solo libera avisos cuando ya existe documento SAP y el chat sigue vinculado
+// a un usuario activo del mismo distrito. No modifica el resto de acciones del bot.
 async function telegramRecoleccionesAvisosPendientes(admin, payload) {
   const distritoFiltro = upper(payload.distrito || '');
   let q = admin.from('qiora_recolecciones_avisos')
@@ -2004,18 +2006,51 @@ async function telegramRecoleccionesAvisosPendientes(admin, payload) {
     .order('creado_en', { ascending: true })
     .limit(50);
   if (distritoFiltro) q = q.eq('distrito', distritoFiltro);
+
   const { data, error } = await q;
   if (error) throw new Error('No se pudieron consultar avisos de recolecciones: ' + error.message);
-  return { ok: true, avisos: (data || []).map(x => ({
-    id: x.id,
-    distrito: x.distrito,
-    folio: x.folio,
-    documento_sap: x.documento_sap,
-    telegram_chat_id: x.telegram_chat_id,
-    usuario_almacen: x.usuario_almacen,
-    nombre_destinatario: x.nombre_destinatario,
-    mensaje: x.mensaje
-  })) };
+
+  const avisos = [];
+  for (const x of data || []) {
+    const distrito = upper(x.distrito);
+    const chatId = clean(x.telegram_chat_id);
+    const almacen = clean(x.usuario_almacen);
+    const documento = clean(x.documento_sap);
+
+    // No enviar confirmaciones finales incompletas ni mensajes a grupos.
+    if (!distrito || !chatId || !/^\d{8,20}$/.test(documento)) continue;
+    if (/^-100\d+$/.test(chatId)) continue;
+
+    let usuarioQuery = admin.from('almacen_usuarios')
+      .select('id,telegram_chat_id,usuario_almacen,nombre,distrito,activo')
+      .eq('telegram_chat_id', chatId)
+      .eq('distrito', distrito)
+      .eq('activo', true);
+    if (almacen) usuarioQuery = usuarioQuery.eq('usuario_almacen', almacen);
+    const { data: usuario, error: usuarioError } = await usuarioQuery.limit(2);
+    if (usuarioError) throw new Error('No se pudo validar destinatario Telegram de recoleccion: ' + usuarioError.message);
+    if (!usuario || usuario.length !== 1) continue;
+
+    let mensaje = clean(x.mensaje);
+    if (!/documento\s*sap\s*:/i.test(mensaje)) {
+      mensaje = [mensaje, '', `📄 Documento SAP: ${documento}`].filter(Boolean).join('\n');
+    } else if (!mensaje.includes(documento)) {
+      mensaje = `${mensaje}\n📄 Documento SAP: ${documento}`;
+    }
+
+    avisos.push({
+      id: x.id,
+      distrito,
+      folio: x.folio,
+      documento_sap: documento,
+      telegram_chat_id: chatId,
+      usuario_almacen: x.usuario_almacen,
+      nombre_destinatario: x.nombre_destinatario || usuario[0].nombre || '',
+      mensaje
+    });
+  }
+
+  return { ok: true, avisos };
 }
 
 async function telegramRecoleccionesMarcarAviso(admin, payload) {
