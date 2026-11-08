@@ -1994,6 +1994,46 @@ async function buscarSerieIQ09Telegram(admin, perfil, payload) {
   }
 }
 
+
+// RECOLECCIONES PROCESADAS A RECU: cola privada por tecnico, nunca por grupo.
+async function telegramRecoleccionesAvisosPendientes(admin, payload) {
+  const distritoFiltro = upper(payload.distrito || '');
+  let q = admin.from('qiora_recolecciones_avisos')
+    .select('id,distrito,folio,documento_sap,telegram_chat_id,usuario_almacen,nombre_destinatario,mensaje,estado')
+    .eq('estado', 'PENDIENTE')
+    .order('creado_en', { ascending: true })
+    .limit(50);
+  if (distritoFiltro) q = q.eq('distrito', distritoFiltro);
+  const { data, error } = await q;
+  if (error) throw new Error('No se pudieron consultar avisos de recolecciones: ' + error.message);
+  return { ok: true, avisos: (data || []).map(x => ({
+    id: x.id,
+    distrito: x.distrito,
+    folio: x.folio,
+    documento_sap: x.documento_sap,
+    telegram_chat_id: x.telegram_chat_id,
+    usuario_almacen: x.usuario_almacen,
+    nombre_destinatario: x.nombre_destinatario,
+    mensaje: x.mensaje
+  })) };
+}
+
+async function telegramRecoleccionesMarcarAviso(admin, payload) {
+  const id = clean(payload.id);
+  const errorTexto = clean(payload.error).slice(0, 1000);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    return { ok: false, error: 'ID_AVISO_INVALIDO' };
+  }
+  const { data, error } = await admin.from('qiora_recolecciones_avisos').update({
+    estado: errorTexto ? 'ERROR' : 'ENVIADO',
+    error: errorTexto || null,
+    enviado_en: errorTexto ? null : new Date().toISOString(),
+    actualizado_en: new Date().toISOString()
+  }).eq('id', id).eq('estado', 'PENDIENTE').select('id');
+  if (error) throw new Error('No se pudo marcar aviso de recolección: ' + error.message);
+  return { ok: true, actualizado: (data || []).length > 0 };
+}
+
 async function accionMigrada(admin, payload) {
   const accion = clean(payload.accion || payload.action)
 
@@ -2003,6 +2043,8 @@ async function accionMigrada(admin, payload) {
   if (accion === 'telegram_traspasos_avisos_pendientes') return listarAvisosTraspasoPendientes(admin)
   if (accion === 'telegram_sap_notificaciones') return notificacionesComandosSAP(admin)
   if (accion === 'telegram_sap_marcar_notificado') return marcarComandoSAPNotificado(admin, payload)
+  if (accion === 'telegram_recolecciones_avisos_pendientes') return telegramRecoleccionesAvisosPendientes(admin, payload)
+  if (accion === 'telegram_recolecciones_marcar_aviso') return telegramRecoleccionesMarcarAviso(admin, payload)
 
   const perfil = await perfilTelegram(admin, payload.telegram_chat_id)
   if (accion === 'telegram_stock_menu') return menuStockTelegram(perfil)
