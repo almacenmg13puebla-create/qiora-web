@@ -117,9 +117,6 @@ export default function RecoleccionesPage() {
 
   const inputSerie = useRef(null)
   const inputAlmacen = useRef(null)
-  // Reservar la ventana durante el clic del usuario para evitar que
-  // el navegador bloquee WhatsApp después de las consultas asíncronas.
-  const ventanaWhatsappRef = useRef(null)
 
   const catalogo = useMemo(
     () => datos?.equipos || [],
@@ -240,10 +237,6 @@ export default function RecoleccionesPage() {
     try {
       await fn()
     } catch (e) {
-      if (ventanaWhatsappRef.current && !ventanaWhatsappRef.current.closed) {
-        ventanaWhatsappRef.current.close()
-      }
-      ventanaWhatsappRef.current = null
       console.error('ERROR RECOLECCIONES:', e)
 
       setError(
@@ -391,30 +384,61 @@ export default function RecoleccionesPage() {
   }
 
   const enviarWhatsapp = resultado => {
-    const telefono = formatPhone(resultado.telefono)
+    const telefono = formatPhone(
+      resultado.telefono
+    )
 
     if (!telefono) {
-      if (ventanaWhatsappRef.current && !ventanaWhatsappRef.current.closed) {
-        ventanaWhatsappRef.current.close()
-      }
-      ventanaWhatsappRef.current = null
       return false
     }
 
-    // Un solo generador de texto para el mensaje aprobado de WhatsApp.
     const texto = makeText(resultado)
-    const url = `https://wa.me/${telefono}?text=${encodeURIComponent(texto)}`
 
-    const ventana = ventanaWhatsappRef.current
-    if (ventana && !ventana.closed) {
-      ventana.location.href = url
-      ventanaWhatsappRef.current = null
-      return true
+    const url =
+      `https://wa.me/${telefono}?text=` +
+      encodeURIComponent(texto)
+
+    const ventana = window.open(
+      url,
+      '_blank',
+      'noopener,noreferrer'
+    )
+
+    return !!ventana
+  }
+
+  // Enviar por Telegram el mismo texto que se prepara para WhatsApp.
+  // La API valida la sesión, el distrito y el técnico antes de enviar.
+  const enviarTelegramRecepcion = async resultado => {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+    if (sessionError) throw sessionError
+    const accessToken = sessionData?.session?.access_token
+    if (!accessToken) throw new Error('No hay sesión activa para enviar Telegram.')
+
+    const response = await fetch('/api/recolecciones/telegram/recibida', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({
+        folio: resultado.folio,
+        distrito: resultado.distrito || resultado.centro,
+        almacen: resultado.almacen,
+        series_pendientes: (resultado.series_pendientes || []).map(serie => ({ serie })),
+        mensaje: makeText(resultado)
+      }),
+      cache: 'no-store'
+    })
+
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || data.ok !== true) {
+      throw new Error(data.error || `No se pudo enviar Telegram (HTTP ${response.status}).`)
     }
-
-    // Respaldo si el navegador no permitió reservar la ventana.
-    const nuevaVentana = window.open(url, '_blank')
-    return !!nuevaVentana
+    if (data.enviado === false && !data.duplicado) {
+      throw new Error(data.motivo || 'Telegram no confirmó el envío al técnico.')
+    }
+    return data
   }
 
   const limpiarDespuesDeGuardar = folioGuardado => {
@@ -438,14 +462,8 @@ export default function RecoleccionesPage() {
     }, 150)
   }
 
-  const guardar = () => {
-    // Debe abrirse sincrónicamente desde el clic; WhatsApp se carga
-    // después de que Supabase devuelve el folio y los datos definitivos.
-    if (!guardado && datos && entregadas.length && !ventanaWhatsappRef.current) {
-      ventanaWhatsappRef.current = window.open('about:blank', '_blank')
-    }
-
-    return ejecutar(async () => {
+  const guardar = () =>
+    ejecutar(async () => {
       if (guardado) {
         throw new Error(
           'Esta recolección ya está guardada.'
@@ -609,13 +627,26 @@ export default function RecoleccionesPage() {
       setGuardado(resultado)
       setFolio(folioGuardado)
 
-      enviarWhatsapp(resultado)
+      // WhatsApp conserva su enlace actual; Telegram recibe el mismo makeText().
+      const whatsappAbierto = enviarWhatsapp(resultado)
+      let telegramEstado = ''
+      try {
+        const avisoTelegram = await enviarTelegramRecepcion(resultado)
+        telegramEstado = avisoTelegram.enviado === true || avisoTelegram.duplicado
+          ? 'Telegram enviado al técnico.'
+          : 'Telegram no confirmó el envío.'
+      } catch (telegramError) {
+        console.error('ERROR ENVIANDO RECEPCION POR TELEGRAM:', telegramError)
+        telegramEstado = `Telegram no enviado: ${telegramError.message}`
+      }
 
-      limpiarDespuesDeGuardar(
-        folioGuardado
+      limpiarDespuesDeGuardar(folioGuardado)
+      setMensaje(
+        `Recolección ${folioGuardado} guardada. ` +
+        `${whatsappAbierto ? 'WhatsApp abierto con el mensaje.' : 'No se pudo abrir WhatsApp.'} ` +
+        telegramEstado
       )
     })
-  }
 
   const limpiar = () => {
     setFolio('')
