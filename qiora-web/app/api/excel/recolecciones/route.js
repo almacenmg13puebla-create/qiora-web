@@ -63,9 +63,9 @@ function normalizarNombre(v) {
 function construirMensaje({ fila, series, documentoSAP, destinatario }) {
   const fecha = new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City', dateStyle: 'short', timeStyle: 'medium' })
   const lineas = [
-    '✅ QIORA BOT - RECEPCIÓN DE RECOLECCIONES', '',
-    `Hola ${destinatario.nombre || destinatario.usuario_almacen || ''},`,
-    'La recepción de tu recolección quedó registrada correctamente.', '',
+    '✅ QIORA BOT - RECEPCIÓN PROCESADA EN SAP', '',
+    `Hola ${fila.tecnico || destinatario.nombre || destinatario.usuario_almacen || ''},`,
+    'Tu recolección quedó contabilizada correctamente en SAP.', '',
     `📋 Folio: ${fila.folio || ''}`,
     `🏢 Distrito: ${fila.distrito || ''}`,
     `🏬 Almacén: ${fila.almacen || ''}`,
@@ -80,7 +80,7 @@ function construirMensaje({ fila, series, documentoSAP, destinatario }) {
     lineas.push(`  Material: ${x.material || 'NO REGISTRADO'}`)
     lineas.push(`  Descripción: ${x.descripcion || 'NO REGISTRADA'}`)
   }
-  lineas.push('', '✅ Estado: RECEPCIÓN CONTABILIZADA EN SAP', '🤖 QIORA BOT')
+  lineas.push('', '📌 Estado: CONTABILIZADO EN SAP', '🤖 QIORA BOT')
   return lineas.join('\n').slice(0, 3900)
 }
 
@@ -110,9 +110,10 @@ async function notificarRecepcion(db, fila, documentoSAP) {
     .eq('distrito', fila.distrito).eq('activo', true)
   if (usersError) throw new Error('ERROR_BUSCANDO_DESTINATARIOS: ' + usersError.message)
 
+  // Los DOS avisos de esta recepción corresponden al técnico responsable.
+  // El usuario que recibe se muestra en el texto, pero nunca es destinatario.
   const tecnico = (usuarios || []).find(u => U(u.puesto) === 'TECNICO' && S(u.usuario_almacen) === S(fila.almacen))
-  const receptor = (usuarios || []).find(u => normalizarNombre(u.nombre) === normalizarNombre(fila.recibe))
-  const destinatarios = [...new Map([tecnico, receptor].filter(u => S(u?.telegram_chat_id)).map(u => [S(u.telegram_chat_id), u])).values()]
+  const destinatarios = tecnico && S(tecnico.telegram_chat_id) ? [tecnico] : []
   if (!destinatarios.length) return { enviados: 0, pendiente: false, motivo: 'SIN_TELEGRAM_CHAT_ID_TECNICO_O_RECEPTOR' }
 
   let enviados = 0
