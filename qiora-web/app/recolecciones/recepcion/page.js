@@ -38,24 +38,32 @@ const formatFecha = valor => {
 
 const makeText = r => {
   const series = Array.isArray(r.series) ? r.series : []
-  const seriesPendientes = Array.isArray(r.seriesPendientes)
-    ? r.seriesPendientes
+  const seriesPendientes = Array.isArray(r.series_pendientes)
+    ? r.series_pendientes
     : []
   const pendientes = Number(r.pendientes ?? seriesPendientes.length ?? 0)
+  const fecha = r.fecha ? new Date(r.fecha) : new Date()
+  const fechaTexto = Number.isNaN(fecha.getTime())
+    ? clean(r.fecha)
+    : fecha.toLocaleString('es-MX', {
+        timeZone: 'America/Mexico_City',
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+      })
 
   const lines = [
-    '✅ *QIORA BOT – RECOLECCIÓN RECIBIDA*',
+    '✅ QIORA BOT – RECOLECCIÓN RECIBIDA',
     '',
-    `Hola, ${clean(r.tecnico) || 'TÉCNICO'}.`,
+    `Hola, ${r.tecnico || ''}.`,
     '',
     'Tu recolección fue recibida en el almacén.',
     '',
-    `📋 Folio: ${clean(r.folio)}`,
-    `🏢 Distrito: ${clean(r.distrito || r.centro)}`,
-    `🏬 Almacén: ${clean(r.almacen)}`,
-    `👷 Técnico: ${clean(r.tecnico)}`,
-    `👤 Recibió: ${clean(r.recibe)}`,
-    `📅 Fecha y hora: ${formatFecha(r.fecha)}`,
+    `📋 Folio: ${r.folio || ''}`,
+    `🏢 Distrito: ${r.distrito || r.centro || ''}`,
+    `🏬 Almacén: ${r.almacen || ''}`,
+    `👷 Técnico: ${r.tecnico || ''}`,
+    `👤 Recibió: ${r.recibe || ''}`,
+    `📅 Fecha y hora: ${fechaTexto}`,
     '',
     `📦 Equipos recibidos: ${series.length}`
   ]
@@ -63,38 +71,24 @@ const makeText = r => {
   for (const equipo of series) {
     lines.push(`• Serie: ${clean(equipo.serie)}`)
     lines.push(`  Material: ${clean(equipo.material) || 'NO REGISTRADO'}`)
-    if (clean(equipo.descripcion)) {
-      lines.push(`  Descripción: ${clean(equipo.descripcion)}`)
-    }
+    if (clean(equipo.descripcion)) lines.push(`  Descripción: ${clean(equipo.descripcion)}`)
   }
 
-  lines.push('')
+  lines.push('', `⚠️ EQUIPOS PENDIENTES POR ENTREGAR: ${pendientes}`, '')
 
-  if (pendientes <= 0 || seriesPendientes.length === 0) {
-    lines.push(
-      '✅ *EQUIPOS PENDIENTES POR ENTREGAR: 0*',
-      '✅ TODAS LAS SERIES FUERON ENTREGADAS A ALMACÉN.'
-    )
-  } else {
-    lines.push(
-      `⚠️ *EQUIPOS PENDIENTES POR ENTREGAR: ${seriesPendientes.length}*`,
-      '',
-      '*SERIES:*'
-    )
-    for (const equipo of seriesPendientes) {
-      const serie = typeof equipo === 'string' ? equipo : equipo?.serie
-      if (clean(serie)) lines.push(clean(serie))
+  if (pendientes > 0) {
+    lines.push('SERIES:')
+    if (seriesPendientes.length) {
+      for (const serie of seriesPendientes) lines.push(clean(serie))
+    } else {
+      lines.push('NO SE RECUPERÓ EL DETALLE DE LAS SERIES PENDIENTES')
     }
     lines.push('', '*FAVOR DE ENTREGAR A ALMACÉN*')
+  } else {
+    lines.push('✅ TODAS LAS SERIES FUERON ENTREGADAS AL ALMACÉN')
   }
 
-  lines.push(
-    '',
-    '📌 Estado: RECEPCIÓN GUARDADA',
-    '',
-    '🤖 QIORA BOT'
-  )
-
+  lines.push('', '📌 Estado: RECEPCIÓN GUARDADA', '', '🤖 QIORA BOT')
   return lines.join('\n')
 }
 
@@ -389,42 +383,7 @@ export default function RecoleccionesPage() {
     }, 100)
   }
 
-  const enviarTelegramRecepcionGuardada = async (resultado, seriesPendientes) => {
-    try {
-      const { data: sesionData, error: sesionError } = await supabase.auth.getSession()
-      if (sesionError) throw sesionError
-      const accessToken = sesionData?.session?.access_token
-      if (!accessToken) throw new Error('No hay sesión válida para enviar la notificación.')
-
-      const response = await fetch('/api/recolecciones/telegram/recibida', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`
-        },
-        body: JSON.stringify({
-          folio: clean(resultado.folio),
-          distrito: upper(resultado.distrito || resultado.centro || centroActivo),
-          almacen: clean(resultado.almacen || datos?.almacen || almacen),
-          series_pendientes: (seriesPendientes || []).map(x => ({
-            serie: clean(x.serie),
-            material: clean(x.material),
-            descripcion: clean(x.descripcion)
-          }))
-        })
-      })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok || payload.ok !== true) {
-        throw new Error(payload.error || `HTTP ${response.status}`)
-      }
-      return payload
-    } catch (e) {
-      console.error('ERROR NOTIFICANDO RECEPCION POR TELEGRAM:', e)
-      return { ok: false, error: e?.message || 'No se pudo enviar Telegram.' }
-    }
-  }
-
-  const enviarWhatsapp = (resultado, mensajeUnificado) => {
+  const enviarWhatsapp = resultado => {
     const telefono = formatPhone(
       resultado.telefono
     )
@@ -433,8 +392,7 @@ export default function RecoleccionesPage() {
       return false
     }
 
-    // Reutilizar exactamente el mismo texto generado por la API y enviado a Telegram.
-    const texto = clean(mensajeUnificado) || makeText(resultado)
+    const texto = makeText(resultado)
 
     const url =
       `https://wa.me/${telefono}?text=` +
@@ -505,6 +463,7 @@ export default function RecoleccionesPage() {
       // Solo descuentan del inventario TPE USADO las series que
       // pertenecían al catálogo SAP; las series libres no alteran ese total.
       const pendientesAntesDeGuardar = pendientes.length
+      const seriesPendientesAntesDeGuardar = pendientes.map(s => clean(s.serie)).filter(Boolean)
 
       const seriesAntesDeGuardar = [...entregadas]
 
@@ -615,8 +574,8 @@ export default function RecoleccionesPage() {
         pendientes:
           pendientesAntesDeGuardar,
 
-        seriesPendientes:
-          pendientes.map(equipo => ({ ...equipo })),
+        series_pendientes:
+          seriesPendientesAntesDeGuardar,
 
         series:
           seriesResultado
@@ -634,24 +593,11 @@ export default function RecoleccionesPage() {
       setGuardado(resultado)
       setFolio(folioGuardado)
 
-      // Primer mensaje: se envía al técnico al guardar la recepción.
-      // La lista pendiente sale del catálogo IQ09 cargado antes de guardar,
-      // descontando las series escaneadas en esta recepción.
-      const avisoTelegram = await enviarTelegramRecepcionGuardada(
-        resultado,
-        pendientes
+      enviarWhatsapp(resultado)
+
+      limpiarDespuesDeGuardar(
+        folioGuardado
       )
-
-      enviarWhatsapp(resultado, avisoTelegram.mensaje)
-
-      limpiarDespuesDeGuardar(folioGuardado)
-      if (avisoTelegram.ok && avisoTelegram.enviado) {
-        setMensaje(`Recolección ${folioGuardado} guardada. Telegram enviado al técnico.`)
-      } else if (avisoTelegram.ok && avisoTelegram.duplicado) {
-        setMensaje(`Recolección ${folioGuardado} guardada. El aviso de Telegram ya estaba enviado.`)
-      } else {
-        setMensaje(`Recolección ${folioGuardado} guardada, pero Telegram no se pudo enviar: ${avisoTelegram.error || avisoTelegram.motivo || 'sin destinatario'}.`)
-      }
     })
 
   const limpiar = () => {
