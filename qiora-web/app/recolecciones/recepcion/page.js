@@ -389,6 +389,41 @@ export default function RecoleccionesPage() {
     }, 100)
   }
 
+  const enviarTelegramRecepcionGuardada = async (resultado, seriesPendientes) => {
+    try {
+      const { data: sesionData, error: sesionError } = await supabase.auth.getSession()
+      if (sesionError) throw sesionError
+      const accessToken = sesionData?.session?.access_token
+      if (!accessToken) throw new Error('No hay sesión válida para enviar la notificación.')
+
+      const response = await fetch('/api/recolecciones/telegram/recibida', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({
+          folio: clean(resultado.folio),
+          distrito: upper(resultado.distrito || resultado.centro || centroActivo),
+          almacen: clean(resultado.almacen || datos?.almacen || almacen),
+          series_pendientes: (seriesPendientes || []).map(x => ({
+            serie: clean(x.serie),
+            material: clean(x.material),
+            descripcion: clean(x.descripcion)
+          }))
+        })
+      })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok || payload.ok !== true) {
+        throw new Error(payload.error || `HTTP ${response.status}`)
+      }
+      return payload
+    } catch (e) {
+      console.error('ERROR NOTIFICANDO RECEPCION POR TELEGRAM:', e)
+      return { ok: false, error: e?.message || 'No se pudo enviar Telegram.' }
+    }
+  }
+
   const enviarWhatsapp = resultado => {
     const telefono = formatPhone(
       resultado.telefono
@@ -413,7 +448,6 @@ export default function RecoleccionesPage() {
     return !!ventana
   }
 
-
   const limpiarDespuesDeGuardar = folioGuardado => {
     setFolio('')
     setAlmacen('')
@@ -427,7 +461,7 @@ export default function RecoleccionesPage() {
     setError('')
 
     setMensaje(
-      `Recolección ${folioGuardado} guardada correctamente. La confirmación de Telegram se enviará cuando SAP confirme el documento.`
+      `Recolección ${folioGuardado} guardada correctamente. Pantalla lista para una nueva captura.`
     )
 
     setTimeout(() => {
@@ -596,9 +630,24 @@ export default function RecoleccionesPage() {
       setGuardado(resultado)
       setFolio(folioGuardado)
 
+      // Primer mensaje: se envía al técnico al guardar la recepción.
+      // La lista pendiente sale del catálogo IQ09 cargado antes de guardar,
+      // descontando las series escaneadas en esta recepción.
+      const avisoTelegram = await enviarTelegramRecepcionGuardada(
+        resultado,
+        pendientes
+      )
+
       enviarWhatsapp(resultado)
 
       limpiarDespuesDeGuardar(folioGuardado)
+      if (avisoTelegram.ok && avisoTelegram.enviado) {
+        setMensaje(`Recolección ${folioGuardado} guardada. Telegram enviado al técnico.`)
+      } else if (avisoTelegram.ok && avisoTelegram.duplicado) {
+        setMensaje(`Recolección ${folioGuardado} guardada. El aviso de Telegram ya estaba enviado.`)
+      } else {
+        setMensaje(`Recolección ${folioGuardado} guardada, pero Telegram no se pudo enviar: ${avisoTelegram.error || avisoTelegram.motivo || 'sin destinatario'}.`)
+      }
     })
 
   const limpiar = () => {
