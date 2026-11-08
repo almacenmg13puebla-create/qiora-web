@@ -38,61 +38,61 @@ const formatFecha = valor => {
 
 const makeText = r => {
   const series = Array.isArray(r.series) ? r.series : []
-  const pendientes = Number(r.pendientes ?? 0)
+  const seriesPendientes = Array.isArray(r.seriesPendientes)
+    ? r.seriesPendientes
+    : []
+  const pendientes = Number(r.pendientes ?? seriesPendientes.length ?? 0)
 
   const lines = [
-    '*RECOLECCIÓN RECIBIDA*',
+    '✅ *QIORA BOT – RECOLECCIÓN RECIBIDA*',
     '',
-    `Hola *${r.tecnico || ''}* 👋`,
-    'Tu recolección fue recibida en almacén.',
+    `Hola, ${clean(r.tecnico) || 'TÉCNICO'}.`,
     '',
-    `📄 *Folio:* ${r.folio || ''}`,
-    `🏢 *Centro:* ${r.centro || r.distrito || ''}`,
-    `📦 *Almacén:* ${r.almacen || ''}`,
-    `👷 *Técnico:* ${r.tecnico || ''}`,
-    `👤 *Recibió:* ${r.recibe || ''}`,
-    `📅 *Fecha:* ${formatFecha(r.fecha)}`,
+    'Tu recolección fue recibida en el almacén.',
     '',
-    '━━━━━━━━━━━━━━━━━━━━',
-    `📦 *EQUIPOS ENTREGADOS (${series.length})*`
+    `📋 Folio: ${clean(r.folio)}`,
+    `🏢 Distrito: ${clean(r.distrito || r.centro)}`,
+    `🏬 Almacén: ${clean(r.almacen)}`,
+    `👷 Técnico: ${clean(r.tecnico)}`,
+    `👤 Recibió: ${clean(r.recibe)}`,
+    `📅 Fecha y hora: ${formatFecha(r.fecha)}`,
+    '',
+    `📦 Equipos recibidos: ${series.length}`
   ]
 
   for (const equipo of series) {
-    const serie = clean(equipo.serie)
-    const material = clean(equipo.material)
-    const descripcion = clean(equipo.descripcion)
-
-    if (!material || !descripcion) {
-      lines.push(`• ${serie} ⚠️ NO EXISTE EN SAP`)
-    } else {
-      lines.push(
-        `• ${serie} | ${material} - ${descripcion}`
-      )
+    lines.push(`• Serie: ${clean(equipo.serie)}`)
+    lines.push(`  Material: ${clean(equipo.material) || 'NO REGISTRADO'}`)
+    if (clean(equipo.descripcion)) {
+      lines.push(`  Descripción: ${clean(equipo.descripcion)}`)
     }
   }
 
-  lines.push(
-    '━━━━━━━━━━━━━━━━━━━━',
-    ''
-  )
+  lines.push('')
 
-  if (pendientes <= 0) {
+  if (pendientes <= 0 || seriesPendientes.length === 0) {
     lines.push(
-      '✅ *ENTREGA COMPLETA*',
-      'No tienes equipos pendientes en esta recolección.'
+      '✅ *EQUIPOS PENDIENTES POR ENTREGAR: 0*',
+      '✅ TODAS LAS SERIES FUERON ENTREGADAS A ALMACÉN.'
     )
   } else {
     lines.push(
-      '⚠️ *ENTREGA PARCIAL*',
-      `Quedan ${pendientes} equipo(s) pendiente(s) por entregar.`
+      `⚠️ *EQUIPOS PENDIENTES POR ENTREGAR: ${seriesPendientes.length}*`,
+      '',
+      '*SERIES:*'
     )
+    for (const equipo of seriesPendientes) {
+      const serie = typeof equipo === 'string' ? equipo : equipo?.serie
+      if (clean(serie)) lines.push(clean(serie))
+    }
+    lines.push('', '*FAVOR DE ENTREGAR A ALMACÉN*')
   }
 
   lines.push(
     '',
-    '✅ *Recepción registrada correctamente*',
+    '📌 Estado: RECEPCIÓN GUARDADA',
     '',
-    '🏢 *Sistema Nacional de Almacenes*'
+    '🤖 QIORA BOT'
   )
 
   return lines.join('\n')
@@ -613,6 +613,9 @@ export default function RecoleccionesPage() {
 
         pendientes:
           pendientesAntesDeGuardar,
+
+        seriesPendientes:
+          pendientes.map(equipo => ({ ...equipo })),
 
         series:
           seriesResultado
