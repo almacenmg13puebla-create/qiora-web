@@ -407,40 +407,6 @@ export default function RecoleccionesPage() {
     return !!ventana
   }
 
-  // Enviar por Telegram el mismo texto que se prepara para WhatsApp.
-  // La API valida la sesión, el distrito y el técnico antes de enviar.
-  const enviarTelegramRecepcion = async resultado => {
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
-    if (sessionError) throw sessionError
-    const accessToken = sessionData?.session?.access_token
-    if (!accessToken) throw new Error('No hay sesión activa para enviar Telegram.')
-
-    const response = await fetch('/api/recolecciones/telegram/recibida', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`
-      },
-      body: JSON.stringify({
-        folio: resultado.folio,
-        distrito: resultado.distrito || resultado.centro,
-        almacen: resultado.almacen,
-        series_pendientes: (resultado.series_pendientes || []).map(serie => ({ serie })),
-        mensaje: makeText(resultado)
-      }),
-      cache: 'no-store'
-    })
-
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok || data.ok !== true) {
-      throw new Error(data.error || `No se pudo enviar Telegram (HTTP ${response.status}).`)
-    }
-    if (data.enviado === false && !data.duplicado) {
-      throw new Error(data.motivo || 'Telegram no confirmó el envío al técnico.')
-    }
-    return data
-  }
-
   const limpiarDespuesDeGuardar = folioGuardado => {
     setFolio('')
     setAlmacen('')
@@ -627,24 +593,10 @@ export default function RecoleccionesPage() {
       setGuardado(resultado)
       setFolio(folioGuardado)
 
-      // WhatsApp conserva su enlace actual; Telegram recibe el mismo makeText().
-      const whatsappAbierto = enviarWhatsapp(resultado)
-      let telegramEstado = ''
-      try {
-        const avisoTelegram = await enviarTelegramRecepcion(resultado)
-        telegramEstado = avisoTelegram.enviado === true || avisoTelegram.duplicado
-          ? 'Telegram enviado al técnico.'
-          : 'Telegram no confirmó el envío.'
-      } catch (telegramError) {
-        console.error('ERROR ENVIANDO RECEPCION POR TELEGRAM:', telegramError)
-        telegramEstado = `Telegram no enviado: ${telegramError.message}`
-      }
+      enviarWhatsapp(resultado)
 
-      limpiarDespuesDeGuardar(folioGuardado)
-      setMensaje(
-        `Recolección ${folioGuardado} guardada. ` +
-        `${whatsappAbierto ? 'WhatsApp abierto con el mensaje.' : 'No se pudo abrir WhatsApp.'} ` +
-        telegramEstado
+      limpiarDespuesDeGuardar(
+        folioGuardado
       )
     })
 
