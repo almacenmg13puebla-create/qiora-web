@@ -117,6 +117,9 @@ export default function RecoleccionesPage() {
 
   const inputSerie = useRef(null)
   const inputAlmacen = useRef(null)
+  // Reservar la ventana durante el clic del usuario para evitar que
+  // el navegador bloquee WhatsApp después de las consultas asíncronas.
+  const ventanaWhatsappRef = useRef(null)
 
   const catalogo = useMemo(
     () => datos?.equipos || [],
@@ -237,6 +240,10 @@ export default function RecoleccionesPage() {
     try {
       await fn()
     } catch (e) {
+      if (ventanaWhatsappRef.current && !ventanaWhatsappRef.current.closed) {
+        ventanaWhatsappRef.current.close()
+      }
+      ventanaWhatsappRef.current = null
       console.error('ERROR RECOLECCIONES:', e)
 
       setError(
@@ -384,27 +391,30 @@ export default function RecoleccionesPage() {
   }
 
   const enviarWhatsapp = resultado => {
-    const telefono = formatPhone(
-      resultado.telefono
-    )
+    const telefono = formatPhone(resultado.telefono)
 
     if (!telefono) {
+      if (ventanaWhatsappRef.current && !ventanaWhatsappRef.current.closed) {
+        ventanaWhatsappRef.current.close()
+      }
+      ventanaWhatsappRef.current = null
       return false
     }
 
+    // Un solo generador de texto para el mensaje aprobado de WhatsApp.
     const texto = makeText(resultado)
+    const url = `https://wa.me/${telefono}?text=${encodeURIComponent(texto)}`
 
-    const url =
-      `https://wa.me/${telefono}?text=` +
-      encodeURIComponent(texto)
+    const ventana = ventanaWhatsappRef.current
+    if (ventana && !ventana.closed) {
+      ventana.location.href = url
+      ventanaWhatsappRef.current = null
+      return true
+    }
 
-    const ventana = window.open(
-      url,
-      '_blank',
-      'noopener,noreferrer'
-    )
-
-    return !!ventana
+    // Respaldo si el navegador no permitió reservar la ventana.
+    const nuevaVentana = window.open(url, '_blank')
+    return !!nuevaVentana
   }
 
   const limpiarDespuesDeGuardar = folioGuardado => {
@@ -428,8 +438,14 @@ export default function RecoleccionesPage() {
     }, 150)
   }
 
-  const guardar = () =>
-    ejecutar(async () => {
+  const guardar = () => {
+    // Debe abrirse sincrónicamente desde el clic; WhatsApp se carga
+    // después de que Supabase devuelve el folio y los datos definitivos.
+    if (!guardado && datos && entregadas.length && !ventanaWhatsappRef.current) {
+      ventanaWhatsappRef.current = window.open('about:blank', '_blank')
+    }
+
+    return ejecutar(async () => {
       if (guardado) {
         throw new Error(
           'Esta recolección ya está guardada.'
@@ -599,6 +615,7 @@ export default function RecoleccionesPage() {
         folioGuardado
       )
     })
+  }
 
   const limpiar = () => {
     setFolio('')
