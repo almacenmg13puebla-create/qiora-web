@@ -407,6 +407,46 @@ export default function RecoleccionesPage() {
     return !!ventana
   }
 
+  // Envia por Telegram el mismo texto que se prepara para WhatsApp.
+  // El error de Telegram se informa, pero no revierte una recepcion ya guardada.
+  const enviarTelegramRecepcion = async resultado => {
+    try {
+      const { data: sesionData, error: sesionError } = await supabase.auth.getSession()
+      if (sesionError) throw sesionError
+      const accessToken = sesionData?.session?.access_token
+      if (!accessToken) throw new Error('SESION_NO_DISPONIBLE_PARA_TELEGRAM')
+
+      const response = await fetch('/api/recolecciones/telegram/recibida', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({
+          folio: resultado.folio,
+          distrito: resultado.distrito || resultado.centro,
+          almacen: resultado.almacen,
+          series_pendientes: Array.isArray(resultado.series_pendientes)
+            ? resultado.series_pendientes
+            : [],
+          mensaje: makeText(resultado)
+        })
+      })
+
+      const respuesta = await response.json().catch(() => ({}))
+      if (!response.ok || respuesta.ok !== true) {
+        throw new Error(respuesta.error || `TELEGRAM_HTTP_${response.status}`)
+      }
+      if (respuesta.enviado === false && !respuesta.duplicado) {
+        throw new Error(respuesta.motivo || 'TELEGRAM_NO_ENVIADO')
+      }
+      return respuesta
+    } catch (e) {
+      console.error('[RECOLECCIONES TELEGRAM]', e)
+      return { ok: false, error: clean(e?.message || e) }
+    }
+  }
+
   const limpiarDespuesDeGuardar = folioGuardado => {
     setFolio('')
     setAlmacen('')
@@ -593,10 +633,17 @@ export default function RecoleccionesPage() {
       setGuardado(resultado)
       setFolio(folioGuardado)
 
+      // WhatsApp conserva su enlace y formato actuales.
       enviarWhatsapp(resultado)
 
-      limpiarDespuesDeGuardar(
-        folioGuardado
+      // Telegram se envia despues de confirmar el guardado, incluso si
+      // alguna serie escaneada no existe en IQ09.
+      const avisoTelegram = await enviarTelegramRecepcion(resultado)
+
+      limpiarDespuesDeGuardar(folioGuardado)
+      setMensaje(avisoTelegram?.ok
+        ? `Recolección ${folioGuardado} guardada. WhatsApp preparado y Telegram enviado al técnico.`
+        : `Recolección ${folioGuardado} guardada. WhatsApp preparado; Telegram no enviado: ${avisoTelegram?.error || 'ERROR_DESCONOCIDO'}`
       )
     })
 
