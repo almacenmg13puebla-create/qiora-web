@@ -1,6 +1,7 @@
 
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createHash } from 'node:crypto'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -66,6 +67,8 @@ export async function POST(req) {
       .toUpperCase()
 
     const token = String(data.token || '').trim()
+    const tokenMaestro = String(data.token_maestro || '').trim()
+    const modoEmergencia = tokenMaestro.length > 0
 
     const tipo = String(data.tipo || '')
       .trim()
@@ -88,7 +91,7 @@ export async function POST(req) {
 
     // 4. VALIDAR TOKEN INDIVIDUAL
 
-    if (!token || token.length < 12) {
+    if (!modoEmergencia && (!token || token.length < 12)) {
       return response({
         ok: false,
         error: 'TOKEN_INVALIDO'
@@ -156,8 +159,15 @@ export async function POST(req) {
         data: out,
         error
       } = await db.rpc(
-        'qiora_excel_inventario_lote',
-        {
+        modoEmergencia ? 'qiora_macro_emergencia_inventario_lote' : 'qiora_excel_inventario_lote',
+        modoEmergencia ? {
+          p_token_hash: createHash('sha256').update(tokenMaestro, 'utf8').digest('hex'),
+          p_distrito: centro,
+          p_tipo: tipo,
+          p_lote: lote,
+          p_offset: data.offset,
+          p_filas: data.filas
+        } : {
           p_distrito: centro,
           p_token: token,
           p_tipo: tipo,
@@ -204,8 +214,14 @@ export async function POST(req) {
         data: out,
         error
       } = await db.rpc(
-        'qiora_excel_inventario_commit',
-        {
+        modoEmergencia ? 'qiora_macro_emergencia_inventario_commit' : 'qiora_excel_inventario_commit_seguro',
+        modoEmergencia ? {
+          p_token_hash: createHash('sha256').update(tokenMaestro, 'utf8').digest('hex'),
+          p_distrito: centro,
+          p_tipo: tipo,
+          p_lote: lote,
+          p_total: data.total
+        } : {
           p_distrito: centro,
           p_token: token,
           p_tipo: tipo,
