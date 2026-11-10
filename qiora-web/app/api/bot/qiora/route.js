@@ -121,8 +121,8 @@ async function registrarTelegram(admin, payload) {
   if (!/^([A-Z]{2,5}[0-9]{1,5})$/.test(distrito)) {
     return { ok: false, error: 'Distrito inválido.' }
   }
-  if (!/^[A-Z0-9_-]{2,10}$/.test(usuario)) {
-    return { ok: false, error: 'Número de usuario o almacén inválido.' }
+  if (!/^[A-Z0-9_-]{2,40}$/.test(usuario)) {
+    return { ok: false, error: 'Usuario o almacén inválido.' }
   }
   if (!/^\d{5,20}$/.test(chatId)) {
     return { ok: false, error: 'No se pudo identificar tu cuenta de Telegram.' }
@@ -148,28 +148,55 @@ async function registrarTelegram(admin, payload) {
     return { ok: false, error: 'Este usuario ya está vinculado a otra cuenta de Telegram. Solicita apoyo al administrador de SAT.' }
   }
 
+  // Igualar la autenticación de Telegram con QIORA Web:
+  // correo legado usuario@qiora.local y contraseña QIORA# + clave.
   const auth = supabaseAuthClient()
-  // El registro del distrito está vinculado a una identidad Auth concreta.
-  // Permite correos nuevos y legados, sin confundir usuarios homónimos.
   const correos = [
-    `${usuario.toLowerCase()}.${distrito.toLowerCase()}@qiora.local`,
     `${usuario.toLowerCase()}@qiora.local`,
+    `${usuario.toLowerCase()}.${distrito.toLowerCase()}@qiora.local`,
   ]
-  let autenticado = false
+  let usuarioAuth = null
+  let perfilAuth = null
+  let ultimoErrorAuth = null
+
   for (const email of correos) {
     const { data: login, error: loginError } = await auth.auth.signInWithPassword({
       email,
       password: `QIORA#${clave}`,
     })
-    if (loginError || !login?.user?.id) continue
-    if (String(login.user.id).toLowerCase() === String(perfil.auth_user_id).toLowerCase()) {
-      autenticado = true
+    if (loginError || !login?.user?.id) {
+      ultimoErrorAuth = loginError
+      continue
+    }
+
+    // La misma función que utiliza el inicio de sesión web valida
+    // qué perfil SAT corresponde realmente a esta identidad autenticada.
+    const { data: perfilLogin, error: rpcError } = await auth.rpc('qiora_mi_perfil')
+    const coincide = !rpcError && perfilLogin?.activo === true &&
+      upper(perfilLogin.usuario_almacen) === usuario &&
+      upper(perfilLogin.distrito) === distrito
+
+    if (coincide) {
+      usuarioAuth = login.user
+      perfilAuth = perfilLogin
       break
     }
-    await auth.auth.signOut()
+
+    ultimoErrorAuth = rpcError || new Error('La cuenta autenticada no corresponde al usuario y distrito indicados.')
+    await auth.auth.signOut().catch(() => {})
   }
-  if (!autenticado) {
-    return { ok: false, error: 'Usuario, distrito o contraseña incorrectos.' }
+
+  if (!usuarioAuth || !perfilAuth) {
+    console.warn('[QIORA REGISTRO TELEGRAM] autenticacion no validada', {
+      usuario,
+      distrito,
+      auth_user_id_coincide: false,
+      error: ultimoErrorAuth?.message || 'sin detalle'
+    })
+    return {
+      ok: false,
+      error: 'No se pudo validar la cuenta con el mismo perfil de QIORA Web. Verifica que ingresaste el mismo usuario, distrito y contraseña que utilizas en la página web. Si puedes entrar a la web, el administrador debe revisar la relación auth_user_id de este usuario.'
+    }
   }
 
   await auth.auth.signOut().catch(() => {})
@@ -187,56 +214,34 @@ async function registrarTelegram(admin, payload) {
     return { ok: false, error: 'Esta cuenta de Telegram ya está vinculada a otro usuario SAT.' }
   }
 
-  if (clean(perfil.telegram_chat_id) === chatId) {
-    return {
-      ok: true,
-      registrado: true,
-      mensaje: `Tu Telegram ya estaba vinculado.\nUsuario: ${usuario}\nDistrito: ${distrito}\nPuesto: ${perfil.puesto || 'No indicado'}`,
-      usuario: perfil.usuario_almacen,
-      distrito: perfil.distrito,
-      puesto: perfil.puesto || '',
-      nombre: perfil.nombre || '',
-      faltantes: [],
-    }
-  }
-
+  const ahora = new Date().toISOString()
   const { data: actualizado, error: updateError } = await admin
     .from('almacen_usuarios')
     .update({
       telegram_chat_id: chatId,
       bot_confirmado: true,
-      fecha_confirmacion_bot: new Date().toISOString(),
-      actualizado_en: new Date().toISOString(),
+      fecha_confirmacion_bot: ahora,
+      actualizado_en: ahora
     })
     .eq('id', perfil.id)
     .eq('activo', true)
-    .or('telegram_chat_id.is.null,telegram_chat_id.eq.')
     .select('usuario_almacen,distrito,nombre,puesto,telegram_chat_id')
     .maybeSingle()
 
   if (updateError) throw new Error(updateError.message)
-
   if (!actualizado) {
-    const { data: comprobacion, error: checkError } = await admin
-      .from('almacen_usuarios')
-      .select('telegram_chat_id')
-      .eq('id', perfil.id)
-      .maybeSingle()
-    if (checkError) throw new Error(checkError.message)
-    if (clean(comprobacion?.telegram_chat_id) !== chatId) {
-      return { ok: false, error: 'No se pudo completar el vínculo porque la cuenta cambió durante el registro. Inténtalo nuevamente.' }
-    }
+    return { ok: false, error: 'La identidad fue validada, pero no se pudo guardar el vínculo de Telegram. Verifica que el usuario siga activo e inténtalo de nuevo.' }
   }
 
   return {
     ok: true,
     registrado: true,
-    mensaje: `Registro completado.\nUsuario: ${usuario}\nDistrito: ${distrito}\nPuesto: ${perfil.puesto || 'No indicado'}`,
-    usuario: perfil.usuario_almacen,
-    distrito: perfil.distrito,
-    puesto: perfil.puesto || '',
-    nombre: perfil.nombre || '',
-    faltantes: [],
+    mensaje: `Registro completado.\nUsuario: ${actualizado.usuario_almacen}\nDistrito: ${actualizado.distrito}\nPuesto: ${actualizado.puesto || ''}`,
+    usuario: actualizado.usuario_almacen,
+    distrito: actualizado.distrito,
+    puesto: actualizado.puesto || '',
+    nombre: actualizado.nombre || '',
+    faltantes: []
   }
 }
 
@@ -614,11 +619,16 @@ async function usuariosAlcancePendientes(admin, perfil) {
 
   /*
     Almacenista:
-    consulta todos los vehículos pendientes del distrito, no solo
-    los asociados a su propio código de almacén. Esta regla aplica
-    únicamente al módulo KILOMETRAJES.
+    usuarios activos del mismo distrito y mismo almacén/código
+    cuando almacen_usuarios.usuario_almacen coincide.
+
+    Si tu catálogo usa otra columna específica para almacén,
+    esta parte se puede cambiar sin afectar los demás roles.
   */
   if (esAlmacenista(perfil)) {
+    const almacen = normalizarLlave(perfil.usuario_almacen)
+    if (!almacen) return []
+
     const { data, error } = await admin
       .from('almacen_usuarios')
       .select('id,nombre,usuario_almacen,distrito,puesto,usuario_ffm,ffm,numero_empleado,numero_empleado_odoo,coordinador')
@@ -626,7 +636,10 @@ async function usuariosAlcancePendientes(admin, perfil) {
       .eq('distrito', distrito)
 
     if (error) throw new Error(error.message)
-    return data || []
+
+    return (data || []).filter(
+      u => normalizarLlave(u.usuario_almacen) === almacen
+    )
   }
 
   /*
@@ -805,10 +818,8 @@ async function pendientesKilometraje(admin, perfil) {
       f => upper(f?.distrito) === distrito
     )
   } else {
-    const distritoUsuario = upper(perfil?.distrito)
-    pendientes = filas.filter(f =>
-      upper(f?.distrito) === distritoUsuario &&
-      dentroAlcancePendientes(f, indices)
+    pendientes = filas.filter(
+      f => dentroAlcancePendientes(f, indices)
     )
   }
 
@@ -829,7 +840,7 @@ async function pendientesKilometraje(admin, perfil) {
   } else if (esCoordinador(perfil)) {
     alcanceTexto = `COORDINADOR / ${distrito || 'SIN DISTRITO'}`
   } else if (esAlmacenista(perfil)) {
-    alcanceTexto = `DISTRITO ${distrito || 'SIN DISTRITO'} / TODOS LOS ALMACENES`
+    alcanceTexto = `ALMACÉN ${perfil?.usuario_almacen || ''} / ${distrito || ''}`.trim()
   } else {
     alcanceTexto = `TÉCNICO / ${distrito || 'SIN DISTRITO'}`
   }
