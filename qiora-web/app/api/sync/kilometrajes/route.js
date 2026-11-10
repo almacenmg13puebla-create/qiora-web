@@ -335,3 +335,134 @@ export async function GET(request) {
     return out({ ok: false, error: e?.message || 'ERROR_INTERNO' }, 500)
   }
 }
+// Sincronizacion de respuestas de Google Sheets -> Supabase.
+// Esta ruta comparte el GET de recordatorios y agrega POST para la carga.
+import { createHash } from 'node:crypto'
+
+function keyHeader(value) {
+  return s(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+function field(row, aliases) {
+  const wanted = new Set(aliases.map(keyHeader))
+  for (const [key, value] of Object.entries(row || {})) {
+    if (wanted.has(keyHeader(key))) return value
+  }
+  return ''
+}
+
+function textField(row, aliases) {
+  const value = field(row, aliases)
+  return value === null || value === undefined ? '' : String(value).trim()
+}
+
+function numberField(row, aliases) {
+  const raw = textField(row, aliases).replace(/,/g, '').replace(/\s/g, '')
+  if (!raw) return null
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : null
+}
+
+function makeSourceKey(row) {
+  const explicit = textField(row, [
+    'source_key', 'source key', 'id respuesta', 'id de respuesta',
+    'response id', 'timestamp id', 'folio formulario'
+  ])
+  if (explicit) return explicit.slice(0, 240)
+  const canonical = Object.keys(row || {}).sort().reduce((out, key) => {
+    out[String(key)] = row[key] == null ? '' : String(row[key]).trim()
+    return out
+  }, {})
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
+}
+
+function mapKilometrajeRow(row) {
+  const fechaFormulario = textField(row, [
+    'fecha_formulario', 'fecha formulario', 'marca temporal', 'timestamp',
+    'fecha y hora', 'fecha de envio', 'fecha de envío'
+  ])
+  const fechaRevision = textField(row, [
+    'fecha_revision', 'fecha revision', 'fecha de revision', 'fecha de revisión'
+  ])
+  const placa = textField(row, ['placa', 'placas', 'matricula', 'matrícula'])
+  const numeroUnico = textField(row, [
+    'numero_unico', 'numero unico', 'número único', 'numero de unidad', 'número de unidad'
+  ])
+  const distrito = textField(row, ['distrito', 'centro', 'distrito operativo'])
+  const semana = textField(row, ['semana', 'semana del año', 'semana del anio'])
+  const kilometraje = numberField(row, [
+    'kilometraje', 'kilometraje actual', 'odometro', 'odómetro', 'lectura odometro', 'lectura odómetro'
+  ])
+
+  return {
+    source_key: makeSourceKey(row),
+    fecha_formulario: fechaFormulario || null,
+    distrito: distrito || null,
+    tipo_unidad: textField(row, ['tipo_unidad', 'tipo unidad', 'tipo de unidad']) || null,
+    fecha_revision: fechaRevision || null,
+    semana: semana || null,
+    placa: placa || null,
+    numero_unico: numeroUnico || null,
+    numero_empleado: textField(row, ['numero_empleado', 'numero empleado', 'número de empleado', 'no empleado']) || null,
+    usuario_ffm: textField(row, ['usuario_ffm', 'usuario ffm', 'ffm', 'usuario']) || null,
+    nombre_operador: textField(row, ['nombre_operador', 'nombre operador', 'nombre', 'empleado', 'nombre del operador']) || null,
+    kilometraje,
+    almacen: textField(row, ['almacen', 'almacén', 'sucursal', 'centro de costo']) || null,
+    modelo: textField(row, ['modelo', 'marca y modelo']) || null,
+    fotografia_odometro: textField(row, ['fotografia_odometro', 'fotografia odometro', 'fotografía odómetro', 'foto odometro', 'foto odómetro', 'fotografia']) || null,
+    datos_completos: row
+  }
+}
+
+export async function POST(request) {
+  try {
+    const expected = s(process.env.QIORA_SYNC_SECRET)
+    const supplied = s(request.headers.get('x-qiora-sync-secret'))
+    if (!expected || supplied !== expected) return out({ ok: false, error: 'NO_AUTORIZADO' }, 401)
+
+    let payload
+    try {
+      payload = await request.json()
+    } catch {
+      return out({ ok: false, error: 'JSON_INVALIDO' }, 400)
+    }
+
+    if (!Array.isArray(payload?.filas)) return out({ ok: false, error: 'Se esperaba un arreglo filas.' }, 400)
+    if (payload.filas.length > 500) return out({ ok: false, error: 'MAXIMO_500_FILAS_POR_LOTE' }, 413)
+    if (!payload.filas.length) return out({ ok: true, procesadas: 0, guardadas: 0, duplicadas_en_lote: 0 })
+
+    const admin = createAdmin()
+    const mapped = payload.filas
+      .filter(row => row && typeof row === 'object' && !Array.isArray(row))
+      .map(mapKilometrajeRow)
+
+    if (!mapped.length) return out({ ok: false, error: 'No hay filas validas.' }, 400)
+
+    // Evita repetir la misma respuesta dentro del lote; el upsert protege reintentos.
+    const unique = new Map()
+    for (const row of mapped) unique.set(row.source_key, row)
+    const rows = [...unique.values()]
+
+    const { data, error } = await admin
+      .from('qiora_kilometrajes')
+      .upsert(rows, { onConflict: 'source_key' })
+      .select('id,source_key')
+
+    if (error) {
+      console.error('[QIORA KM SYNC] Supabase upsert:', error.message)
+      return out({ ok: false, error: 'SUPABASE_UPSERT_ERROR', detalle: error.message }, 500)
+    }
+
+    return out({
+      ok: true,
+      procesadas: mapped.length,
+      guardadas: Array.isArray(data) ? data.length : rows.length,
+      duplicadas_en_lote: mapped.length - rows.length,
+      lote: rows.length
+    })
+  } catch (error) {
+    console.error('[QIORA KM SYNC]', error?.message || error)
+    return out({ ok: false, error: error?.message || 'ERROR_INTERNO_SYNC' }, 500)
+  }
+}
