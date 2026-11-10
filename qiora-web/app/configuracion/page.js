@@ -23,6 +23,7 @@ const MENU = [
   ['Usuarios', 'usuarios', 'usuarios'],
   ['RECUS TP', null, 'admin_padre'],
   ['Actualizar macro Excel', null, 'admin_padre'],
+  ['Macro de emergencia multidistrito', 'macro_emergencia', 'admin_padre'],
   ['Grupos de materiales', 'grupos_materiales', 'materiales']
 ]
 
@@ -1751,6 +1752,11 @@ export default function ConfiguracionPage() {
     const opcion = MENU.find(item => item[1] === tipo)
     if (opcion && !puedeAbrirMenu(opcion[2])) {
       setError('No tienes permiso para abrir esta sección.')
+      return
+    }
+
+    if (tipo === 'macro_emergencia') {
+      router.push('/configuracion/macro-emergencia')
       return
     }
 
