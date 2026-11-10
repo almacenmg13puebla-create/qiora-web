@@ -614,16 +614,11 @@ async function usuariosAlcancePendientes(admin, perfil) {
 
   /*
     Almacenista:
-    usuarios activos del mismo distrito y mismo almacén/código
-    cuando almacen_usuarios.usuario_almacen coincide.
-
-    Si tu catálogo usa otra columna específica para almacén,
-    esta parte se puede cambiar sin afectar los demás roles.
+    consulta todos los vehículos pendientes del distrito, no solo
+    los asociados a su propio código de almacén. Esta regla aplica
+    únicamente al módulo KILOMETRAJES.
   */
   if (esAlmacenista(perfil)) {
-    const almacen = normalizarLlave(perfil.usuario_almacen)
-    if (!almacen) return []
-
     const { data, error } = await admin
       .from('almacen_usuarios')
       .select('id,nombre,usuario_almacen,distrito,puesto,usuario_ffm,ffm,numero_empleado,numero_empleado_odoo,coordinador')
@@ -631,10 +626,7 @@ async function usuariosAlcancePendientes(admin, perfil) {
       .eq('distrito', distrito)
 
     if (error) throw new Error(error.message)
-
-    return (data || []).filter(
-      u => normalizarLlave(u.usuario_almacen) === almacen
-    )
+    return data || []
   }
 
   /*
@@ -813,8 +805,10 @@ async function pendientesKilometraje(admin, perfil) {
       f => upper(f?.distrito) === distrito
     )
   } else {
-    pendientes = filas.filter(
-      f => dentroAlcancePendientes(f, indices)
+    const distritoUsuario = upper(perfil?.distrito)
+    pendientes = filas.filter(f =>
+      upper(f?.distrito) === distritoUsuario &&
+      dentroAlcancePendientes(f, indices)
     )
   }
 
@@ -835,7 +829,7 @@ async function pendientesKilometraje(admin, perfil) {
   } else if (esCoordinador(perfil)) {
     alcanceTexto = `COORDINADOR / ${distrito || 'SIN DISTRITO'}`
   } else if (esAlmacenista(perfil)) {
-    alcanceTexto = `ALMACÉN ${perfil?.usuario_almacen || ''} / ${distrito || ''}`.trim()
+    alcanceTexto = `DISTRITO ${distrito || 'SIN DISTRITO'} / TODOS LOS ALMACENES`
   } else {
     alcanceTexto = `TÉCNICO / ${distrito || 'SIN DISTRITO'}`
   }
@@ -1098,68 +1092,32 @@ async function buscarSeriesTraspaso(admin, perfil, payload) {
 async function buscarSeriesDirectasTraspaso(admin, perfil, payload) {
   const validacion = await validarTraspasoBot(admin, perfil, payload)
   if (!validacion.ok) return validacion
-
-  // Normaliza espacios, mayúsculas y duplicados antes de consultar IQ09.
-  const solicitadas = [...new Set(
-    String(payload.series || '').split(/[,;\n\s]+/).map(x => upper(x)).filter(Boolean)
-  )]
-  if (!solicitadas.length || solicitadas.length > 100) {
-    return { ok:false, error:'Indica entre 1 y 100 series.' }
-  }
-  const invalidas = solicitadas.filter(x => !/^[A-Z0-9_-]{4,80}$/.test(x))
-  if (invalidas.length) {
-    return { ok:false, error:`Formato de serie inválido: ${invalidas.join(', ')}` }
-  }
-
-  // .in() distingue mayúsculas/minúsculas. ilike permite localizar variantes
-  // de escritura; la igualdad normalizada posterior evita falsos positivos.
-  // Se consulta en grupos pequeños para limitar la carga de Supabase.
-  const filasIQ09 = []
-  for (let i = 0; i < solicitadas.length; i += 10) {
-    const bloque = solicitadas.slice(i, i + 10)
-    const consultas = await Promise.all(bloque.map(async serie => {
-      const { data, error } = await admin.from('iq09_equipos')
-        .select('serie,material,descripcion,lote,lote_stock,estatus_sap,tipo_stock,almacen,distrito')
-        .eq('distrito', validacion.distrito)
-        .eq('almacen', validacion.origen)
-        .ilike('serie', serie)
-        .limit(20)
-      if (error) throw new Error(error.message)
-      return (data || []).filter(x => upper(x.serie) === serie)
-    }))
-    for (const filas of consultas) filasIQ09.push(...filas)
-  }
-
-  const encontradas = filasIQ09.filter(x =>
-    clean(x.serie) &&
-    upper(x.distrito) === upper(validacion.distrito) &&
+  const solicitadas = [...new Set(String(payload.series || '').split(/[,;\n\s]+/).map(clean).filter(Boolean))]
+  if (!solicitadas.length || solicitadas.length > 100) return { ok:false, error:'Indica entre 1 y 100 series.' }
+  const { data, error } = await admin.from('iq09_equipos')
+    .select('serie,material,descripcion,lote,lote_stock,estatus_sap,tipo_stock,almacen,distrito')
+    .eq('distrito', validacion.distrito).eq('almacen', validacion.origen)
+    .in('serie', solicitadas).limit(200)
+  if (error) throw new Error(error.message)
+  const encontradas = (data || []).filter(x =>
+    clean(x.serie) && upper(x.distrito) === upper(validacion.distrito) &&
     normalizarAlmacenTraspaso(x.almacen) === normalizarAlmacenTraspaso(validacion.origen)
   )
   const porGrupo = new Map()
   const rechazadas = []
   for (const x of encontradas) {
-    const serie = clean(x.serie)
     const lote = clean(x.lote || x.lote_stock)
-    if (upper(lote) === 'TPE USADO') { rechazadas.push(serie); continue }
+    if (upper(lote) === 'TPE USADO') { rechazadas.push(clean(x.serie)); continue }
     const sku = clean(x.material)
-    if (!sku) { rechazadas.push(serie); continue }
+    if (!sku) { rechazadas.push(clean(x.serie)); continue }
     const key = `${sku}|${upper(lote)}`
     const g = porGrupo.get(key) || { sku, descripcion:x.descripcion || '', lote, series:[], cantidad:0 }
-    if (!g.series.some(y => upper(y) === upper(serie))) {
-      g.series.push(serie)
-      g.cantidad++
-    }
+    if (!g.series.includes(clean(x.serie))) { g.series.push(clean(x.serie)); g.cantidad++ }
     porGrupo.set(key,g)
   }
-
-  const vistas = new Set(encontradas.map(x => upper(x.serie)))
-  const no_encontradas = solicitadas.filter(x => !vistas.has(x))
-  return {
-    ok:true,
-    materiales:[...porGrupo.values()],
-    no_encontradas,
-    rechazadas:[...new Set(rechazadas)]
-  }
+  const vistas = new Set(encontradas.map(x=>clean(x.serie)))
+  const no_encontradas = solicitadas.filter(x=>!vistas.has(x))
+  return { ok:true, materiales:[...porGrupo.values()], no_encontradas, rechazadas }
 }
 
 function lineasMaterialesTraspaso(materiales) {
