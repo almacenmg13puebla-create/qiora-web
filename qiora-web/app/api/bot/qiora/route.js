@@ -792,6 +792,39 @@ async function consultarPlacas(admin, perfil, payload) {
   }
 }
 
+async function pendientesKilometrajeDesdeGoogle(admin, perfil, payload) {
+  if (!perfil || perfil.activo !== true) return { ok:false, error:'Usuario Telegram no activo.' }
+  const puesto = upper(perfil.puesto)
+  const rolesPermitidos = ['ADMIN_PADRE','ADMIN','ADMINISTRADOR','ALMACENISTA','COORDINADOR']
+  if (!rolesPermitidos.includes(puesto) && puesto !== 'TECNICO') {
+    return { ok:false, error:'Tu puesto no tiene permiso para consultar kilometrajes pendientes.' }
+  }
+  const url = clean(process.env.QIORA_KM_APPS_SCRIPT_URL)
+  const secret = clean(process.env.QIORA_KM_WEBHOOK_SECRET)
+  if (!url || !url.endsWith('/exec') || !secret) {
+    throw new Error('Faltan QIORA_KM_APPS_SCRIPT_URL o QIORA_KM_WEBHOOK_SECRET en Vercel.')
+  }
+  const response = await fetch(url, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      action:'DISTRIBUIR_PENDIENTES', secret,
+      distrito:upper(perfil.distrito), puesto,
+      telegram_chat_id:clean(payload.telegram_chat_id),
+      usuario_almacen:clean(perfil.usuario_almacen),
+      nombre:clean(perfil.nombre),
+      usuario_ffm:clean(perfil.usuario_ffm || perfil.ffm),
+      numero_empleado:clean(perfil.numero_empleado || perfil.numero_empleado_odoo)
+    }),
+    redirect:'follow', cache:'no-store'
+  })
+  const raw = await response.text()
+  let data
+  try { data = JSON.parse(raw) } catch { throw new Error('Apps Script no devolvió JSON válido. Verifica despliegue /exec y permisos.') }
+  if (!response.ok || data?.ok !== true) throw new Error(data?.error || `Apps Script HTTP ${response.status}`)
+  return { ok:true, total:data.pendientes || 0, mensaje:data.mensaje || 'No hay kilometrajes pendientes.', distribucion:data }
+}
+
 async function pendientesKilometraje(admin, perfil) {
   const usuarios = await usuariosAlcancePendientes(admin, perfil)
   const indices = indicesAlcance(usuarios)
@@ -2155,7 +2188,7 @@ async function accionMigrada(admin, payload) {
 
   if (accion === 'telegram_kilometrajes_pendientes') {
     if (!perfil) return { ok: false, error: 'Telegram no está vinculado a un usuario activo.' }
-    return pendientesKilometraje(admin, perfil)
+    return pendientesKilometrajeDesdeGoogle(admin, perfil, payload)
   }
 
   return null
