@@ -9,6 +9,7 @@ import {
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
 import ImportarUsuariosExcel from './ImportarUsuariosExcel'
+import * as XLSX from 'xlsx'
 
 const MENU = [
   ['Accesos especiales', null, 'admin_padre'],
@@ -284,6 +285,8 @@ export default function ConfiguracionPage() {
   const [mostrarCargaTecnicos, setMostrarCargaTecnicos] = useState(false)
   const [enviandoEnlaceId, setEnviandoEnlaceId] = useState(null)
   const [enviandoWhatsAppId, setEnviandoWhatsAppId] = useState(null)
+  const [distritoRestablecimientoMasivo, setDistritoRestablecimientoMasivo] = useState('')
+  const [restableciendoMasivo, setRestableciendoMasivo] = useState(false)
 
   const [
     nuevoUsuario,
@@ -1323,6 +1326,82 @@ export default function ConfiguracionPage() {
       setAviso(data.mensaje)
     } catch (e) { setError(e?.message || 'Error al solicitar recuperación.') }
     finally { setEnviandoEnlaceId(null) }
+  }
+
+  // Solicita al servidor el restablecimiento de las cuentas del distrito
+  // y genera un Excel con las credenciales temporales devueltas una sola vez.
+  async function restablecerDistritoMasivo() {
+    if (!esPadre || restableciendoMasivo) return
+
+    const distrito = String(distritoRestablecimientoMasivo || '').trim().toUpperCase()
+    if (!distrito) {
+      setError('Selecciona un distrito.')
+      return
+    }
+
+    const confirmado = window.confirm(
+      `Se cambiarán las contraseñas de los usuarios activos del distrito ${distrito}. ` +
+      'Se descargará un Excel con sus credenciales temporales. ¿Deseas continuar?'
+    )
+    if (!confirmado) return
+
+    setError('')
+    setAviso('')
+    setRestableciendoMasivo(true)
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) throw new Error('Inicia sesión nuevamente.')
+
+      const response = await fetch('/api/usuarios/restablecimiento-masivo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ distrito })
+      })
+
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || data.ok !== true) {
+        throw new Error(data.error || 'No se pudo ejecutar el restablecimiento masivo.')
+      }
+
+      if (!Array.isArray(data.credenciales) || data.credenciales.length === 0) {
+        throw new Error(data.mensaje || 'El servidor no devolvió credenciales para exportar.')
+      }
+
+      const filasExcel = data.credenciales.map(c => ({
+        'Distrito': c.distrito || distrito,
+        'Nombre': c.nombre || '',
+        'Usuario': c.usuario || '',
+        'Contraseña temporal': c.contrasena_temporal || '',
+        'Estado': c.estado || 'Temporal'
+      }))
+
+      const hoja = XLSX.utils.json_to_sheet(filasExcel)
+      hoja['!cols'] = [
+        { wch: 14 },
+        { wch: 32 },
+        { wch: 24 },
+        { wch: 28 },
+        { wch: 22 }
+      ]
+
+      const libro = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(libro, hoja, 'Claves temporales')
+      const fecha = new Date().toISOString().slice(0, 10)
+      XLSX.writeFile(libro, `QIORA_claves_temporales_${distrito}_${fecha}.xlsx`)
+
+      setAviso(
+        `${data.mensaje || 'Restablecimiento completado.'} ` +
+        'Se descargó el Excel. Contiene credenciales sensibles; guárdalo de forma segura.'
+      )
+    } catch (e) {
+      setError(e?.message || 'Error al restablecer las contraseñas.')
+    } finally {
+      setRestableciendoMasivo(false)
+    }
   }
 
   async function enviarEnlaceWhatsApp(u) {
@@ -2624,6 +2703,46 @@ export default function ConfiguracionPage() {
             <h2>
               Gestión de Usuarios
             </h2>
+
+            {esPadre && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
+                margin: '12px 0 16px',
+                padding: 10,
+                border: '1px solid #d6a84f',
+                borderRadius: 9
+              }}>
+                <strong style={{ fontSize: 13 }}>Restablecimiento masivo por distrito</strong>
+                <select
+                  aria-label="Distrito para restablecimiento masivo"
+                  style={{ ...css.input, width: 'auto', minWidth: 160, margin: 0 }}
+                  value={distritoRestablecimientoMasivo}
+                  onChange={e => setDistritoRestablecimientoMasivo(e.target.value)}
+                >
+                  <option value="">Seleccionar distrito</option>
+                  {distritos.filter(d => d.activo).map(d => (
+                    <option key={d.centro} value={d.centro}>
+                      {d.centro}{d.nombre_region ? ` - ${d.nombre_region}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  style={{ ...css.boton, padding: '7px 10px', fontSize: 12, background: '#9a5b13' }}
+                  disabled={restableciendoMasivo || !distritoRestablecimientoMasivo}
+                  onClick={restablecerDistritoMasivo}
+                  title="Genera credenciales temporales del distrito seleccionado. Solo ADMIN_PADRE."
+                >
+                  {restableciendoMasivo ? 'Generando...' : 'Generar Excel de claves'}
+                </button>
+                <span style={{ fontSize: 11, color: '#cce5dc' }}>
+                  Solo ADMIN_PADRE. Protege el Excel: contiene credenciales temporales.
+                </span>
+              </div>
+            )}
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
