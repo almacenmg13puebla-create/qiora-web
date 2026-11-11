@@ -69,11 +69,13 @@ async function perfilTelegram(admin, chatId) {
     .select('*')
     .eq('telegram_chat_id', id)
     .eq('activo', true)
-    .limit(1)
-    .maybeSingle()
+    .limit(2)
 
   if (error) throw new Error(error.message)
-  return data || null
+  if ((data || []).length > 1) {
+    throw new Error('CHAT_ID_AMBIGUO: este Telegram está vinculado a más de un usuario activo. Corrige la vinculación antes de consultar pendientes.')
+  }
+  return (data || [])[0] || null
 }
 
 function esAdmin(p) {
@@ -790,39 +792,6 @@ async function consultarPlacas(admin, perfil, payload) {
     resultados: encontrados.slice(0, 20),
     mensaje: lineas.join('\n').slice(0, 4000)
   }
-}
-
-async function pendientesKilometrajeDesdeGoogle(admin, perfil, payload) {
-  if (!perfil || perfil.activo !== true) return { ok:false, error:'Usuario Telegram no activo.' }
-  const puesto = upper(perfil.puesto)
-  const rolesPermitidos = ['ADMIN_PADRE','ADMIN','ADMINISTRADOR','ALMACENISTA','COORDINADOR']
-  if (!rolesPermitidos.includes(puesto) && puesto !== 'TECNICO') {
-    return { ok:false, error:'Tu puesto no tiene permiso para consultar kilometrajes pendientes.' }
-  }
-  const url = clean(process.env.QIORA_KM_APPS_SCRIPT_URL)
-  const secret = clean(process.env.QIORA_KM_WEBHOOK_SECRET)
-  if (!url || !url.endsWith('/exec') || !secret) {
-    throw new Error('Faltan QIORA_KM_APPS_SCRIPT_URL o QIORA_KM_WEBHOOK_SECRET en Vercel.')
-  }
-  const response = await fetch(url, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({
-      action:'DISTRIBUIR_PENDIENTES', secret,
-      distrito:upper(perfil.distrito), puesto,
-      telegram_chat_id:clean(payload.telegram_chat_id),
-      usuario_almacen:clean(perfil.usuario_almacen),
-      nombre:clean(perfil.nombre),
-      usuario_ffm:clean(perfil.usuario_ffm || perfil.ffm),
-      numero_empleado:clean(perfil.numero_empleado || perfil.numero_empleado_odoo)
-    }),
-    redirect:'follow', cache:'no-store'
-  })
-  const raw = await response.text()
-  let data
-  try { data = JSON.parse(raw) } catch { throw new Error('Apps Script no devolvió JSON válido. Verifica despliegue /exec y permisos.') }
-  if (!response.ok || data?.ok !== true) throw new Error(data?.error || `Apps Script HTTP ${response.status}`)
-  return { ok:true, total:data.pendientes || 0, mensaje:data.mensaje || 'No hay kilometrajes pendientes.', distribucion:data }
 }
 
 async function pendientesKilometraje(admin, perfil) {
@@ -2102,6 +2071,37 @@ async function telegramRecoleccionesMarcarAviso(admin, payload) {
   return { ok: true, actualizado: (data || []).length > 0 };
 }
 
+async function distribuirKilometrajesDesdeSheets(perfil) {
+  const url = clean(process.env.QIORA_KM_APPS_SCRIPT_URL)
+  const secret = clean(process.env.QIORA_KM_WEBHOOK_SECRET)
+  if (!url || !url.endsWith('/exec')) throw new Error('Falta QIORA_KM_APPS_SCRIPT_URL válida terminada en /exec.')
+  if (!secret) throw new Error('Falta QIORA_KM_WEBHOOK_SECRET en Vercel.')
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'DISTRIBUIR_PENDIENTES',
+      secret,
+      distrito: upper(perfil.distrito),
+      puesto: upper(perfil.puesto),
+      telegram_chat_id: clean(perfil.telegram_chat_id),
+      usuario_almacen: clean(perfil.usuario_almacen),
+      usuario_ffm: clean(perfil.usuario_ffm || perfil.ffm),
+      numero_empleado: clean(perfil.numero_empleado || perfil.numero_empleado_odoo),
+      nombre: clean(perfil.nombre)
+    }),
+    cache: 'no-store',
+    redirect: 'follow'
+  })
+  const raw = await response.text()
+  let data
+  try { data = JSON.parse(raw) } catch {
+    throw new Error('Apps Script no devolvió JSON. Verifica despliegue /exec y acceso de la aplicación web.')
+  }
+  if (!response.ok || data?.ok !== true) throw new Error(data?.error || data?.mensaje || `Apps Script HTTP ${response.status}`)
+  return data
+}
+
 async function accionMigrada(admin, payload) {
   const accion = clean(payload.accion || payload.action)
 
@@ -2188,7 +2188,12 @@ async function accionMigrada(admin, payload) {
 
   if (accion === 'telegram_kilometrajes_pendientes') {
     if (!perfil) return { ok: false, error: 'Telegram no está vinculado a un usuario activo.' }
-    return pendientesKilometrajeDesdeGoogle(admin, perfil, payload)
+    const puesto = upper(perfil.puesto)
+    const permitidos = ['ADMIN_PADRE','ADMIN','ADMINISTRADOR','ALMACENISTA','COORDINADOR','TECNICO']
+    if (!permitidos.includes(puesto) && !puesto.startsWith('ADMIN_')) {
+      return { ok: false, error: 'Tu puesto no tiene permiso para consultar kilometrajes pendientes.' }
+    }
+    return distribuirKilometrajesDesdeSheets(perfil)
   }
 
   return null
