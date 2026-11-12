@@ -263,6 +263,7 @@ export default function ConfiguracionPage() {
     vida_util_meses: '12',
     activo: true
   })
+  const [distritoNuevaHerramienta, setDistritoNuevaHerramienta] = useState('')
 
   /*
     USUARIOS
@@ -542,6 +543,17 @@ export default function ConfiguracionPage() {
     const costo = Number(costoTexto)
     const vidaUtil = Number(vidaTexto)
 
+    const distrito = String(
+      esPadre ? distritoNuevaHerramienta : perfilActual?.distrito || ''
+    ).trim().toUpperCase()
+
+    if (!distrito) {
+      setError(esPadre
+        ? 'Selecciona el distrito de la herramienta.'
+        : 'Tu usuario no tiene un distrito asignado en su perfil.')
+      return
+    }
+
     if (!sku || !herramienta || !costoTexto || !vidaTexto) {
       setError('Completa SKU, herramienta, costo y vida útil.')
       return
@@ -563,6 +575,7 @@ export default function ConfiguracionPage() {
         .from('costos_odoo')
         .select('sku')
         .eq('sku', sku)
+        .eq('distrito', distrito)
         .maybeSingle()
 
       if (buscarError) throw buscarError
@@ -571,6 +584,7 @@ export default function ConfiguracionPage() {
       const { error: insertarError } = await supabase
         .from('costos_odoo')
         .insert({
+          distrito,
           sku,
           herramienta,
           costo,
@@ -581,6 +595,7 @@ export default function ConfiguracionPage() {
       if (insertarError) throw insertarError
 
       setNuevaHerramienta({ sku: '', herramienta: '', costo: '', vida_util_meses: '12', activo: true })
+      if (esPadre) setDistritoNuevaHerramienta('')
       setMostrarNuevaHerramienta(false)
       setAviso('Herramienta agregada correctamente.')
       await cargar('costos_odoo')
@@ -1895,6 +1910,10 @@ export default function ConfiguracionPage() {
           }
         )
 
+    } else if (tipo === 'costos_odoo') {
+      if (esPadre) cargarDistritos()
+      cargar(tipo)
+
     } else if (
       tipo !==
       'herramienta_odoo_inventario'
@@ -3121,6 +3140,32 @@ export default function ConfiguracionPage() {
               <div style={css.subpanel}>
                 <h3>Agregar herramienta ODOO</h3>
                 <div style={css.grid}>
+                  {esPadre ? (
+                    <label>
+                      Distrito
+                      <select
+                        style={css.input}
+                        value={distritoNuevaHerramienta}
+                        onChange={e => setDistritoNuevaHerramienta(e.target.value)}
+                      >
+                        <option value="">Selecciona un distrito</option>
+                        {distritos.filter(d => d.activo).map(d => (
+                          <option key={d.centro} value={d.centro}>
+                            {d.centro} — {d.nombre_region}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    <label>
+                      Distrito
+                      <input
+                        style={css.input}
+                        value={perfilActual?.distrito || ''}
+                        readOnly
+                      />
+                    </label>
+                  )}
                   {[
                     ['sku', 'SKU'],
                     ['herramienta', 'Nombre de la herramienta'],
