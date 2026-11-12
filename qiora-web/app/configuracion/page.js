@@ -9,7 +9,6 @@ import {
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
 import ImportarUsuariosExcel from './ImportarUsuariosExcel'
-import * as XLSX from 'xlsx'
 
 const MENU = [
   ['Accesos especiales', null, 'admin_padre'],
@@ -255,6 +254,16 @@ export default function ConfiguracionPage() {
   const [aviso, setAviso] =
     useState('')
 
+  const [mostrarNuevaHerramienta, setMostrarNuevaHerramienta] = useState(false)
+  const [guardandoHerramienta, setGuardandoHerramienta] = useState(false)
+  const [nuevaHerramienta, setNuevaHerramienta] = useState({
+    sku: '',
+    herramienta: '',
+    costo: '',
+    vida_util_meses: '12',
+    activo: true
+  })
+
   /*
     USUARIOS
   */
@@ -285,8 +294,6 @@ export default function ConfiguracionPage() {
   const [mostrarCargaTecnicos, setMostrarCargaTecnicos] = useState(false)
   const [enviandoEnlaceId, setEnviandoEnlaceId] = useState(null)
   const [enviandoWhatsAppId, setEnviandoWhatsAppId] = useState(null)
-  const [distritoRestablecimientoMasivo, setDistritoRestablecimientoMasivo] = useState('')
-  const [restableciendoMasivo, setRestableciendoMasivo] = useState(false)
 
   const [
     nuevoUsuario,
@@ -524,6 +531,65 @@ export default function ConfiguracionPage() {
     HORARIOS - CONFIG_HORARIOS
     ==============================
   */
+
+  async function guardarNuevaHerramienta() {
+    if (guardandoHerramienta) return
+
+    const sku = String(nuevaHerramienta.sku || '').trim()
+    const herramienta = String(nuevaHerramienta.herramienta || '').trim()
+    const costoTexto = String(nuevaHerramienta.costo ?? '').trim()
+    const vidaTexto = String(nuevaHerramienta.vida_util_meses ?? '').trim()
+    const costo = Number(costoTexto)
+    const vidaUtil = Number(vidaTexto)
+
+    if (!sku || !herramienta || !costoTexto || !vidaTexto) {
+      setError('Completa SKU, herramienta, costo y vida útil.')
+      return
+    }
+    if (!Number.isFinite(costo) || costo < 0) {
+      setError('Captura un costo válido, mayor o igual a cero.')
+      return
+    }
+    if (!Number.isInteger(vidaUtil) || vidaUtil < 0) {
+      setError('La vida útil debe ser un número entero mayor o igual a cero.')
+      return
+    }
+
+    setGuardandoHerramienta(true)
+    setError('')
+    setAviso('')
+    try {
+      const { data: existente, error: buscarError } = await supabase
+        .from('costos_odoo')
+        .select('sku')
+        .eq('sku', sku)
+        .maybeSingle()
+
+      if (buscarError) throw buscarError
+      if (existente) throw new Error(`El SKU ${sku} ya existe en Costos ODOO.`)
+
+      const { error: insertarError } = await supabase
+        .from('costos_odoo')
+        .insert({
+          sku,
+          herramienta,
+          costo,
+          vida_util_meses: vidaUtil,
+          activo: Boolean(nuevaHerramienta.activo)
+        })
+
+      if (insertarError) throw insertarError
+
+      setNuevaHerramienta({ sku: '', herramienta: '', costo: '', vida_util_meses: '12', activo: true })
+      setMostrarNuevaHerramienta(false)
+      setAviso('Herramienta agregada correctamente.')
+      await cargar('costos_odoo')
+    } catch (e) {
+      setError(e?.message || 'No se pudo agregar la herramienta.')
+    } finally {
+      setGuardandoHerramienta(false)
+    }
+  }
 
   async function cargarHorarios() {
     setCargando(true)
@@ -1326,82 +1392,6 @@ export default function ConfiguracionPage() {
       setAviso(data.mensaje)
     } catch (e) { setError(e?.message || 'Error al solicitar recuperación.') }
     finally { setEnviandoEnlaceId(null) }
-  }
-
-  // Solicita al servidor el restablecimiento de las cuentas del distrito
-  // y genera un Excel con las credenciales temporales devueltas una sola vez.
-  async function restablecerDistritoMasivo() {
-    if (!esPadre || restableciendoMasivo) return
-
-    const distrito = String(distritoRestablecimientoMasivo || '').trim().toUpperCase()
-    if (!distrito) {
-      setError('Selecciona un distrito.')
-      return
-    }
-
-    const confirmado = window.confirm(
-      `Se cambiarán las contraseñas de los usuarios activos del distrito ${distrito}. ` +
-      'Se descargará un Excel con sus credenciales temporales. ¿Deseas continuar?'
-    )
-    if (!confirmado) return
-
-    setError('')
-    setAviso('')
-    setRestableciendoMasivo(true)
-
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session?.access_token) throw new Error('Inicia sesión nuevamente.')
-
-      const response = await fetch('/api/usuarios/restablecimiento-masivo', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({ distrito })
-      })
-
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || data.ok !== true) {
-        throw new Error(data.error || 'No se pudo ejecutar el restablecimiento masivo.')
-      }
-
-      if (!Array.isArray(data.credenciales) || data.credenciales.length === 0) {
-        throw new Error(data.mensaje || 'El servidor no devolvió credenciales para exportar.')
-      }
-
-      const filasExcel = data.credenciales.map(c => ({
-        'Distrito': c.distrito || distrito,
-        'Nombre': c.nombre || '',
-        'Usuario': c.usuario || '',
-        'Contraseña temporal': c.contrasena_temporal || '',
-        'Estado': c.estado || 'Temporal'
-      }))
-
-      const hoja = XLSX.utils.json_to_sheet(filasExcel)
-      hoja['!cols'] = [
-        { wch: 14 },
-        { wch: 32 },
-        { wch: 24 },
-        { wch: 28 },
-        { wch: 22 }
-      ]
-
-      const libro = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(libro, hoja, 'Claves temporales')
-      const fecha = new Date().toISOString().slice(0, 10)
-      XLSX.writeFile(libro, `QIORA_claves_temporales_${distrito}_${fecha}.xlsx`)
-
-      setAviso(
-        `${data.mensaje || 'Restablecimiento completado.'} ` +
-        'Se descargó el Excel. Contiene credenciales sensibles; guárdalo de forma segura.'
-      )
-    } catch (e) {
-      setError(e?.message || 'Error al restablecer las contraseñas.')
-    } finally {
-      setRestableciendoMasivo(false)
-    }
   }
 
   async function enviarEnlaceWhatsApp(u) {
@@ -2704,46 +2694,6 @@ export default function ConfiguracionPage() {
               Gestión de Usuarios
             </h2>
 
-            {esPadre && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                flexWrap: 'wrap',
-                margin: '12px 0 16px',
-                padding: 10,
-                border: '1px solid #d6a84f',
-                borderRadius: 9
-              }}>
-                <strong style={{ fontSize: 13 }}>Restablecimiento masivo por distrito</strong>
-                <select
-                  aria-label="Distrito para restablecimiento masivo"
-                  style={{ ...css.input, width: 'auto', minWidth: 160, margin: 0 }}
-                  value={distritoRestablecimientoMasivo}
-                  onChange={e => setDistritoRestablecimientoMasivo(e.target.value)}
-                >
-                  <option value="">Seleccionar distrito</option>
-                  {distritos.filter(d => d.activo).map(d => (
-                    <option key={d.centro} value={d.centro}>
-                      {d.centro}{d.nombre_region ? ` - ${d.nombre_region}` : ''}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  style={{ ...css.boton, padding: '7px 10px', fontSize: 12, background: '#9a5b13' }}
-                  disabled={restableciendoMasivo || !distritoRestablecimientoMasivo}
-                  onClick={restablecerDistritoMasivo}
-                  title="Genera credenciales temporales del distrito seleccionado. Solo ADMIN_PADRE."
-                >
-                  {restableciendoMasivo ? 'Generando...' : 'Generar Excel de claves'}
-                </button>
-                <span style={{ fontSize: 11, color: '#cce5dc' }}>
-                  Solo ADMIN_PADRE. Protege el Excel: contiene credenciales temporales.
-                </span>
-              </div>
-            )}
-
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 type="button"
@@ -3143,17 +3093,84 @@ export default function ConfiguracionPage() {
               placeholder="Buscar"
             />
 
-            <button
-              style={css.boton}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', margin: '8px 0 12px' }}>
+              <button
+                type="button"
+                style={css.boton}
+                onClick={() => cargar(seccion)}
+              >
+                Actualizar
+              </button>
 
-              onClick={() =>
-                cargar(
-                  seccion
-                )
-              }
-            >
-              Actualizar
-            </button>
+              {seccion === 'costos_odoo' && (
+                <button
+                  type="button"
+                  style={{ ...css.boton, background: '#0b7659' }}
+                  onClick={() => {
+                    setMostrarNuevaHerramienta(v => !v)
+                    setError('')
+                    setAviso('')
+                  }}
+                >
+                  {mostrarNuevaHerramienta ? 'Cancelar' : '+ Agregar herramienta'}
+                </button>
+              )}
+            </div>
+
+            {seccion === 'costos_odoo' && mostrarNuevaHerramienta && (
+              <div style={css.subpanel}>
+                <h3>Agregar herramienta ODOO</h3>
+                <div style={css.grid}>
+                  {[
+                    ['sku', 'SKU'],
+                    ['herramienta', 'Nombre de la herramienta'],
+                    ['costo', 'Costo'],
+                    ['vida_util_meses', 'Vida útil (meses)']
+                  ].map(([campo, etiqueta]) => (
+                    <label key={campo}>
+                      {etiqueta}
+                      <input
+                        style={css.input}
+                        type={['costo', 'vida_util_meses'].includes(campo) ? 'number' : 'text'}
+                        min={['costo', 'vida_util_meses'].includes(campo) ? '0' : undefined}
+                        step={campo === 'costo' ? '0.01' : campo === 'vida_util_meses' ? '1' : undefined}
+                        value={nuevaHerramienta[campo]}
+                        onChange={e => setNuevaHerramienta(v => ({ ...v, [campo]: e.target.value }))}
+                      />
+                    </label>
+                  ))}
+                  <label>
+                    Estado
+                    <select
+                      style={css.input}
+                      value={nuevaHerramienta.activo ? 'SI' : 'NO'}
+                      onChange={e => setNuevaHerramienta(v => ({ ...v, activo: e.target.value === 'SI' }))}
+                    >
+                      <option value="SI">Activo</option>
+                      <option value="NO">Inactivo</option>
+                    </select>
+                  </label>
+                </div>
+                <div style={css.botones}>
+                  <button
+                    type="button"
+                    style={css.boton}
+                    disabled={guardandoHerramienta}
+                    onClick={guardarNuevaHerramienta}
+                  >
+                    {guardandoHerramienta ? 'Guardando...' : 'Guardar herramienta'}
+                  </button>
+                  <button
+                    type="button"
+                    style={{ ...css.boton, background: '#315b50' }}
+                    disabled={guardandoHerramienta}
+                    onClick={() => setMostrarNuevaHerramienta(false)}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div style={css.scroll}>
 
