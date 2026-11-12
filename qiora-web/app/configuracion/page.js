@@ -263,7 +263,6 @@ export default function ConfiguracionPage() {
     vida_util_meses: '12',
     activo: true
   })
-  const [distritoNuevaHerramienta, setDistritoNuevaHerramienta] = useState('')
 
   /*
     USUARIOS
@@ -458,54 +457,48 @@ export default function ConfiguracionPage() {
         setAviso('')
 
         try {
-          const inventario =
-            tipo ===
-            'herramienta_odoo_inventario'
+          let data
+          let e
 
-          const {
-            data,
-            error: e
-          } =
-            inventario
-              ? await supabase.rpc(
-                  'qiora_herramienta_odoo_listar',
-                  {
-                    p_buscar:
-                      busqueda,
-
-                    p_pagina:
-                      pagina,
-
-                    p_limite:
-                      100
-                  }
-                )
-              : await supabase.rpc(
-                  'qiora_config_listar',
-                  {
-                    p_catalogo:
-                      tipo
-                  }
-                )
-
-          if (e) {
-            throw e
+          if (tipo === 'costos_odoo') {
+            // Catálogo universal: todos los distritos consultan las mismas filas GLOBAL.
+            const resultado = await supabase
+              .from('costos_odoo')
+              .select('distrito,sku,herramienta,costo,vida_util_meses,activo')
+              .eq('distrito', 'GLOBAL')
+              .order('sku', { ascending: true })
+            data = resultado.data
+            e = resultado.error
+          } else if (tipo === 'herramienta_odoo_inventario') {
+            const resultado = await supabase.rpc(
+              'qiora_herramienta_odoo_listar',
+              {
+                p_buscar: busqueda,
+                p_pagina: pagina,
+                p_limite: 100
+              }
+            )
+            data = resultado.data
+            e = resultado.error
+          } else {
+            const resultado = await supabase.rpc(
+              'qiora_config_listar',
+              { p_catalogo: tipo }
+            )
+            data = resultado.data
+            e = resultado.error
           }
 
-          setFilas(
-            Array.isArray(
-              data?.filas
-            )
-              ? data.filas
-              : []
-          )
+          if (e) throw e
 
-          setTotal(
-            Number(
-              data?.total ||
-              0
-            )
-          )
+          const registros = tipo === 'costos_odoo'
+            ? (Array.isArray(data) ? data : [])
+            : (Array.isArray(data?.filas) ? data.filas : [])
+
+          setFilas(registros)
+          setTotal(tipo === 'costos_odoo'
+            ? registros.length
+            : Number(data?.total || 0))
 
         } catch (e) {
 
@@ -543,16 +536,7 @@ export default function ConfiguracionPage() {
     const costo = Number(costoTexto)
     const vidaUtil = Number(vidaTexto)
 
-    const distrito = String(
-      esPadre ? distritoNuevaHerramienta : perfilActual?.distrito || ''
-    ).trim().toUpperCase()
-
-    if (!distrito) {
-      setError(esPadre
-        ? 'Selecciona el distrito de la herramienta.'
-        : 'Tu usuario no tiene un distrito asignado en su perfil.')
-      return
-    }
+    const distrito = 'GLOBAL'
 
     if (!sku || !herramienta || !costoTexto || !vidaTexto) {
       setError('Completa SKU, herramienta, costo y vida útil.')
@@ -575,7 +559,7 @@ export default function ConfiguracionPage() {
         .from('costos_odoo')
         .select('sku')
         .eq('sku', sku)
-        .eq('distrito', distrito)
+        .eq('distrito', 'GLOBAL')
         .maybeSingle()
 
       if (buscarError) throw buscarError
@@ -595,7 +579,6 @@ export default function ConfiguracionPage() {
       if (insertarError) throw insertarError
 
       setNuevaHerramienta({ sku: '', herramienta: '', costo: '', vida_util_meses: '12', activo: true })
-      if (esPadre) setDistritoNuevaHerramienta('')
       setMostrarNuevaHerramienta(false)
       setAviso('Herramienta agregada correctamente.')
       await cargar('costos_odoo')
@@ -1911,7 +1894,6 @@ export default function ConfiguracionPage() {
         )
 
     } else if (tipo === 'costos_odoo') {
-      if (esPadre) cargarDistritos()
       cargar(tipo)
 
     } else if (
@@ -3140,32 +3122,6 @@ export default function ConfiguracionPage() {
               <div style={css.subpanel}>
                 <h3>Agregar herramienta ODOO</h3>
                 <div style={css.grid}>
-                  {esPadre ? (
-                    <label>
-                      Distrito
-                      <select
-                        style={css.input}
-                        value={distritoNuevaHerramienta}
-                        onChange={e => setDistritoNuevaHerramienta(e.target.value)}
-                      >
-                        <option value="">Selecciona un distrito</option>
-                        {distritos.filter(d => d.activo).map(d => (
-                          <option key={d.centro} value={d.centro}>
-                            {d.centro} — {d.nombre_region}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : (
-                    <label>
-                      Distrito
-                      <input
-                        style={css.input}
-                        value={perfilActual?.distrito || ''}
-                        readOnly
-                      />
-                    </label>
-                  )}
                   {[
                     ['sku', 'SKU'],
                     ['herramienta', 'Nombre de la herramienta'],
